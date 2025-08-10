@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y \
     x11vnc \
     xvfb \
     fluxbox \
+    x11-utils \
     libpulse0 \
     libnss3 \
     libxss1 \

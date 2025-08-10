@@ -9,18 +9,37 @@ echo "Starting CRPlayer Android Emulator (Software Mode)..."
 export DISPLAY=:99
 
 # Start Xvfb (virtual framebuffer)
+echo "Starting X11 virtual framebuffer..."
 Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset &
 XVFB_PID=$!
-
-# Start window manager
-fluxbox -display :99 &
-WM_PID=$!
 
 # Wait for X server to start
 sleep 5
 
+# Test X server
+echo "Testing X11 server..."
+DISPLAY=:99 xdpyinfo >/dev/null 2>&1 && echo "X11 server is running" || echo "X11 server failed to start"
+
+# Start window manager
+echo "Starting window manager..."
+DISPLAY=:99 fluxbox &
+WM_PID=$!
+
+# Wait for window manager
+sleep 3
+
 # Start VNC server for remote access (bind to all interfaces for external access)
-x11vnc -display :99 -nopw -listen 0.0.0.0 -xkb -forever -shared -bg -rfbport 5900
+echo "Starting VNC server..."
+x11vnc -display :99 -nopw -listen 0.0.0.0 -xkb -forever -shared -bg -rfbport 5900 -o /tmp/x11vnc.log
+
+# Verify VNC is running
+sleep 2
+if pgrep x11vnc > /dev/null; then
+    echo "VNC server started successfully"
+else
+    echo "VNC server failed to start"
+    cat /tmp/x11vnc.log 2>/dev/null || echo "No VNC log available"
+fi
 
 # Function to cleanup on exit
 cleanup() {
@@ -96,6 +115,15 @@ fi
 EMULATOR_PID=$!
 echo "Emulator PID: $EMULATOR_PID"
 
+# Check if emulator process is running
+sleep 5
+if kill -0 $EMULATOR_PID 2>/dev/null; then
+    echo "Emulator process is running"
+else
+    echo "ERROR: Emulator process died immediately!"
+    exit 1
+fi
+
 # Wait for emulator to boot
 echo "Waiting for emulator to boot..."
 adb wait-for-device
@@ -132,18 +160,18 @@ adb connect localhost:5555
 echo "Applying Android settings..."
 
 # Disable animations for faster operation
-adb shell settings put global window_animation_scale 0 2>/dev/null || true
-adb shell settings put global transition_animation_scale 0 2>/dev/null || true
-adb shell settings put global animator_duration_scale 0 2>/dev/null || true
+adb -s emulator-5554 shell settings put global window_animation_scale 0 2>/dev/null || true
+adb -s emulator-5554 shell settings put global transition_animation_scale 0 2>/dev/null || true
+adb -s emulator-5554 shell settings put global animator_duration_scale 0 2>/dev/null || true
 
 # Set screen timeout to never
-adb shell settings put system screen_off_timeout 2147483647 2>/dev/null || true
+adb -s emulator-5554 shell settings put system screen_off_timeout 2147483647 2>/dev/null || true
 
 # Disable screen lock
-adb shell locksettings set-disabled true 2>/dev/null || true
+adb -s emulator-5554 shell locksettings set-disabled true 2>/dev/null || true
 
 # Set screen orientation to portrait
-adb shell settings put system user_rotation 0 2>/dev/null || true
+adb -s emulator-5554 shell settings put system user_rotation 0 2>/dev/null || true
 
 echo "Emulator setup complete!"
 echo "ADB available on port 5555"
@@ -153,8 +181,8 @@ echo "Container IP: $(hostname -I | awk '{print $1}')"
 # Create a test screenshot to verify functionality
 echo "Taking test screenshot..."
 sleep 5
-adb shell screencap -p /sdcard/test_screen.png 2>/dev/null || echo "Screenshot test skipped"
-adb pull /sdcard/test_screen.png /data/screenshots/test_screen.png 2>/dev/null || echo "Screenshot pull failed"
+adb -s emulator-5554 shell screencap -p /sdcard/test_screen.png 2>/dev/null || echo "Screenshot test skipped"
+adb -s emulator-5554 pull /sdcard/test_screen.png /data/screenshots/test_screen.png 2>/dev/null || echo "Screenshot pull failed"
 
 # Display system information
 echo "=== System Information ==="
