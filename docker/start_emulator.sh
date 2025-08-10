@@ -53,8 +53,14 @@ cleanup() {
 # Set trap for cleanup
 trap cleanup SIGTERM SIGINT
 
-# Start ADB server and clean up any existing connections
-adb kill-server
+# Kill any existing ADB server to avoid conflicts
+echo "Stopping any existing ADB server..."
+adb kill-server 2>/dev/null || true
+sleep 2
+
+# Start ADB server
+echo "Starting ADB server..."
+adb start-server
 sleep 2
 adb start-server
 
@@ -127,26 +133,35 @@ fi
 
 # Wait for emulator to boot
 echo "Waiting for emulator to boot..."
-adb wait-for-device
-
-# Wait additional time for full boot (увеличено время для software mode)
-echo "Waiting for Android system to fully boot..."
-BOOT_TIMEOUT=600  # 10 minutes for software emulation
-BOOT_START=$(date +%s)
-
-while [ $(($(date +%s) - BOOT_START)) -lt $BOOT_TIMEOUT ]; do
-    BOOT_STATUS=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "0")
-    if [ "$BOOT_STATUS" = "1" ]; then
-        echo "Android system fully booted!"
+timeout=300
+while [ $timeout -gt 0 ]; do
+    # Try to connect to emulator
+    adb connect localhost:5555 >/dev/null 2>&1 || true
+    
+    if adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
+        echo " Emulator booted successfully"
         break
     fi
-    echo "Waiting for boot completion... ($(($(($(date +%s) - BOOT_START)) / 60))m $(($(date +%s) - BOOT_START))s elapsed)"
-    sleep 15
+    echo "Waiting for boot... ($timeout seconds remaining)"
+    sleep 5
+    timeout=$((timeout - 5))
 done
 
-# Final boot check
-BOOT_STATUS=$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || echo "0")
-if [ "$BOOT_STATUS" != "1" ]; then
+if [ $timeout -le 0 ]; then
+    echo " Emulator boot timeout"
+    exit 1
+fi
+
+# Ensure ADB connection is established
+echo "Establishing ADB connection..."
+adb connect localhost:5555
+sleep 2
+
+# Verify connection
+if adb devices | grep -q "5555.*device"; then
+    echo " ADB connected successfully"
+else
+    echo "  ADB connection may be unstable"
     echo "Warning: Boot may not be complete, but continuing..."
 fi
 
