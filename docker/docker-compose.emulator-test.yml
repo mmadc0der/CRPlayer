@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  # Android Emulator для тестирования
+  android-emulator-test:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.emulator
+    container_name: cr_emulator_test
+    privileged: true
+    ports:
+      - "5555:5555"  # ADB port
+      - "5900:5900"  # VNC port
+    volumes:
+      - emulator_data:/data/emulator
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    environment:
+      - DISPLAY=:99
+      - EMULATOR_DEVICE=Nexus_5X_API_30
+      - EMULATOR_ARCH=x86_64
+      - VNC_PASSWORD=crplayer123
+      - EMULATOR_RAM=3072
+      - EMULATOR_PARTITION=6144
+    devices:
+      - /dev/kvm:/dev/kvm  # Hardware acceleration
+    restart: unless-stopped
+    
+    # Healthcheck для проверки готовности эмулятора
+    healthcheck:
+      test: ["CMD", "adb", "shell", "getprop", "sys.boot_completed"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+volumes:
+  emulator_data:
