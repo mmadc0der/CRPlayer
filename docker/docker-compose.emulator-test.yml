@@ -20,7 +20,6 @@ services:
       - EMULATOR_ARCH=x86_64
       - VNC_PASSWORD=crplayer123
       - EMULATOR_RAM=3072
-      - EMULATOR_PARTITION=6144
     devices:
       - /dev/kvm:/dev/kvm  # Hardware acceleration
     restart: unless-stopped

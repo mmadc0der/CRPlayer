@@ -1,4 +1,4 @@
-# Android Emulator Dockerfile for CRPlayer
+# Android Emulator Dockerfile for CRPlayer (без KVM зависимости)
 FROM ubuntu:22.04
 
 # Avoid interactive prompts during build
@@ -15,11 +15,6 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     adb \
     fastboot \
-    qemu-kvm \
-    libvirt-daemon-system \
-    libvirt-clients \
-    bridge-utils \
-    cpu-checker \
     x11vnc \
     xvfb \
     fluxbox \
@@ -30,7 +25,7 @@ ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 
 # Download and install Android SDK
 ENV ANDROID_SDK_ROOT=/opt/android-sdk
-ENV PATH=${PATH}:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools
+ENV PATH=${PATH}:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/emulator
 
 RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
     wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip && \
@@ -40,7 +35,10 @@ RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
 
 # Accept licenses and install SDK components
 RUN yes | sdkmanager --licenses && \
-    sdkmanager "platform-tools" "platforms;android-30" "system-images;android-30;google_apis;x86_64" "emulator"
+    sdkmanager "platform-tools" "platforms;android-30" "system-images;android-30;google_apis;x86_64" "emulator" && \
+    # Verify emulator installation
+    ls -la ${ANDROID_SDK_ROOT}/emulator/ && \
+    ${ANDROID_SDK_ROOT}/emulator/emulator -version
 
 # Create AVD
 ENV AVD_NAME=ClashRoyale_AVD
@@ -50,12 +48,14 @@ RUN echo "no" | avdmanager create avd \
     --package "system-images;android-30;google_apis;x86_64" \
     --device "Nexus 5X"
 
-# Configure emulator settings
+# Configure emulator settings (без KVM)
 RUN mkdir -p /root/.android/avd/${AVD_NAME}.avd && \
     echo "hw.gpu.enabled=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.gpu.mode=swiftshader_indirect" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.ramSize=2048" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "disk.dataPartition.size=4096MB" >> /root/.android/avd/${AVD_NAME}.avd/config.ini
+    echo "disk.dataPartition.size=4096MB" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.keyboard=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.cpu.ncore=2" >> /root/.android/avd/${AVD_NAME}.avd/config.ini
 
 # Install Python dependencies for automation
 RUN pip3 install --no-cache-dir \
@@ -65,8 +65,8 @@ RUN pip3 install --no-cache-dir \
     pure-python-adb
 
 # Create startup script
-COPY docker/start_emulator.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/start_emulator.sh
+COPY docker/start_emulator_fixed.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/start_emulator_fixed.sh
 
 # Create directories for data persistence
 RUN mkdir -p /data/emulator /data/screenshots
@@ -78,8 +78,8 @@ EXPOSE 5555 5900
 WORKDIR /app
 
 # Add healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
     CMD adb shell getprop sys.boot_completed | grep -q "1" || exit 1
 
 # Start emulator with VNC
-CMD ["/usr/local/bin/start_emulator.sh"]
+CMD ["/usr/local/bin/start_emulator_fixed.sh"]
