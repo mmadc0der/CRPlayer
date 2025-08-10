@@ -81,8 +81,8 @@ RUN pip3 install --no-cache-dir \
     pure-python-adb
 
 # Create startup script
-COPY docker/start_emulator_fixed.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/start_emulator_fixed.sh
+COPY docker/start_emulator.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/start_emulator.sh
 
 # Create directories for data persistence
 RUN mkdir -p /data/emulator /data/screenshots
@@ -98,4 +98,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
     CMD adb shell getprop sys.boot_completed | grep -q "1" || exit 1
 
 # Start emulator with VNC
-CMD ["/usr/local/bin/start_emulator_fixed.sh"]
+CMD ["/usr/local/bin/start_emulator.sh"]
