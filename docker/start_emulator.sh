@@ -202,10 +202,7 @@ fi
 
 echo "Configuring emulator settings..."
 
-# Enable ADB over network
-adb tcpip 5555
-sleep 2
-adb connect localhost:5555
+# Network connection already established, skip duplicate setup
 
 # Configure emulator settings
 echo "Applying Android settings..."
