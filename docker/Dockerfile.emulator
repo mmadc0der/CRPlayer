@@ -40,8 +40,7 @@ ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 ENV PULSE_RUNTIME_PATH=/dev/null
 ENV PULSE_CLIENTCONFIG=/dev/null
 
-# Configure ADB server to listen on all interfaces
-ENV ADB_SERVER_SOCKET=tcp:0.0.0.0:5037
+# Use default local ADB server inside container (no remote bind on 0.0.0.0)
 
 # Download and install Android SDK
 ENV ANDROID_SDK_ROOT=/opt/android-sdk

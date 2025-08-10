@@ -58,9 +58,9 @@ echo "Stopping any existing ADB server..."
 adb kill-server 2>/dev/null || true
 sleep 2
 
-# Start ADB server with external binding
-echo "Starting ADB server for external access..."
-export ADB_SERVER_SOCKET=tcp:0.0.0.0:5037
+# Start local ADB server (loopback)
+echo "Starting local ADB server..."
+unset ADB_SERVER_SOCKET
 adb start-server
 sleep 3
 
