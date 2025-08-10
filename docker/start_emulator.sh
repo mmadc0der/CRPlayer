@@ -30,7 +30,7 @@ sleep 3
 
 # Start VNC server for remote access (bind to all interfaces for external access)
 echo "Starting VNC server..."
-x11vnc -display :99 -nopw -listen 0.0.0.0 -xkb -forever -shared -bg -rfbport 5900 -o /tmp/x11vnc.log
+x11vnc -display :99 -nopw -listen 0.0.0.0 -xkb -noxdamage -forever -shared -bg -rfbport 5900 -o /tmp/x11vnc.log
 
 # Verify VNC is running
 sleep 2
@@ -92,7 +92,7 @@ if [ "$KVM_AVAILABLE" = true ]; then
     echo "Starting emulator with KVM acceleration..."
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
-        -gpu host \
+        -gpu angle_indirect \
         -memory ${EMULATOR_RAM:-4096} \
         -partition-size ${EMULATOR_PARTITION:-8192} \
         -no-snapshot-save \
