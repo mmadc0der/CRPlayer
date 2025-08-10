@@ -73,10 +73,10 @@ RUN mkdir -p /root/.android/avd/${AVD_NAME}.avd && \
     echo "hw.gpu.mode=angle_indirect" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.angle=swiftshader" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.vulkan=no" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "hw.ramSize=4096" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "disk.dataPartition.size=8192MB" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.ramSize=8192" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "disk.dataPartition.size=16384MB" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.keyboard=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "hw.cpu.ncore=4" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.cpu.ncore=8" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.sensors.orientation=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.sensors.proximity=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.dPad=no" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
@@ -100,7 +100,7 @@ RUN chmod +x /usr/local/bin/start_emulator.sh
 RUN mkdir -p /data/emulator /data/screenshots
 
 # Expose ports
-EXPOSE 5037 5555 5900
+EXPOSE 5555 5900
 
 # Set working directory
 WORKDIR /app

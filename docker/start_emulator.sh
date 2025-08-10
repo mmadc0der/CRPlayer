@@ -93,8 +93,8 @@ if [ "$KVM_AVAILABLE" = true ]; then
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
         -gpu angle_indirect \
-        -memory ${EMULATOR_RAM:-4096} \
-        -partition-size ${EMULATOR_PARTITION:-8192} \
+        -memory ${EMULATOR_RAM:-8192} \
+        -partition-size ${EMULATOR_PARTITION:-16384} \
         -no-snapshot-save \
         -no-snapshot-load \
         -wipe-data \
@@ -111,8 +111,8 @@ else
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
         -gpu swiftshader_indirect \
-        -memory ${EMULATOR_RAM:-3072} \
-        -partition-size ${EMULATOR_PARTITION:-6144} \
+        -memory ${EMULATOR_RAM:-16384} \
+        -partition-size ${EMULATOR_PARTITION:-32768} \
         -no-snapshot-save \
         -no-snapshot-load \
         -wipe-data \
