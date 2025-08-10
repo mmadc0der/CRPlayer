@@ -1,0 +1,109 @@
+version: '3.8'
+
+services:
+  # Android Emulator Service
+  android-emulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.emulator
+    container_name: cr_emulator
+    privileged: true
+    ports:
+      - "5555:5555"  # ADB port
+      - "5900:5900"  # VNC port
+    volumes:
+      - ./data/emulator:/data/emulator
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    environment:
+      - DISPLAY=:0
+      - EMULATOR_DEVICE=Nexus_5X_API_30
+      - EMULATOR_ARCH=x86_64
+      - VNC_PASSWORD=crplayer123
+    devices:
+      - /dev/kvm:/dev/kvm  # Hardware acceleration
+    networks:
+      - crplayer-network
+    restart: unless-stopped
+
+  # ML Training/Inference Service
+  ml-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: cr_ml_server
+    ports:
+      - "8080:8080"  # REST API
+      - "8081:8081"  # WebSocket
+    volumes:
+      - ../src:/app/src
+      - ../config:/app/config
+      - ../data:/app/data
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONPATH=/app
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      - android-emulator
+      - redis
+      - mongodb
+    networks:
+      - crplayer-network
+    restart: unless-stopped
+
+  # Redis for caching and message queue
+  redis:
+    image: redis:7-alpine
+    container_name: cr_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - crplayer-network
+    restart: unless-stopped
+
+  # MongoDB for replay data storage
+  mongodb:
+    image: mongo:6
+    container_name: cr_mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=crplayer
+      - MONGO_INITDB_ROOT_PASSWORD=crplayer123
+    networks:
+      - crplayer-network
+    restart: unless-stopped
+
+  # Monitoring with Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cr_grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=crplayer123
+    networks:
+      - crplayer-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  mongodb_data:
+  grafana_data:
+
+networks:
+  crplayer-network:
+    driver: bridge
