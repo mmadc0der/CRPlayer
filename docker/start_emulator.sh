@@ -61,8 +61,7 @@ sleep 2
 # Start ADB server
 echo "Starting ADB server..."
 adb start-server
-sleep 2
-adb start-server
+sleep 3
 
 # Debug: Check emulator availability
 echo "=== Debug Information ==="
@@ -131,38 +130,74 @@ else
     exit 1
 fi
 
-# Wait for emulator to boot
-echo "Waiting for emulator to boot..."
+# Wait for emulator to boot and establish ADB connection
+echo "Waiting for emulator to boot and establishing ADB connection..."
+
+# First, wait for emulator to be responsive
 timeout=300
+echo "Phase 1: Waiting for emulator to become responsive..."
 while [ $timeout -gt 0 ]; do
-    # Try to connect to emulator
-    adb connect localhost:5555 >/dev/null 2>&1 || true
+    # Restart ADB server if needed
+    if ! pgrep -f "adb.*server" >/dev/null; then
+        echo "Restarting ADB server..."
+        adb kill-server 2>/dev/null || true
+        sleep 2
+        adb start-server
+        sleep 3
+    fi
     
-    if adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
-        echo " Emulator booted successfully"
+    # Try to detect emulator
+    if adb devices | grep -q "emulator-5554"; then
+        echo "✅ Emulator detected by ADB"
         break
     fi
-    echo "Waiting for boot... ($timeout seconds remaining)"
+    
+    echo "Waiting for emulator detection... ($timeout seconds remaining)"
     sleep 5
     timeout=$((timeout - 5))
 done
 
 if [ $timeout -le 0 ]; then
-    echo " Emulator boot timeout"
+    echo "❌ Emulator detection timeout"
+    echo "Available ADB devices:"
+    adb devices -l
     exit 1
 fi
 
-# Ensure ADB connection is established
-echo "Establishing ADB connection..."
-adb connect localhost:5555
-sleep 2
+# Phase 2: Wait for Android boot completion
+echo "Phase 2: Waiting for Android system boot..."
+timeout=300
+while [ $timeout -gt 0 ]; do
+    if adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
+        echo "✅ Android system booted successfully"
+        break
+    fi
+    echo "Waiting for Android boot... ($timeout seconds remaining)"
+    sleep 10
+    timeout=$((timeout - 10))
+done
 
-# Verify connection
+if [ $timeout -le 0 ]; then
+    echo "⚠️ Android boot timeout, but continuing..."
+fi
+
+# Phase 3: Establish network ADB connection
+echo "Phase 3: Establishing network ADB connection..."
+adb -s emulator-5554 tcpip 5555
+sleep 3
+adb connect localhost:5555
+sleep 3
+
+# Verify final connection
+echo "Final ADB connection status:"
+adb devices -l
+
 if adb devices | grep -q "5555.*device"; then
-    echo " ADB connected successfully"
+    echo "✅ ADB network connection established successfully"
+elif adb devices | grep -q "emulator-5554.*device"; then
+    echo "✅ ADB USB connection working (network connection optional)"
 else
-    echo "  ADB connection may be unstable"
-    echo "Warning: Boot may not be complete, but continuing..."
+    echo "⚠️ ADB connection may be unstable, but continuing..."
 fi
 
 echo "Configuring emulator settings..."
