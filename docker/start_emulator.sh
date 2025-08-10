@@ -58,10 +58,11 @@ echo "Stopping any existing ADB server..."
 adb kill-server 2>/dev/null || true
 sleep 2
 
-# Start local ADB server (loopback)
-echo "Starting local ADB server..."
+# Start ADB server listening on all interfaces (for host to reach container ADB server)
+echo "Starting ADB server (0.0.0.0:5037)..."
 unset ADB_SERVER_SOCKET
-adb start-server
+adb kill-server 2>/dev/null || true
+nohup adb -a -P 5037 server nodaemon >/tmp/adb_server.log 2>&1 &
 sleep 3
 
 # Debug: Check emulator availability
@@ -184,28 +185,24 @@ if [ $timeout -le 0 ]; then
     echo "⚠️ Android boot timeout, but continuing..."
 fi
 
-# Phase 3: Establish network ADB connection
-echo "Phase 3: Establishing network ADB connection..."
+# Phase 3: Enable network ADB mode (do not auto-connect from inside container)
+echo "Phase 3: Enabling network ADB mode on port 5555 (host should connect)..."
 adb -s emulator-5554 tcpip 5555
 sleep 3
 
-# Connect locally
-adb connect localhost:5555
-sleep 3
+# Ensure container ADB server does not hold a connection to localhost:5555
+echo "Disconnecting any local ADB TCP connections inside container..."
+adb disconnect localhost:5555 2>/dev/null || true
+adb disconnect :5555 2>/dev/null || true
+sleep 1
 
-echo "Network ADB connection established"
+# Stop container ADB server so only host connects over mapped port
+echo "Stopping container ADB server to free TCP device for host..."
+adb kill-server 2>/dev/null || true
 
-# Verify final connection
-echo "Final ADB connection status:"
+# Show current ADB devices inside container for reference
+echo "Current ADB connection status (inside container):"
 adb devices -l
-
-if adb devices | grep -q "5555.*device"; then
-    echo "✅ ADB network connection established successfully"
-elif adb devices | grep -q "emulator-5554.*device"; then
-    echo "✅ ADB USB connection working (network connection optional)"
-else
-    echo "⚠️ ADB connection may be unstable, but continuing..."
-fi
 
 echo "Configuring emulator settings..."
 
