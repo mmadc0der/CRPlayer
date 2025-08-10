@@ -34,7 +34,9 @@ cleanup() {
 # Set trap for cleanup
 trap cleanup SIGTERM SIGINT
 
-# Start ADB server
+# Start ADB server and clean up any existing connections
+adb kill-server
+sleep 2
 adb start-server
 
 # Debug: Check emulator availability
@@ -48,11 +50,12 @@ $ANDROID_SDK_ROOT/emulator/emulator -version 2>/dev/null || echo "emulator versi
 
 # Check if KVM is available
 KVM_AVAILABLE=false
-if [ -e /dev/kvm ]; then
-    echo "KVM device found, enabling hardware acceleration"
+if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+    echo "KVM device found and accessible, enabling hardware acceleration"
     KVM_AVAILABLE=true
 else
-    echo "KVM device not found, using software acceleration"
+    echo "KVM device not accessible, using software acceleration"
+    echo "KVM status: $(ls -la /dev/kvm 2>/dev/null || echo 'not found')"
     KVM_AVAILABLE=false
 fi
 
@@ -60,31 +63,33 @@ fi
 echo "Starting Android emulator..."
 if [ "$KVM_AVAILABLE" = true ]; then
     # With hardware acceleration
+    echo "Starting emulator with KVM acceleration..."
     $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
         -no-window \
-        -gpu ${EMULATOR_GPU:-swiftshader_indirect} \
-        -memory ${EMULATOR_RAM:-2048} \
-        -partition-size ${EMULATOR_PARTITION:-4096} \
+        -gpu swiftshader_indirect \
+        -memory ${EMULATOR_RAM:-3072} \
+        -partition-size ${EMULATOR_PARTITION:-6144} \
         -no-snapshot-save \
         -no-snapshot-load \
         -wipe-data \
         -port 5554 \
-        -accel on \
+        -accel kvm \
         -verbose &
 else
     # Software only mode
+    echo "Starting emulator in software mode..."
     $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
         -no-window \
-        -gpu ${EMULATOR_GPU:-swiftshader_indirect} \
+        -gpu swiftshader_indirect \
         -memory ${EMULATOR_RAM:-2048} \
         -partition-size ${EMULATOR_PARTITION:-4096} \
         -no-snapshot-save \
         -no-snapshot-load \
         -wipe-data \
         -port 5554 \
-        -accel ${EMULATOR_ACCEL:-off} \
+        -accel off \
         -verbose &
 fi
 
@@ -157,7 +162,11 @@ echo "Emulator PID: $EMULATOR_PID"
 echo "Available memory: $(free -h | grep Mem)"
 echo "CPU info: $(nproc) cores"
 echo "KVM available: $(ls -la /dev/kvm 2>/dev/null || echo 'No KVM - using software mode')"
-echo "Acceleration mode: ${EMULATOR_ACCEL:-off}"
+if [ "$KVM_AVAILABLE" = true ]; then
+    echo "Acceleration mode: KVM (hardware)"
+else
+    echo "Acceleration mode: Software only"
+fi
 
 # Monitor emulator process
 monitor_emulator() {
