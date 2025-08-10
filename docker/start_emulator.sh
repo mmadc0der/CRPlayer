@@ -58,8 +58,9 @@ echo "Stopping any existing ADB server..."
 adb kill-server 2>/dev/null || true
 sleep 2
 
-# Start ADB server
-echo "Starting ADB server..."
+# Start ADB server with external binding
+echo "Starting ADB server for external access..."
+export ADBHOST=0.0.0.0
 adb start-server
 sleep 3
 

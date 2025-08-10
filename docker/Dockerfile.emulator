@@ -40,6 +40,9 @@ ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 ENV PULSE_RUNTIME_PATH=/dev/null
 ENV PULSE_CLIENTCONFIG=/dev/null
 
+# Configure ADB to listen on all interfaces
+ENV ADBHOST=0.0.0.0
+
 # Download and install Android SDK
 ENV ANDROID_SDK_ROOT=/opt/android-sdk
 ENV PATH=${PATH}:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:${ANDROID_SDK_ROOT}/emulator
