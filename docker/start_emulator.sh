@@ -85,14 +85,17 @@ if [ "$KVM_AVAILABLE" = true ]; then
     echo "Starting emulator with KVM acceleration..."
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
-        -gpu swiftshader_indirect \
-        -memory ${EMULATOR_RAM:-3072} \
-        -partition-size ${EMULATOR_PARTITION:-6144} \
+        -gpu host \
+        -memory ${EMULATOR_RAM:-4096} \
+        -partition-size ${EMULATOR_PARTITION:-8192} \
         -no-snapshot-save \
         -no-snapshot-load \
         -wipe-data \
         -port 5554 \
         -accel on \
+        -feature -Vulkan \
+        -camera-back webcam0 \
+        -camera-front webcam0 \
         -verbose &
 else
     # Software only mode
@@ -100,8 +103,8 @@ else
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
         -gpu swiftshader_indirect \
-        -memory ${EMULATOR_RAM:-2048} \
-        -partition-size ${EMULATOR_PARTITION:-4096} \
+        -memory ${EMULATOR_RAM:-3072} \
+        -partition-size ${EMULATOR_PARTITION:-6144} \
         -no-snapshot-save \
         -no-snapshot-load \
         -wipe-data \

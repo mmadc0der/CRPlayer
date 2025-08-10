@@ -65,14 +65,21 @@ RUN echo "no" | avdmanager create avd \
     --package "system-images;android-30;google_apis;x86_64" \
     --device "Nexus 5X"
 
-# Configure emulator settings (без KVM)
+# Configure emulator settings for better app compatibility
 RUN mkdir -p /root/.android/avd/${AVD_NAME}.avd && \
     echo "hw.gpu.enabled=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "hw.gpu.mode=swiftshader_indirect" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "hw.ramSize=2048" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "disk.dataPartition.size=4096MB" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.gpu.mode=host" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.ramSize=4096" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "disk.dataPartition.size=8192MB" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.keyboard=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "hw.cpu.ncore=2" >> /root/.android/avd/${AVD_NAME}.avd/config.ini
+    echo "hw.cpu.ncore=4" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.sensors.orientation=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.sensors.proximity=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.dPad=no" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.gps=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.battery=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.accelerometer=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.gyroscope=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini
 
 # Install Python dependencies for automation
 RUN pip3 install --no-cache-dir \
