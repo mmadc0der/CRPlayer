@@ -54,7 +54,7 @@ RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
 
 # Accept licenses and install SDK components
 RUN yes | sdkmanager --licenses && \
-    sdkmanager "platform-tools" "platforms;android-30" "system-images;android-30;google_apis;x86_64" "emulator" && \
+    sdkmanager "platform-tools" "platforms;android-33" "system-images;android-33;google_apis_playstore;x86_64" "emulator" && \
     # Verify emulator installation
     ls -la ${ANDROID_SDK_ROOT}/emulator/ && \
     ls -la ${ANDROID_SDK_ROOT}/emulator/emulator
@@ -64,13 +64,15 @@ ENV AVD_NAME=ClashRoyale_AVD
 RUN echo "no" | avdmanager create avd \
     --force \
     --name ${AVD_NAME} \
-    --package "system-images;android-30;google_apis;x86_64" \
+    --package "system-images;android-33;google_apis_playstore;x86_64" \
     --device "Nexus 5X"
 
 # Configure emulator settings for better app compatibility
 RUN mkdir -p /root/.android/avd/${AVD_NAME}.avd && \
     echo "hw.gpu.enabled=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "hw.gpu.mode=host" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.gpu.mode=angle_indirect" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.angle=swiftshader" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.vulkan=no" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.ramSize=4096" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "disk.dataPartition.size=8192MB" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.keyboard=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
