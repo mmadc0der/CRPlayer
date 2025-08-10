@@ -102,6 +102,7 @@ if [ "$KVM_AVAILABLE" = true ]; then
         -feature -Vulkan \
         -camera-back webcam0 \
         -camera-front webcam0 \
+        -skip-adb-auth \
         -verbose &
 else
     # Software only mode
@@ -116,6 +117,7 @@ else
         -wipe-data \
         -port 5554 \
         -accel off \
+        -skip-adb-auth \
         -verbose &
 fi
 
