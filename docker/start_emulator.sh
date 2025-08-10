@@ -60,7 +60,7 @@ sleep 2
 
 # Start ADB server with external binding
 echo "Starting ADB server for external access..."
-export ADBHOST=0.0.0.0
+export ADB_SERVER_SOCKET=tcp:0.0.0.0:5037
 adb start-server
 sleep 3
 

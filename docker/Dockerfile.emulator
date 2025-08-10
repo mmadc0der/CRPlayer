@@ -40,8 +40,8 @@ ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 ENV PULSE_RUNTIME_PATH=/dev/null
 ENV PULSE_CLIENTCONFIG=/dev/null
 
-# Configure ADB to listen on all interfaces
-ENV ADBHOST=0.0.0.0
+# Configure ADB server to listen on all interfaces
+ENV ADB_SERVER_SOCKET=tcp:0.0.0.0:5037
 
 # Download and install Android SDK
 ENV ANDROID_SDK_ROOT=/opt/android-sdk
@@ -99,7 +99,7 @@ RUN chmod +x /usr/local/bin/start_emulator.sh
 RUN mkdir -p /data/emulator /data/screenshots
 
 # Expose ports
-EXPOSE 5555 5900
+EXPOSE 5037 5555 5900
 
 # Set working directory
 WORKDIR /app

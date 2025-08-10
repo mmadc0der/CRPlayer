@@ -9,10 +9,12 @@ services:
     container_name: cr_emulator_test
     privileged: true
     ports:
-      - "5555:5555"  # ADB port
+      - "5037:5037"  # ADB server port (host access)
+      - "5555:5555"  # ADB device port
       - "5900:5900"  # VNC port
     volumes:
       - emulator_data:/data/emulator
+      - ${HOME}/.android:/root/.android:rw
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     environment:
       - DISPLAY=:99
