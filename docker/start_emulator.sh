@@ -185,8 +185,21 @@ fi
 echo "Phase 3: Establishing network ADB connection..."
 adb -s emulator-5554 tcpip 5555
 sleep 3
+
+# Connect locally first
 adb connect localhost:5555
+sleep 2
+
+# Enable ADB to listen on all interfaces (for external access)
+echo "Configuring ADB for external access..."
+adb kill-server
+export ADB_SERVER_SOCKET=tcp:0.0.0.0:5037
+adb start-server
 sleep 3
+
+# Reconnect to emulator
+adb connect localhost:5555
+sleep 2
 
 # Verify final connection
 echo "Final ADB connection status:"
