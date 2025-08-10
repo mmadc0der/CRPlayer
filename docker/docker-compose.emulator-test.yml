@@ -9,7 +9,6 @@ services:
     container_name: cr_emulator_test
     privileged: true
     ports:
-      - "5037:5037"  # ADB server port (host access)
       - "5555:5555"  # ADB device port
       - "5900:5900"  # VNC port
     volumes:
