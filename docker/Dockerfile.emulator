@@ -18,10 +18,26 @@ RUN apt-get update && apt-get install -y \
     x11vnc \
     xvfb \
     fluxbox \
+    libpulse0 \
+    libnss3 \
+    libxss1 \
+    libgconf-2-4 \
+    libxtst6 \
+    libxrandr2 \
+    libasound2 \
+    libpangocairo-1.0-0 \
+    libatk1.0-0 \
+    libcairo-gobject2 \
+    libgtk-3-0 \
+    libgdk-pixbuf2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Set JAVA_HOME
 ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+
+# Disable audio to avoid PulseAudio issues
+ENV PULSE_RUNTIME_PATH=/dev/null
+ENV PULSE_CLIENTCONFIG=/dev/null
 
 # Download and install Android SDK
 ENV ANDROID_SDK_ROOT=/opt/android-sdk
@@ -38,7 +54,7 @@ RUN yes | sdkmanager --licenses && \
     sdkmanager "platform-tools" "platforms;android-30" "system-images;android-30;google_apis;x86_64" "emulator" && \
     # Verify emulator installation
     ls -la ${ANDROID_SDK_ROOT}/emulator/ && \
-    ${ANDROID_SDK_ROOT}/emulator/emulator -version
+    ls -la ${ANDROID_SDK_ROOT}/emulator/emulator
 
 # Create AVD
 ENV AVD_NAME=ClashRoyale_AVD
