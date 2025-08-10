@@ -83,9 +83,8 @@ echo "Starting Android emulator..."
 if [ "$KVM_AVAILABLE" = true ]; then
     # With hardware acceleration
     echo "Starting emulator with KVM acceleration..."
-    $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
+    DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
-        -no-window \
         -gpu swiftshader_indirect \
         -memory ${EMULATOR_RAM:-3072} \
         -partition-size ${EMULATOR_PARTITION:-6144} \
@@ -98,9 +97,8 @@ if [ "$KVM_AVAILABLE" = true ]; then
 else
     # Software only mode
     echo "Starting emulator in software mode..."
-    $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
+    DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
-        -no-window \
         -gpu swiftshader_indirect \
         -memory ${EMULATOR_RAM:-2048} \
         -partition-size ${EMULATOR_PARTITION:-4096} \
