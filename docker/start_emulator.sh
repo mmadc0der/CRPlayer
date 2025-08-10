@@ -74,7 +74,7 @@ if [ "$KVM_AVAILABLE" = true ]; then
         -no-snapshot-load \
         -wipe-data \
         -port 5554 \
-        -accel kvm \
+        -accel on \
         -verbose &
 else
     # Software only mode
