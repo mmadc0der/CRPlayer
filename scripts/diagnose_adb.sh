@@ -10,7 +10,7 @@ echo "=== ADB Connection Diagnostic ==="
 # Function to check if emulator container is running
 check_container() {
     echo "Checking Docker container status..."
-    if docker ps | grep -q "android-emulator-test"; then
+    if docker ps | grep -q "cr_emulator_test"; then
         echo "✅ Emulator container is running"
         return 0
     else
@@ -43,12 +43,12 @@ check_ports() {
 check_emulator_process() {
     echo "Checking emulator process inside container..."
     
-    if docker exec android-emulator-test ps aux | grep -q "[e]mulator"; then
+    if docker exec cr_emulator_test ps aux | grep -q "[e]mulator"; then
         echo "✅ Emulator process is running inside container"
         
         # Show emulator process details
         echo "Emulator process details:"
-        docker exec android-emulator-test ps aux | grep "[e]mulator" | head -1
+        docker exec cr_emulator_test ps aux | grep "[e]mulator" | head -1
     else
         echo "❌ Emulator process is not running inside container"
     fi
@@ -59,19 +59,19 @@ check_adb_server() {
     echo "Checking ADB server inside container..."
     
     # Check if ADB server is running
-    if docker exec android-emulator-test pgrep adb >/dev/null 2>&1; then
+    if docker exec cr_emulator_test pgrep adb >/dev/null 2>&1; then
         echo "✅ ADB server is running inside container"
         
         # Show ADB server processes
         echo "ADB processes:"
-        docker exec android-emulator-test ps aux | grep "[a]db" || echo "No ADB processes found"
+        docker exec cr_emulator_test ps aux | grep "[a]db" || echo "No ADB processes found"
     else
         echo "❌ ADB server is not running inside container"
     fi
     
     # Check ADB devices inside container
     echo "ADB devices inside container:"
-    docker exec android-emulator-test adb devices -l || echo "Failed to get ADB devices"
+    docker exec cr_emulator_test adb devices -l || echo "Failed to get ADB devices"
 }
 
 # Function to restart ADB connection
@@ -84,7 +84,7 @@ restart_adb() {
     
     # Restart ADB server inside container
     echo "Restarting ADB server inside container..."
-    docker exec android-emulator-test bash -c "
+    docker exec cr_emulator_test bash -c "
         adb kill-server 2>/dev/null || true
         sleep 2
         adb start-server
@@ -106,7 +106,7 @@ restart_adb() {
 # Function to show container logs
 show_container_logs() {
     echo "Recent container logs (last 50 lines):"
-    docker logs --tail 50 android-emulator-test
+    docker logs --tail 50 cr_emulator_test
 }
 
 # Function to test ADB commands
