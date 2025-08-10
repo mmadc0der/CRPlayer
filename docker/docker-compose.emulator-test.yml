@@ -13,7 +13,9 @@ services:
       - "5900:5900"  # VNC port
     volumes:
       - emulator_data:/data/emulator
-      - ${HOME}/.android:/root/.android:rw
+      # Mount only ADB keys to keep prebuilt AVD inside image
+      - ${HOME}/.android/adbkey:/root/.android/adbkey:ro
+      - ${HOME}/.android/adbkey.pub:/root/.android/adbkey.pub:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     environment:
       - DISPLAY=:99
