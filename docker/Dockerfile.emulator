@@ -64,7 +64,7 @@ ENV AVD_NAME=ClashRoyale_AVD
 RUN echo "no" | avdmanager create avd \
     --force \
     --name ${AVD_NAME} \
-    --package "system-images;android-33;google_apis_playstore;x86_64" \
+    --package "system-images;android-30;google_apis_playstore;x86_64" \
     --device "Nexus 5X"
 
 # Configure emulator settings for better app compatibility
