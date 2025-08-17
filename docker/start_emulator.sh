@@ -95,6 +95,7 @@ if [ "$KVM_AVAILABLE" = true ]; then
         -gpu swiftshader_indirect \
         -memory ${EMULATOR_RAM:-8192} \
         -partition-size ${EMULATOR_PARTITION:-16384} \
+        -writable-system \
         -no-snapshot-save \
         -no-snapshot-load \
         -wipe-data \
@@ -112,6 +113,7 @@ else
         -gpu swiftshader_indirect \
         -memory ${EMULATOR_RAM:-16384} \
         -partition-size ${EMULATOR_PARTITION:-32768} \
+        -writable-system \
         -no-snapshot-save \
         -no-snapshot-load \
         -wipe-data \
