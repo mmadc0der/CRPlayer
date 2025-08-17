@@ -65,7 +65,7 @@ RUN echo "no" | avdmanager create avd \
     --force \
     --name ${AVD_NAME} \
     --package "system-images;android-35;google_apis_playstore;x86_64" \
-    --device "Nexus_5_API_35"
+    --device "Nexus 5X"
 
 # Configure emulator settings for better app compatibility
 RUN mkdir -p /root/.android/avd/${AVD_NAME}.avd && \
