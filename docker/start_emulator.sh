@@ -189,10 +189,41 @@ fi
 # Phase 2.5: Install Houdini
 install_houdini() {
     echo "Installing ARM translation (houdini)..."
+    # Skip unless explicitly enabled
+    if [ "${INSTALL_HOUDINI}" != "true" ] && [ "${INSTALL_HOUDINI}" != "1" ]; then
+        echo "INSTALL_HOUDINI is not enabled. Skipping Houdini installation."
+        return 0
+    fi
 
-    adb -s emulator-5554 root || true
+    # Ensure adbd can root; if not, skip gracefully
+    if ! adb -s emulator-5554 root; then
+        echo "adb root not available on this image. Skipping Houdini installation."
+        return 0
+    fi
     sleep 2
-    adb -s emulator-5554 remount || true
+
+    # For dynamic partitions/verity on Android 10+, disable verity then reboot
+    if ! adb -s emulator-5554 remount; then
+        echo "Attempting to disable verity and remount..."
+        adb -s emulator-5554 disable-verity || adb -s emulator-5554 shell avbctl disable-verification || true
+        adb -s emulator-5554 reboot
+        echo "Waiting for device after reboot (post-verity disable)..."
+        # Wait for boot completion again
+        timeout=300
+        while [ $timeout -gt 0 ]; do
+            if adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
+                echo "✅ Android system booted after verity disable"
+                break
+            fi
+            sleep 5
+            timeout=$((timeout - 5))
+        done
+        # Try root and remount again
+        adb -s emulator-5554 root || true
+        sleep 2
+        adb -s emulator-5554 remount || true
+        sleep 2
+    fi
     sleep 2
 
     # Push libraries if they exist
@@ -219,7 +250,12 @@ install_houdini() {
     sleep 10
 }
 
-install_houdini
+# Only attempt Houdini install when requested via env var
+if [ "${INSTALL_HOUDINI}" = "true" ] || [ "${INSTALL_HOUDINI}" = "1" ]; then
+    install_houdini
+else
+    echo "Skipping Houdini installation (native ARM translation preferred or not needed)."
+fi
 
 # Phase 3: Enable network ADB mode (do not auto-connect from inside container)
 echo "Phase 3: Enabling network ADB mode on port 5555 (host should connect)..."
