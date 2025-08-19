@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Android Emulator для тестирования
   android-emulator-test:
@@ -22,7 +20,7 @@ services:
       - VNC_PASSWORD=crplayer123
       - EMULATOR_RAM=16384
       - EMULATOR_PARTITION=32768
-      - EMULATOR_GPU_MODE=angle_indirect
+      - EMULATOR_GPU_MODE=guest
       - EMULATOR_ENABLE_VULKAN=0
     devices:
       - /dev/kvm:/dev/kvm  # Hardware acceleration

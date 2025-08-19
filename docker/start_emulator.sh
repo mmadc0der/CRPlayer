@@ -88,6 +88,11 @@ fi
 # Start Android emulator
 echo "Starting Android emulator..."
 
+# Normalize memory/partition envs for clarity in logs
+MEMORY_MB=${EMULATOR_RAM:-8192}
+PARTITION_MB=${EMULATOR_PARTITION:-16384}
+echo "Emulator memory: ${MEMORY_MB} MB | System partition: ${PARTITION_MB} MB"
+
 # GPU/Vulkan configuration via environment variables
 # EMULATOR_GPU_MODE: swiftshader_indirect (default) | angle_indirect | guest
 # EMULATOR_ENABLE_VULKAN: true|1 to add Vulkan feature; requires AVD configured with Vulkan support
@@ -104,8 +109,8 @@ if [ "$KVM_AVAILABLE" = true ]; then
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
         -gpu ${GPU_MODE} \
-        -memory ${EMULATOR_RAM:-8192} \
-        -partition-size ${EMULATOR_PARTITION:-16384} \
+        -memory ${MEMORY_MB} \
+        -partition-size ${PARTITION_MB} \
         -writable-system \
         -no-snapshot-save \
         -no-snapshot-load \
@@ -123,8 +128,8 @@ else
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
         -gpu ${GPU_MODE} \
-        -memory ${EMULATOR_RAM:-16384} \
-        -partition-size ${EMULATOR_PARTITION:-32768} \
+        -memory ${MEMORY_MB} \
+        -partition-size ${PARTITION_MB} \
         -writable-system \
         -no-snapshot-save \
         -no-snapshot-load \
