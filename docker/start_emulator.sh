@@ -87,12 +87,23 @@ fi
 
 # Start Android emulator
 echo "Starting Android emulator..."
+
+# GPU/Vulkan configuration via environment variables
+# EMULATOR_GPU_MODE: swiftshader_indirect (default) | angle_indirect | guest
+# EMULATOR_ENABLE_VULKAN: true|1 to add Vulkan feature; requires AVD configured with Vulkan support
+# FORCE_GLES2: true|1 to set debug.egl.force_v2=1
+GPU_MODE=${EMULATOR_GPU_MODE:-swiftshader_indirect}
+VULKAN_FEATURE_ARGS=""
+if [ "${EMULATOR_ENABLE_VULKAN}" = "true" ] || [ "${EMULATOR_ENABLE_VULKAN}" = "1" ]; then
+    VULKAN_FEATURE_ARGS="-feature Vulkan"
+fi
+echo "Emulator GPU mode: ${GPU_MODE} | Vulkan enabled: ${EMULATOR_ENABLE_VULKAN:-false}"
 if [ "$KVM_AVAILABLE" = true ]; then
     # With hardware acceleration
     echo "Starting emulator with KVM acceleration..."
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
-        -gpu swiftshader_indirect \
+        -gpu ${GPU_MODE} \
         -memory ${EMULATOR_RAM:-8192} \
         -partition-size ${EMULATOR_PARTITION:-16384} \
         -writable-system \
@@ -104,13 +115,14 @@ if [ "$KVM_AVAILABLE" = true ]; then
         -camera-back webcam0 \
         -camera-front webcam0 \
         -skip-adb-auth \
+        ${VULKAN_FEATURE_ARGS} \
         -verbose &
 else
     # Software only mode
     echo "Starting emulator in software mode..."
     DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
         -no-audio \
-        -gpu swiftshader_indirect \
+        -gpu ${GPU_MODE} \
         -memory ${EMULATOR_RAM:-16384} \
         -partition-size ${EMULATOR_PARTITION:-32768} \
         -writable-system \
@@ -120,6 +132,7 @@ else
         -port 5554 \
         -accel off \
         -skip-adb-auth \
+        ${VULKAN_FEATURE_ARGS} \
         -verbose &
 fi
 
