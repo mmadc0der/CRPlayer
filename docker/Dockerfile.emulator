@@ -54,17 +54,27 @@ RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
 
 # Accept licenses and install SDK components
 RUN yes | sdkmanager --licenses && \
-    sdkmanager "platform-tools" "platforms;android-35" "system-images;android-35;google_apis_playstore;x86_64" "emulator" && \
+    sdkmanager "platform-tools" "platforms;android-31" "system-images;android-31;google_apis_playstore;x86_64" "emulator" && \
     # Verify emulator installation
     ls -la ${ANDROID_SDK_ROOT}/emulator/ && \
     ls -la ${ANDROID_SDK_ROOT}/emulator/emulator
+
+# Install Houdini
+RUN mkdir -p /opt/houdini && \
+    wget -q -O /opt/houdini/houdini.sfs http://dl.android-x86.org/houdini/9_y/houdini.sfs && \
+    # extract using unsquashfs
+    apt-get update && apt-get install -y squashfs-tools && \
+    unsquashfs -f -d /opt/houdini/extracted /opt/houdini/houdini.sfs && \
+    # Houdini .sfs usually contains /system/lib*/libhoudini.so and /system/bin/houdini*
+    echo "Houdini extracted to /opt/houdini/extracted" && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create AVD
 ENV AVD_NAME=ClashRoyale_AVD
 RUN echo "no" | avdmanager create avd \
     --force \
     --name ${AVD_NAME} \
-    --package "system-images;android-35;google_apis_playstore;x86_64" \
+    --package "system-images;android-31;google_apis_playstore;x86_64" \
     --device "Nexus 5X"
 
 # Configure emulator settings for better app compatibility

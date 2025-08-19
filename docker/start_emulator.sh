@@ -186,6 +186,41 @@ if [ $timeout -le 0 ]; then
     echo "⚠️ Android boot timeout, but continuing..."
 fi
 
+# Phase 2.5: Install Houdini
+install_houdini() {
+    echo "Installing ARM translation (houdini)..."
+
+    adb -s emulator-5554 root || true
+    sleep 2
+    adb -s emulator-5554 remount || true
+    sleep 2
+
+    # Push libraries if they exist
+    if [ -f "/opt/houdini/extracted/system/lib/libhoudini.so" ]; then
+        adb -s emulator-5554 push /opt/houdini/extracted/system/lib/libhoudini.so /system/lib/libhoudini.so
+    fi
+    if [ -f "/opt/houdini/extracted/system/lib64/libhoudini.so" ]; then
+        adb -s emulator-5554 push /opt/houdini/extracted/system/lib64/libhoudini.so /system/lib64/libhoudini.so
+    fi
+    # Push houdini binary
+    if [ -f "/opt/houdini/extracted/system/bin/houdini" ]; then
+        adb -s emulator-5554 push /opt/houdini/extracted/system/bin/houdini /system/bin/houdini
+    fi
+
+    # Set executable permissions
+    adb -s emulator-5554 shell "chmod 0755 /system/lib*/libhoudini.so /system/bin/houdini" || true
+
+    # Update build.prop for interpreter mapping (optional but recommended)
+    adb -s emulator-5554 shell "echo 'ro.dalvik.vm.isa.arm=x86' >> /system/build.prop" || true
+    adb -s emulator-5554 shell "echo 'ro.dalvik.vm.isa.arm64=x86_64' >> /system/build.prop" || true
+
+    echo "Houdini files pushed. Rebooting emulator to activate..."
+    adb -s emulator-5554 reboot
+    sleep 10
+}
+
+install_houdini
+
 # Phase 3: Enable network ADB mode (do not auto-connect from inside container)
 echo "Phase 3: Enabling network ADB mode on port 5555 (host should connect)..."
 adb -s emulator-5554 tcpip 5555
