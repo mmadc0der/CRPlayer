@@ -20,7 +20,8 @@ services:
       - EMULATOR_DEVICE=Nexus
       - EMULATOR_ARCH=x86_64
       - VNC_PASSWORD=crplayer123
-      - EMULATOR_RAM=8192
+      - EMULATOR_RAM=16384
+      - EMULATOR_PARTITION=32768
     devices:
       - /dev/kvm:/dev/kvm  # Hardware acceleration
     restart: unless-stopped
