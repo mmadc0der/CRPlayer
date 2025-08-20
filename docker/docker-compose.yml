@@ -9,18 +9,13 @@ services:
     container_name: cr_emulator
     privileged: true
     ports:
-      - "5555:5555"  # ADB port
       - "5900:5900"  # VNC port
     volumes:
       - ./data/emulator:/data/emulator
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     environment:
       - DISPLAY=:0
-      - EMULATOR_DEVICE=Nexus_5X_API_30
-      - EMULATOR_ARCH=x86_64
       - VNC_PASSWORD=crplayer123
-    devices:
-      - /dev/kvm:/dev/kvm  # Hardware acceleration
     networks:
       - crplayer-network
     restart: unless-stopped

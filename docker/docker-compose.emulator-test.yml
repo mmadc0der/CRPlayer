@@ -15,15 +15,11 @@ services:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
     environment:
       - DISPLAY=:99
-      - EMULATOR_DEVICE=Nexus
-      - EMULATOR_ARCH=x86_64
       - VNC_PASSWORD=crplayer123
       - EMULATOR_RAM=16384
       - EMULATOR_PARTITION=32768
       - EMULATOR_GPU_MODE=swiftshader_indirect
       - EMULATOR_ENABLE_VULKAN=0
-    devices:
-      - /dev/kvm:/dev/kvm  # Hardware acceleration
     restart: unless-stopped
     
     # Healthcheck для проверки готовности эмулятора

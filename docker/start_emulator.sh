@@ -3,7 +3,7 @@
 # Start Emulator Script for CRPlayer (без KVM зависимости)
 set -e
 
-echo "Starting CRPlayer Android Emulator (Software Mode)..."
+echo "Starting CRPlayer Android Emulator..."
 
 # Set display for headless operation
 export DISPLAY=:99
@@ -53,17 +53,10 @@ cleanup() {
 # Set trap for cleanup
 trap cleanup SIGTERM SIGINT
 
-# Kill any existing ADB server to avoid conflicts
-echo "Stopping any existing ADB server..."
-adb kill-server 2>/dev/null || true
-sleep 2
-
-# Start ADB server listening on all interfaces (for host to reach container ADB server)
-echo "Starting ADB server (0.0.0.0:5037)..."
-unset ADB_SERVER_SOCKET
-adb kill-server 2>/dev/null || true
-nohup adb -a -P 5037 server nodaemon >/tmp/adb_server.log 2>&1 &
-sleep 3
+# Ensure a local ADB server is running (default localhost binding)
+echo "Starting local ADB server..."
+adb start-server >/tmp/adb_server.log 2>&1 || true
+sleep 1
 
 # Debug: Check emulator availability
 echo "=== Debug Information ==="
@@ -73,73 +66,27 @@ echo "Checking emulator command..."
 which emulator || echo "emulator not found in PATH"
 ls -la $ANDROID_SDK_ROOT/emulator/emulator 2>/dev/null || echo "emulator binary not found"
 $ANDROID_SDK_ROOT/emulator/emulator -version 2>/dev/null || echo "emulator version check failed"
+echo "Skipping accel-check (forcing software emulation)..."
 
-# Check if KVM is available
-KVM_AVAILABLE=false
-if [ -e /dev/kvm ] && [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
-    echo "KVM device found and accessible, enabling hardware acceleration"
-    KVM_AVAILABLE=true
-else
-    echo "KVM device not accessible, using software acceleration"
-    echo "KVM status: $(ls -la /dev/kvm 2>/dev/null || echo 'not found')"
-    KVM_AVAILABLE=false
-fi
-
-# Start Android emulator
-echo "Starting Android emulator..."
+echo "Starting Android emulator (software-only)..."
 
 # Normalize memory/partition envs for clarity in logs
 MEMORY_MB=${EMULATOR_RAM:-8192}
 PARTITION_MB=${EMULATOR_PARTITION:-16384}
 echo "Emulator memory: ${MEMORY_MB} MB | System partition: ${PARTITION_MB} MB"
 
-# GPU/Vulkan configuration via environment variables
-# EMULATOR_GPU_MODE: swiftshader_indirect (default) | angle_indirect | guest
-# EMULATOR_ENABLE_VULKAN: true|1 to add Vulkan feature; requires AVD configured with Vulkan support
-# FORCE_GLES2: true|1 to set debug.egl.force_v2=1
 GPU_MODE=${EMULATOR_GPU_MODE:-swiftshader_indirect}
-VULKAN_FEATURE_ARGS=""
-if [ "${EMULATOR_ENABLE_VULKAN}" = "true" ] || [ "${EMULATOR_ENABLE_VULKAN}" = "1" ]; then
-    VULKAN_FEATURE_ARGS="-feature Vulkan"
-fi
-echo "Emulator GPU mode: ${GPU_MODE} | Vulkan enabled: ${EMULATOR_ENABLE_VULKAN:-false}"
-if [ "$KVM_AVAILABLE" = true ]; then
-    # With hardware acceleration
-    echo "Starting emulator with KVM acceleration..."
-    DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
-        -no-audio \
-        -gpu ${GPU_MODE} \
-        -memory ${MEMORY_MB} \
-        -partition-size ${PARTITION_MB} \
-        -writable-system \
-        -no-snapshot-save \
-        -no-snapshot-load \
-        -wipe-data \
-        -port 5554 \
-        -accel on \
-        -camera-back webcam0 \
-        -camera-front webcam0 \
-        -skip-adb-auth \
-        ${VULKAN_FEATURE_ARGS} \
-        -verbose &
-else
-    # Software only mode
-    echo "Starting emulator in software mode..."
-    DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
-        -no-audio \
-        -gpu ${GPU_MODE} \
-        -memory ${MEMORY_MB} \
-        -partition-size ${PARTITION_MB} \
-        -writable-system \
-        -no-snapshot-save \
-        -no-snapshot-load \
-        -wipe-data \
-        -port 5554 \
-        -accel off \
-        -skip-adb-auth \
-        ${VULKAN_FEATURE_ARGS} \
-        -verbose &
-fi
+echo "Emulator GPU mode: ${GPU_MODE}"
+DISPLAY=:99 $ANDROID_SDK_ROOT/emulator/emulator -avd ClashRoyale_AVD \
+    -no-audio \
+    -gpu ${GPU_MODE} \
+    -memory ${MEMORY_MB} \
+    -partition-size ${PARTITION_MB} \
+    -no-snapshot-save \
+    -no-snapshot-load \
+    -wipe-data \
+    -accel off \
+    -verbose &
 
 EMULATOR_PID=$!
 echo "Emulator PID: $EMULATOR_PID"
@@ -204,95 +151,11 @@ if [ $timeout -le 0 ]; then
     echo "⚠️ Android boot timeout, but continuing..."
 fi
 
-# Phase 2.5: Install Houdini
-install_houdini() {
-    echo "Installing ARM translation (houdini)..."
-    # Skip unless explicitly enabled
-    if [ "${INSTALL_HOUDINI}" != "true" ] && [ "${INSTALL_HOUDINI}" != "1" ]; then
-        echo "INSTALL_HOUDINI is not enabled. Skipping Houdini installation."
-        return 0
-    fi
+echo "Skipping ARM translation (Houdini) steps entirely. Using native ARM64 system image."
 
-    # Ensure adbd can root; if not, skip gracefully
-    if ! adb -s emulator-5554 root; then
-        echo "adb root not available on this image. Skipping Houdini installation."
-        return 0
-    fi
-    sleep 2
-
-    # For dynamic partitions/verity on Android 10+, disable verity then reboot
-    if ! adb -s emulator-5554 remount; then
-        echo "Attempting to disable verity and remount..."
-        adb -s emulator-5554 disable-verity || adb -s emulator-5554 shell avbctl disable-verification || true
-        adb -s emulator-5554 reboot
-        echo "Waiting for device after reboot (post-verity disable)..."
-        # Wait for boot completion again
-        timeout=300
-        while [ $timeout -gt 0 ]; do
-            if adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
-                echo "✅ Android system booted after verity disable"
-                break
-            fi
-            sleep 5
-            timeout=$((timeout - 5))
-        done
-        # Try root and remount again
-        adb -s emulator-5554 root || true
-        sleep 2
-        adb -s emulator-5554 remount || true
-        sleep 2
-    fi
-    sleep 2
-
-    # Push libraries if they exist
-    if [ -f "/opt/houdini/extracted/system/lib/libhoudini.so" ]; then
-        adb -s emulator-5554 push /opt/houdini/extracted/system/lib/libhoudini.so /system/lib/libhoudini.so
-    fi
-    if [ -f "/opt/houdini/extracted/system/lib64/libhoudini.so" ]; then
-        adb -s emulator-5554 push /opt/houdini/extracted/system/lib64/libhoudini.so /system/lib64/libhoudini.so
-    fi
-    # Push houdini binary
-    if [ -f "/opt/houdini/extracted/system/bin/houdini" ]; then
-        adb -s emulator-5554 push /opt/houdini/extracted/system/bin/houdini /system/bin/houdini
-    fi
-
-    # Set executable permissions
-    adb -s emulator-5554 shell "chmod 0755 /system/lib*/libhoudini.so /system/bin/houdini" || true
-
-    # Update build.prop for interpreter mapping (optional but recommended)
-    adb -s emulator-5554 shell "echo 'ro.dalvik.vm.isa.arm=x86' >> /system/build.prop" || true
-    adb -s emulator-5554 shell "echo 'ro.dalvik.vm.isa.arm64=x86_64' >> /system/build.prop" || true
-
-    echo "Houdini files pushed. Rebooting emulator to activate..."
-    adb -s emulator-5554 reboot
-    sleep 10
-}
-
-# Only attempt Houdini install when requested via env var
-if [ "${INSTALL_HOUDINI}" = "true" ] || [ "${INSTALL_HOUDINI}" = "1" ]; then
-    install_houdini
-else
-    echo "Skipping Houdini installation (native ARM translation preferred or not needed)."
-fi
-
-# Phase 3: Enable network ADB mode (do not auto-connect from inside container)
-echo "Phase 3: Enabling network ADB mode on port 5555 (host should connect)..."
-adb -s emulator-5554 tcpip 5555
-sleep 3
-
-# Ensure container ADB server does not hold a connection to localhost:5555
-echo "Disconnecting any local ADB TCP connections inside container..."
-adb disconnect localhost:5555 2>/dev/null || true
-adb disconnect :5555 2>/dev/null || true
-sleep 1
-
-# Stop container ADB server so only host connects over mapped port
-echo "Stopping container ADB server to free TCP device for host..."
-adb kill-server 2>/dev/null || true
-
-# Show current ADB devices inside container for reference
-echo "Current ADB connection status (inside container):"
-adb devices -l
+echo "Keeping ADB local-only (no TCP/IP exposure)."
+echo "Current ADB devices:"
+adb devices -l || true
 
 echo "Configuring emulator settings..."
 
@@ -316,7 +179,6 @@ adb -s emulator-5554 shell locksettings set-disabled true 2>/dev/null || true
 adb -s emulator-5554 shell settings put system user_rotation 0 2>/dev/null || true
 
 echo "Emulator setup complete!"
-echo "ADB available on port 5555"
 echo "VNC available on port 5900"
 echo "Container IP: $(hostname -I | awk '{print $1}')"
 
@@ -332,11 +194,7 @@ echo "Emulator PID: $EMULATOR_PID"
 echo "Available memory: $(free -h | grep Mem)"
 echo "CPU info: $(nproc) cores"
 echo "KVM available: $(ls -la /dev/kvm 2>/dev/null || echo 'No KVM - using software mode')"
-if [ "$KVM_AVAILABLE" = true ]; then
-    echo "Acceleration mode: KVM (hardware)"
-else
-    echo "Acceleration mode: Software only"
-fi
+echo "Acceleration mode: Software only"
 
 # Monitor emulator process
 monitor_emulator() {
