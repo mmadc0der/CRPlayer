@@ -20,7 +20,7 @@ services:
       - VNC_PASSWORD=crplayer123
       - EMULATOR_RAM=16384
       - EMULATOR_PARTITION=32768
-      - EMULATOR_GPU_MODE=guest
+      - EMULATOR_GPU_MODE=swiftshader_indirect
       - EMULATOR_ENABLE_VULKAN=0
     devices:
       - /dev/kvm:/dev/kvm  # Hardware acceleration

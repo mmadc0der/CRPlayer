@@ -85,7 +85,7 @@ RUN echo "no" | avdmanager create avd \
 # Configure emulator settings for better app compatibility
 RUN mkdir -p /root/.android/avd/${AVD_NAME}.avd && \
     echo "hw.gpu.enabled=yes" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
-    echo "hw.gpu.mode=angle_indirect" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
+    echo "hw.gpu.mode=swiftshader_indirect" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.angle=swiftshader" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.vulkan=no" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
     echo "hw.ramSize=8192" >> /root/.android/avd/${AVD_NAME}.avd/config.ini && \
