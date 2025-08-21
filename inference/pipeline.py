@@ -191,7 +191,7 @@ def run_loop(cfg: CaptureConfig) -> None:
                 pass
 
 
-def record_raw_h264(cfg: CaptureConfig, out_path: str) -> None:
+def record_raw_h264(cfg: CaptureConfig, out_path: str, duration_sec: Optional[float] = None) -> None:
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     cap = AdbScreenCapture(cfg)
     cap.start()
@@ -210,6 +210,9 @@ def record_raw_h264(cfg: CaptureConfig, out_path: str) -> None:
             if total % (1024 * 1024 * 8) == 0:
                 elapsed = _now_ms() - t_start
                 print(f"Wrote {total/1e6:.1f} MB in {elapsed/1000:.1f}s")
+            if duration_sec is not None:
+                if (_now_ms() - t_start) >= int(duration_sec * 1000):
+                    break
     finally:
         fout.close()
         cap.stop()

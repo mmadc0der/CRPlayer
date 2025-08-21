@@ -32,11 +32,12 @@ def record(
     device: Optional[str] = typer.Option(None, help="ADB device id (-s)"),
     size: str = typer.Option("720x1600", help="Capture size WxH"),
     bitrate: int = typer.Option(6_000_000, help="Bitrate in bps"),
+    duration: Optional[float] = typer.Option(None, help="Duration in seconds to record (default: unlimited)"),
 ):
-    """Record raw H264 stream to file."""
+    """Record raw H264 stream to file (optionally limited by duration)."""
     os.makedirs(os.path.dirname(out), exist_ok=True)
     cfg = CaptureConfig(size=size, bitrate=bitrate, device_id=device)
-    record_raw_h264(cfg, out)
+    record_raw_h264(cfg, out, duration_sec=duration)
 
 
 if __name__ == "__main__":
