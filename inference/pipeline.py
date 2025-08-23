@@ -86,7 +86,7 @@ class StreamHub:
                             self.monitor.report_error("queue_full", f"Dropped chunk for {mode} subscriber")
                         # drop
                         pass
-        self._thread = threading.Thread(target=_run, daemon=True)
+        self._thread = threading.Thread(target=_run, daemon=False)
         self._thread.start()
 
     def stop(self) -> None:
@@ -160,7 +160,7 @@ class FFmpegStdinDecoder:
                     flush()
                 except BrokenPipeError:
                     break
-        self._feeder = threading.Thread(target=_feed, daemon=True)
+        self._feeder = threading.Thread(target=_feed, daemon=False)
         self._feeder.start()
 
     def frames(self) -> Generator[bytes, None, None]:
@@ -242,7 +242,7 @@ class MP4Writer:
                     flush()
                 except BrokenPipeError:
                     break
-        self._feeder = threading.Thread(target=_feed, daemon=True)
+        self._feeder = threading.Thread(target=_feed, daemon=False)
         self._feeder.start()
 
     def stop(self) -> None:

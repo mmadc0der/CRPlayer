@@ -66,7 +66,7 @@ class PerformanceMonitor:
             return
             
         self._stop_event.clear()
-        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=False)
         self._monitor_thread.start()
         
     def stop_monitoring(self):
@@ -110,11 +110,6 @@ class PerformanceMonitor:
             if result.returncode == 0:
                 lines = result.stdout.strip().split('\n')[1:]  # Skip header
                 devices = []
-                
-                # Debug: print what we got from adb
-                if not hasattr(self, '_debug_once'):
-                    print(f"DEBUG: ADB output lines: {lines}")
-                    self._debug_once = True
                 
                 for line in lines:
                     if line.strip() and ('device' in line and 'offline' not in line and 'unauthorized' not in line):
@@ -320,13 +315,17 @@ class ConsoleReporter:
         metrics = status["metrics"]
         conn = "[OK]" if metrics["connection_status"] == "connected" else "[--]"
         
-        # Only show status if there's actual activity or connection
-        if metrics['frames_processed'] > 0 or metrics['connection_status'] == 'connected':
+        # Only show meaningful status
+        if metrics['frames_processed'] > 0:
+            # Show full metrics when processing frames
             print(f"\r{conn} FPS: {metrics['fps']:5.1f} | "
                   f"Bitrate: {metrics['bitrate_kbps']:6.1f}k | "
                   f"Latency: {metrics['latency_ms']:5.1f}ms | "
                   f"Queue: {metrics['queue_depth']:3d} | "
                   f"Frames: {metrics['frames_processed']:6d}", end="", flush=True)
+        elif metrics['connection_status'] == 'connected':
+            # Show ready status when connected but no frames
+            print(f"\r{conn} Device ready - waiting for stream data...", end="", flush=True)
         elif metrics['connection_status'] == 'disconnected':
             print(f"\r{conn} Waiting for device connection...", end="", flush=True)
         else:
