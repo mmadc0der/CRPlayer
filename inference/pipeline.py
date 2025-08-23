@@ -1,7 +1,5 @@
 import os
-import shlex
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 from typing import Generator, Optional, Tuple
@@ -29,99 +27,87 @@ class CaptureConfig:
     show: bool = False
 
 
-class AdbScreenCapture:
-    def __init__(self, cfg: CaptureConfig) -> None:
+class ScrcpyRecorder:
+    """Start scrcpy recording to an MP4 file. Optionally limit duration.
+
+    Provides a `start()`/`stop()` lifecycle. This is the single capture backend.
+    """
+
+    def __init__(self, cfg: CaptureConfig, out_path: str, duration_sec: Optional[float] = None) -> None:
         self.cfg = cfg
+        self.out_path = out_path
+        self.duration_sec = duration_sec
         self.proc: Optional[subprocess.Popen] = None
 
     def start(self) -> None:
-        adb = _which("adb")
-        if not adb:
-            raise RuntimeError("adb not found in PATH")
-        base_cmd = [adb]
-        if self.cfg.device_id:
-            base_cmd += ["-s", self.cfg.device_id]
-        # Use screenrecord to output H264 elementary stream to stdout
-        sr = [
-            "exec-out",
-            "screenrecord",
-            f"--bit-rate",
-            str(self.cfg.bitrate),
-            "--output-format=h264",
-            "--size",
-            self.cfg.size,
-            "-",
+        scrcpy = _which("scrcpy")
+        if not scrcpy:
+            raise RuntimeError("scrcpy not found in PATH; install it and ensure it's accessible")
+        os.makedirs(os.path.dirname(self.out_path), exist_ok=True)
+        sc_cmd = [
+            scrcpy,
+            "--no-window",
+            "--no-audio",
+            "--video-bit-rate", str(self.cfg.bitrate),
+            "--record", self.out_path,
         ]
-        cmd = base_cmd + sr
-        self.proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=0,
-        )
+        if self.cfg.device_id:
+            sc_cmd += ["-s", self.cfg.device_id]
+        # Note: scrcpy will run until terminated. If duration is provided, we'll stop later.
+        self.proc = subprocess.Popen(sc_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     def stop(self) -> None:
         if self.proc and self.proc.poll() is None:
             try:
                 self.proc.terminate()
+                self.proc.wait(timeout=5)
             except Exception:
-                pass
-            try:
-                self.proc.kill()
-            except Exception:
-                pass
-
-    def raw_stream(self):
-        if not self.proc or not self.proc.stdout:
-            raise RuntimeError("capture not started")
-        return self.proc.stdout
+                try:
+                    self.proc.kill()
+                except Exception:
+                    pass
 
 
-class FFmpegDecoder:
-    def __init__(self, size: str, crop: Optional[Tuple[int, int, int, int]] = None) -> None:
-        self.width, self.height = [int(x) for x in size.split("x", 1)]
+class FFmpegFileFollower:
+    """Decode frames from a growing MP4 file produced by scrcpy using ffmpeg.
+
+    Warning: This relies on ffmpeg being able to read from a file while it's being written.
+    In practice this often works, but if it doesn't on your setup, consider post-hoc decoding.
+    """
+
+    def __init__(self, crop: Optional[Tuple[int, int, int, int]] = None, expected_size: Optional[Tuple[int, int]] = None) -> None:
         self.crop = crop
         self.proc: Optional[subprocess.Popen] = None
+        self.width: Optional[int] = None
+        self.height: Optional[int] = None
+        if expected_size:
+            self.width, self.height = expected_size
 
-    def start(self, input_pipe) -> None:
+    def start(self, mp4_path: str) -> None:
         ffmpeg = _which("ffmpeg")
         if not ffmpeg:
             raise RuntimeError("ffmpeg not found in PATH (needed for decode)")
         filters = []
-        # Ensure exact incoming size to avoid scaler surprises
-        # Apply crop if requested
         if self.crop:
             x, y, w, h = self.crop
             filters.append(f"crop={w}:{h}:{x}:{y}")
-            # Update expected output size to cropped size
             self.width, self.height = w, h
-        # Convert to rgb24 for general processing
         vf = []
         if filters:
             vf = ["-vf", ",".join(filters)]
         cmd = [
             ffmpeg,
             "-hide_banner",
-            "-loglevel",
-            "error",
-            "-fflags",
-            "nobuffer",
-            "-flags",
-            "low_delay",
-            "-f",
-            "h264",
-            "-i",
-            "-",
+            "-loglevel", "error",
+            "-fflags", "nobuffer",
+            "-i", mp4_path,
             *vf,
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
+            "-f", "rawvideo",
+            "-pix_fmt", "rgb24",
             "-",
         ]
         self.proc = subprocess.Popen(
             cmd,
-            stdin=input_pipe,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=0,
@@ -130,7 +116,10 @@ class FFmpegDecoder:
     def frames(self) -> Generator[bytes, None, None]:
         if not self.proc or not self.proc.stdout:
             raise RuntimeError("decoder not started")
-        frame_bytes = self.width * self.height * 3  # rgb24
+        if self.width is None or self.height is None:
+            # Without known size, we cannot segment frames; require crop or explicit size elsewhere
+            raise RuntimeError("expected_size not known; provide crop or set expected_size when constructing")
+        frame_bytes = self.width * self.height * 3
         read = self.proc.stdout.read
         while True:
             chunk = read(frame_bytes)
@@ -150,69 +139,65 @@ class FFmpegDecoder:
                 pass
 
 
-def run_loop(cfg: CaptureConfig) -> None:
-    cap = AdbScreenCapture(cfg)
-    cap.start()
-    dec = FFmpegDecoder(cfg.size, cfg.crop)
-    dec.start(cap.raw_stream())
+def capture_frames_with_scrcpy(cfg: CaptureConfig, out_mp4: str, crop: Optional[Tuple[int, int, int, int]] = None,
+                               expected_size: Optional[Tuple[int, int]] = None) -> Generator[bytes, None, None]:
+    """Start scrcpy recording to MP4 and simultaneously decode frames from the growing file.
 
-    # Lazy import cv2 only if show is requested
-    if cfg.show:
-        import cv2  # type: ignore
-        import numpy as np  # type: ignore
-
-    frames = 0
-    t0 = time.time()
-    last = t0
+    Yields raw rgb24 frames (cropped if specified). Intended for feeding CNNs.
+    """
+    recorder = ScrcpyRecorder(cfg, out_mp4)
+    follower = FFmpegFileFollower(crop=crop, expected_size=expected_size)
+    recorder.start()
     try:
-        for raw in dec.frames():
-            frames += 1
-            if cfg.show:
-                import numpy as np  # type: ignore
-                import cv2  # type: ignore
-                arr = np.frombuffer(raw, dtype=np.uint8)
-                arr = arr.reshape((dec.height, dec.width, 3))
-                cv2.imshow("CRPlayer", arr)
-                if cv2.waitKey(1) & 0xFF == 27:
-                    break
-            if frames % 60 == 0:
-                now = time.time()
-                fps = 60.0 / (now - last)
-                last = now
-                print(f"FPS ~ {fps:.1f}")
+        # Give scrcpy a brief moment to create the MP4 file on disk
+        t0 = _now_ms()
+        while not os.path.isfile(out_mp4) and (_now_ms() - t0) < 3000:
+            time.sleep(0.05)
+        follower.start(out_mp4)
+        try:
+            for frame in follower.frames():
+                yield frame
+        finally:
+            follower.stop()
     finally:
-        dec.stop()
-        cap.stop()
-        if cfg.show:
+        recorder.stop()
+
+
+def record_mp4_with_scrcpy(cfg: CaptureConfig, out_mp4: str, duration_sec: Optional[float] = None) -> None:
+    """Record MP4 using scrcpy only. Optionally stop after duration.
+
+    Stores the MP4 replay for later labeling/training.
+    """
+    scrcpy = _which("scrcpy")
+    if not scrcpy:
+        raise RuntimeError("scrcpy not found in PATH; install it and ensure it's accessible")
+    os.makedirs(os.path.dirname(out_mp4), exist_ok=True)
+    sc_cmd = [
+        scrcpy,
+        "--no-window",
+        "--no-audio",
+        "--video-bit-rate", str(cfg.bitrate),
+        "--record", out_mp4,
+    ]
+    if cfg.device_id:
+        sc_cmd += ["-s", cfg.device_id]
+
+    proc = subprocess.Popen(sc_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if duration_sec is None:
+        # Run until the user kills the process externally
+        try:
+            proc.wait()
+        except KeyboardInterrupt:
+            pass
+    else:
+        try:
+            proc.wait(timeout=max(1.0, duration_sec))
+        except subprocess.TimeoutExpired:
             try:
-                import cv2  # type: ignore
-                cv2.destroyAllWindows()
+                proc.terminate()
+                proc.wait(timeout=5)
             except Exception:
-                pass
-
-
-def record_raw_h264(cfg: CaptureConfig, out_path: str, duration_sec: Optional[float] = None) -> None:
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    cap = AdbScreenCapture(cfg)
-    cap.start()
-    fout = open(out_path, "wb")
-    t_start = _now_ms()
-    total = 0
-    try:
-        stream = cap.raw_stream()
-        assert stream is not None
-        while True:
-            data = stream.read(4096)
-            if not data:
-                break
-            fout.write(data)
-            total += len(data)
-            if total % (1024 * 1024 * 8) == 0:
-                elapsed = _now_ms() - t_start
-                print(f"Wrote {total/1e6:.1f} MB in {elapsed/1000:.1f}s")
-            if duration_sec is not None:
-                if (_now_ms() - t_start) >= int(duration_sec * 1000):
-                    break
-    finally:
-        fout.close()
-        cap.stop()
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
