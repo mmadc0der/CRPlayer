@@ -52,7 +52,7 @@ def stdin(
         perf_monitor.start_monitoring()
         
         # Print initial status
-        typer.echo("\n🚀 Starting CRPlayer with advanced monitoring...")
+        typer.echo("\nStarting CRPlayer with advanced monitoring...")
         typer.echo("Press Ctrl+C to stop\n")
         
         # Show detailed status every 10 seconds
@@ -84,7 +84,7 @@ def stdin(
     
     except KeyboardInterrupt:
         if perf_monitor:
-            typer.echo("\n\n📊 Final Status:")
+            typer.echo("\n\nFinal Status:")
             perf_monitor.print_status()
     
     finally:
@@ -99,7 +99,7 @@ def monitor_device():
     console_reporter = ConsoleReporter(update_interval=1.0)
     monitor.add_callback(console_reporter)
     
-    typer.echo("🔍 CRPlayer Device Monitor")
+    typer.echo("CRPlayer Device Monitor")
     typer.echo("Monitoring device connection and readiness...")
     typer.echo("Press Ctrl+C to stop\n")
     
@@ -110,7 +110,7 @@ def monitor_device():
             time.sleep(5.0)
             monitor.print_status()
     except KeyboardInterrupt:
-        typer.echo("\n👋 Monitoring stopped")
+        typer.echo("\nMonitoring stopped")
     finally:
         monitor.stop_monitoring()
 

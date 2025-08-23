@@ -111,10 +111,16 @@ class PerformanceMonitor:
                 lines = result.stdout.strip().split('\n')[1:]  # Skip header
                 devices = []
                 
+                # Debug: print what we got from adb
+                if not hasattr(self, '_debug_once'):
+                    print(f"DEBUG: ADB output lines: {lines}")
+                    self._debug_once = True
+                
                 for line in lines:
-                    if line.strip() and '\tdevice' in line:
-                        parts = line.split('\t')
-                        device_id = parts[0]
+                    if line.strip() and ('device' in line and 'offline' not in line and 'unauthorized' not in line):
+                        parts = line.split()  # Use split() instead of split('\t') for better parsing
+                        if len(parts) >= 2:
+                            device_id = parts[0]
                         
                         # Try to get device info
                         info_result = subprocess.run(
@@ -132,9 +138,9 @@ class PerformanceMonitor:
                             props = info_result.stdout
                             # Parse key properties
                             for prop_line in props.split('\n'):
-                                if '[ro.product.model]' in prop_line:
+                                if '[ro.product.model]' in prop_line and ': [' in prop_line:
                                     model = prop_line.split(': [')[1].rstrip(']')
-                                elif '[ro.build.version.release]' in prop_line:
+                                elif '[ro.build.version.release]' in prop_line and ': [' in prop_line:
                                     android_version = prop_line.split(': [')[1].rstrip(']')
                         
                         # Get screen resolution
@@ -178,7 +184,7 @@ class PerformanceMonitor:
                 self.metrics.connection_status = "adb_not_found"
         except Exception as e:
             with self._lock:
-                self.metrics.connection_status = f"error: {str(e)}"
+                self.metrics.connection_status = f"error: {str(e)[:50]}"  # Limit error message length
                 
     def _calculate_trends(self):
         """Calculate performance trends"""
@@ -268,26 +274,26 @@ class PerformanceMonitor:
         
         # Connection status
         conn_status = status["metrics"]["connection_status"]
-        status_color = "🟢" if conn_status == "connected" else "🔴"
-        print(f"{status_color} Connection: {conn_status}")
+        status_indicator = "[OK]" if conn_status == "connected" else "[--]"
+        print(f"{status_indicator} Connection: {conn_status}")
         
         # Device info
         if status["device"]:
             dev = status["device"]
-            print(f"📱 Device: {dev['model']} (Android {dev['android_version']})")
-            print(f"📐 Resolution: {dev['resolution']}")
+            print(f"Device: {dev['model']} (Android {dev['android_version']})")
+            print(f"Resolution: {dev['resolution']}")
         
         # Performance metrics
         metrics = status["metrics"]
         trends = status["trends"]
         
-        print(f"\n📊 Performance:")
+        print(f"\nPerformance:")
         print(f"   FPS: {metrics['fps']} (avg: {trends['avg_fps']})")
         print(f"   Bitrate: {metrics['bitrate_kbps']} kbps (avg: {trends['avg_bitrate']})")
         print(f"   Latency: {metrics['latency_ms']} ms (avg: {trends['avg_latency']})")
         print(f"   Queue Depth: {metrics['queue_depth']}")
         
-        print(f"\n📈 Totals:")
+        print(f"\nTotals:")
         print(f"   Frames: {metrics['frames_processed']:,}")
         print(f"   Data: {metrics['bytes_processed'] / 1024 / 1024:.1f} MB")
         print(f"   Errors: {metrics['errors']}")
@@ -312,10 +318,16 @@ class ConsoleReporter:
     def _print_compact_status(self, status: Dict[str, Any]):
         """Print compact status line"""
         metrics = status["metrics"]
-        conn = "🟢" if metrics["connection_status"] == "connected" else "🔴"
+        conn = "[OK]" if metrics["connection_status"] == "connected" else "[--]"
         
-        print(f"\r{conn} FPS: {metrics['fps']:5.1f} | "
-              f"Bitrate: {metrics['bitrate_kbps']:6.1f}k | "
-              f"Latency: {metrics['latency_ms']:5.1f}ms | "
-              f"Queue: {metrics['queue_depth']:3d} | "
-              f"Frames: {metrics['frames_processed']:6d}", end="", flush=True)
+        # Only show status if there's actual activity or connection
+        if metrics['frames_processed'] > 0 or metrics['connection_status'] == 'connected':
+            print(f"\r{conn} FPS: {metrics['fps']:5.1f} | "
+                  f"Bitrate: {metrics['bitrate_kbps']:6.1f}k | "
+                  f"Latency: {metrics['latency_ms']:5.1f}ms | "
+                  f"Queue: {metrics['queue_depth']:3d} | "
+                  f"Frames: {metrics['frames_processed']:6d}", end="", flush=True)
+        elif metrics['connection_status'] == 'disconnected':
+            print(f"\r{conn} Waiting for device connection...", end="", flush=True)
+        else:
+            print(f"\r{conn} Status: {metrics['connection_status']}", end="", flush=True)
