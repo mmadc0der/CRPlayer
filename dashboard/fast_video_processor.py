@@ -109,7 +109,7 @@ class FastVideoProcessor:
                 # Only feed data to FFmpeg if we have a valid header
                 if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
                     # Feed buffered data in reasonable chunks to maintain stream integrity
-                    chunk_size = min(16384, len(self._mkv_buffer))  # 16KB chunks
+                    chunk_size = min(1024, len(self._mkv_buffer))  # 1KB chunks
                     if chunk_size > 0:
                         chunk = bytes(self._mkv_buffer[:chunk_size])
                         self._ffmpeg_process.stdin.write(chunk)
@@ -137,8 +137,7 @@ class FastVideoProcessor:
                 '-f', 'matroska',  # Input format
                 '-analyzeduration', '2000000',   # 2 second analysis - balanced
                 '-probesize', '2000000',         # 2MB probe size - balanced
-                '-fflags', '+igndts+ignidx+genpts',
-                '-avioflags', 'direct',
+                '-fflags', '+igndts+ignidx+genpts+low_delay+discardcorrupt',  # Generate PTS for irregular streams
                 '-avoid_negative_ts', 'make_zero',   # Handle timing issues
                 '-max_delay', '0',               # Minimize delay
                 '-i', 'pipe:0',    # Read from stdin
