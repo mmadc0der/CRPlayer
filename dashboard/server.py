@@ -47,10 +47,21 @@ class WebSocketDashboardSubscriber:
         """Stop the WebSocket server."""
         self._running = False
         if self.loop and self.server:
-            asyncio.run_coroutine_threadsafe(self.server.close(), self.loop)
+            # Schedule server close in the event loop
+            future = asyncio.run_coroutine_threadsafe(self._close_server(), self.loop)
+            try:
+                future.result(timeout=2.0)
+            except Exception as e:
+                print(f"Error closing server: {e}")
         if self.thread:
             self.thread.join(timeout=2.0)
         print("WebSocket server stopped")
+        
+    async def _close_server(self) -> None:
+        """Close the WebSocket server."""
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
         
     def _run_server(self) -> None:
         """Run the WebSocket server in its own event loop."""
@@ -58,6 +69,7 @@ class WebSocketDashboardSubscriber:
         asyncio.set_event_loop(self.loop)
         
         try:
+            print(f"WebSocket server thread started, binding to {self.host}:{self.port}")
             self.loop.run_until_complete(self._start_server())
         except Exception as e:
             print(f"WebSocket server error: {e}")
@@ -66,18 +78,23 @@ class WebSocketDashboardSubscriber:
             
     async def _start_server(self) -> None:
         """Start the WebSocket server."""
-        self.server = await websockets.serve(
-            self._handle_client,
-            self.host,
-            self.port,
-            ping_interval=20,
-            ping_timeout=10
-        )
-        print(f"WebSocket server running on ws://{self.host}:{self.port}")
-        
-        # Keep server running
-        while self._running:
-            await asyncio.sleep(1)
+        try:
+            self.server = await websockets.serve(
+                self._handle_client,
+                self.host,
+                self.port,
+                ping_interval=20,
+                ping_timeout=10
+            )
+            print(f"[OK] WebSocket server running on ws://{self.host}:{self.port}")
+            
+            # Keep server running
+            while self._running:
+                await asyncio.sleep(1)
+                
+        except Exception as e:
+            print(f"[ERROR] Failed to start WebSocket server on {self.host}:{self.port}: {e}")
+            raise
             
     async def _handle_client(self, websocket, path) -> None:
         """Handle new WebSocket client connection."""
