@@ -21,6 +21,7 @@ class DebugSubscriber:
         self.log_file = log_file
         self.max_log_size = max_log_size
         self.start_time = 0.0
+        self.is_closed = False
         
         # Statistics
         self.total_bytes = 0
