@@ -106,16 +106,17 @@ class FastVideoProcessor:
                         self._has_valid_header = True
                         print(f"[FastVideoProcessor] Valid MKV stream detected, buffer size: {len(self._mkv_buffer)}")
                 
-                # Feed ALL available data immediately for fastest response
+                # Only feed data to FFmpeg if we have a valid header
                 if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
-                    if len(self._mkv_buffer) > 0:
-                        # Send all buffered data immediately
-                        chunk = bytes(self._mkv_buffer)
+                    # Feed buffered data in reasonable chunks to maintain stream integrity
+                    chunk_size = min(8192, len(self._mkv_buffer))  # 8KB chunks
+                    if chunk_size > 0:
+                        chunk = bytes(self._mkv_buffer[:chunk_size])
                         self._ffmpeg_process.stdin.write(chunk)
                         self._ffmpeg_process.stdin.flush()
                         
-                        # Clear buffer after sending
-                        self._mkv_buffer.clear()
+                        # Remove processed data from buffer
+                        self._mkv_buffer = self._mkv_buffer[chunk_size:]
                 
         except (BrokenPipeError, OSError) as e:
             print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
@@ -134,12 +135,11 @@ class FastVideoProcessor:
             cmd = [
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
-                '-analyzeduration', '1000000',   # 1 second analysis - FAST
-                '-probesize', '1000000',         # 1MB probe size - FAST
-                '-fflags', '+igndts+ignidx+genpts+nobuffer+flush_packets',  # Fast flags
-                '-avoid_negative_ts', 'make_zero',
-                '-max_delay', '0',               # No delay
-                '-fpsprobesize', '0',            # Skip FPS probing
+                '-analyzeduration', '2000000',   # 2 second analysis - balanced
+                '-probesize', '2000000',         # 2MB probe size - balanced
+                '-fflags', '+igndts+ignidx+genpts',  # Generate PTS for irregular streams
+                '-avoid_negative_ts', 'make_zero',   # Handle timing issues
+                '-max_delay', '0',               # Minimize delay
                 '-i', 'pipe:0',    # Read from stdin
                 '-vf', f'scale={self.target_width}:-1',  # Scale to target width
                 '-f', 'image2pipe',
@@ -212,9 +212,9 @@ class FastVideoProcessor:
                     time_since_last_frame = current_time - last_frame_time
                     time_since_restart = current_time - last_restart_time
                     
-                    # For fastest response, restart more aggressively if no frames
-                    # Restart if no frames for 3 seconds after initial startup period
-                    if (time_since_last_frame > 3.0 and time_since_restart > 10.0):
+                    # Restart if no frames for 5 seconds after initial startup period
+                    # Give FFmpeg time to analyze the irregular MKV stream
+                    if (time_since_last_frame > 5.0 and time_since_restart > 15.0):
                         print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed, {time_since_restart:.1f}s since restart)")
                         print(f"[FastVideoProcessor] Buffer state: {len(self._mkv_buffer)} bytes, valid_header: {self._has_valid_header}")
                         self._restart_ffmpeg()
