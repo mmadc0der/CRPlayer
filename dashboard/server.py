@@ -96,7 +96,7 @@ class WebSocketDashboardSubscriber:
             print(f"[ERROR] Failed to start WebSocket server on {self.host}:{self.port}: {e}")
             raise
             
-    async def _handle_client(self, websocket, path) -> None:
+    async def _handle_client(self, websocket, path=None) -> None:
         """Handle new WebSocket client connection."""
         self.clients.add(websocket)
         client_addr = websocket.remote_address

@@ -36,8 +36,8 @@ def main():
     try:
         print(f"Starting pipeline with dashboard integration...")
         print(f"FIFO: {fifo_path}")
-        print(f"Dashboard: http://localhost:8080")
-        print(f"WebSocket: ws://localhost:8765")
+        print(f"Dashboard: http://0.0.0.0:8080")
+        print(f"WebSocket: ws://0.0.0.0:8765")
         print("Press Ctrl+C to stop\n")
         
         # Start dashboard server
