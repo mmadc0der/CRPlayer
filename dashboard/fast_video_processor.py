@@ -188,8 +188,9 @@ class FastVideoProcessor:
                     frame_count_since_restart += 1
                     last_frame_time = current_time  # Update local frame time
                     
-                    # Throttle frame rate
-                    if current_time - self._last_frame_time >= self.frame_interval:
+                    # Process frames immediately without throttling for lowest latency
+                    # Remove artificial frame rate limiting to process all available frames
+                    if True:  # Process every frame immediately
                         print(f"[FastVideoProcessor] Frame extracted, base64 length: {len(frame_data)}")
                         
                         try:
@@ -223,7 +224,7 @@ class FastVideoProcessor:
                         last_frame_time = current_time  # Reset frame timer
                         continue
                         
-                    time.sleep(0.01)
+                    time.sleep(0.001)  # 1ms sleep for faster response
                     
             except Exception as e:
                 print(f"[FastVideoProcessor] Frame reading error: {e}")
@@ -283,15 +284,15 @@ class FastVideoProcessor:
             import select
             import sys
             
-            # Check if data is available (Linux/Unix only)
+            # Check if data is available (Linux/Unix only) - reduced timeout
             if hasattr(select, 'select'):
-                ready, _, _ = select.select([process.stdout], [], [], 0.1)  # 100ms timeout
+                ready, _, _ = select.select([process.stdout], [], [], 0.001)  # 1ms timeout for faster response
                 if not ready:
                     return None
             
-            # Try to read a chunk of data
+            # Try to read larger chunks for better throughput
             try:
-                chunk = process.stdout.read(4096)
+                chunk = process.stdout.read(16384)  # 16KB chunks for better frame batching
             except:
                 return None
                 
