@@ -6,7 +6,8 @@ Replaces slow FFmpeg-based approach with optimized frame extraction.
 import base64
 import threading
 import queue
-import time
+import os
+import sys
 import subprocess
 from typing import Optional, Callable, Tuple
 import tempfile
@@ -85,46 +86,22 @@ class FastVideoProcessor:
         print("Fast video processor stopped")
         
     def add_mkv_data(self, data: bytes) -> None:
-        """Add MKV data with adaptive stream handling."""
-        with self._buffer_lock:
-            self._mkv_buffer.extend(data)
+        """Add MKV data with improved streaming."""
+        if not self._ffmpeg_process or not self._ffmpeg_process.stdin:
+            return
             
-            # If we've restarted too many times, just send data directly
-            if self._restart_count >= self._max_restarts:
-                if self._ffmpeg_process and self._ffmpeg_process.stdin:
-                    try:
-                        self._ffmpeg_process.stdin.write(data)
-                        self._ffmpeg_process.stdin.flush()
-                        # Don't accumulate in buffer when sending directly
-                        self._mkv_buffer = self._mkv_buffer[-len(data):]
-                    except (BrokenPipeError, OSError) as e:
-                        print(f"[FastVideoProcessor] FFmpeg stdin error (direct mode): {e}")
-                return
-            
-            # Look for valid MKV segment start
-            if self._looking_for_header:
-                self._find_mkv_segment_start()
+        try:
+            # Send data immediately in smaller chunks for better streaming
+            chunk_size = 4096  # 4KB chunks
+            for i in range(0, len(data), chunk_size):
+                chunk = data[i:i + chunk_size]
+                self._ffmpeg_process.stdin.write(chunk)
+                # Force immediate write to pipe
+                self._ffmpeg_process.stdin.flush()
                 
-            # Send data to FFmpeg if we have a valid stream
-            if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
-                try:
-                    # Send accumulated data
-                    if self._mkv_buffer:
-                        self._ffmpeg_process.stdin.write(self._mkv_buffer)
-                        self._ffmpeg_process.stdin.flush()
-                        self._mkv_buffer.clear()
-                        
-                except (BrokenPipeError, OSError) as e:
-                    print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
-                    # Reset header flag to resync
-                    self._has_valid_header = False
-                    self._looking_for_header = True
-            
-            # Limit buffer size
-            if len(self._mkv_buffer) > 1024 * 1024:  # 1MB limit (reduced)
-                print(f"[FastVideoProcessor] Buffer size limit reached, switching to direct mode")
-                self._restart_count = self._max_restarts  # Force direct mode
-                self._mkv_buffer.clear()
+        except (BrokenPipeError, OSError) as e:
+            print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
+            # Don't restart immediately, let the monitoring handle it
             
     def get_frame(self, timeout: float = 0.1) -> Optional[dict]:
         """Get next processed frame if available."""
@@ -139,6 +116,9 @@ class FastVideoProcessor:
             cmd = [
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
+                '-analyzeduration', '1000000',  # 1 second analysis
+                '-probesize', '1000000',        # 1MB probe size
+                '-fflags', '+igndts+ignidx',    # Ignore timestamps and index
                 '-i', 'pipe:0',    # Read from stdin
                 '-vf', f'scale={self.target_width}:-1',  # Scale to target width
                 '-f', 'image2pipe',
@@ -147,7 +127,6 @@ class FastVideoProcessor:
                 '-r', '2',     # 2 FPS to reduce load
                 '-an',         # No audio
                 '-flush_packets', '1',  # Flush packets immediately
-                '-fflags', '+genpts',   # Generate presentation timestamps
                 '-loglevel', 'error',   # Minimal logging
                 'pipe:1'
             ]
@@ -159,9 +138,9 @@ class FastVideoProcessor:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                bufsize=0
+                bufsize=0,  # Unbuffered
+                preexec_fn=None if sys.platform == 'win32' else lambda: os.setpgrp()
             )
-            
             print(f"[FastVideoProcessor] FFmpeg streaming process started (PID: {self._ffmpeg_process.pid})")
             
         except Exception as e:
@@ -248,22 +227,15 @@ class FastVideoProcessor:
                     pass
             self._ffmpeg_process = None
             
-        # Track restart count and reset stream synchronization
+        # Track restart count
         self._restart_count += 1
         print(f"[FastVideoProcessor] Restart #{self._restart_count}")
         
+        # Clear any buffered data
         with self._buffer_lock:
-            if self._restart_count < self._max_restarts:
-                self._has_valid_header = False
-                self._looking_for_header = True
-                # Keep some buffer data for resyncing
-                if len(self._mkv_buffer) > 64 * 1024:
-                    self._mkv_buffer = self._mkv_buffer[-32*1024:]  # Keep last 32KB
-            else:
-                print(f"[FastVideoProcessor] Max restarts reached, switching to direct streaming mode")
-                self._has_valid_header = True  # Skip header detection
-                self._looking_for_header = False
-                self._mkv_buffer.clear()
+            self._mkv_buffer.clear()
+            self._has_valid_header = False
+            self._looking_for_header = True
             
         # Start new process after brief delay
         time.sleep(1.0)
