@@ -83,6 +83,9 @@ class FastVideoProcessor:
             # Buffer data until FFmpeg is ready
             with self._buffer_lock:
                 self._mkv_buffer.extend(data)
+                # Limit buffer size to prevent memory issues
+                if len(self._mkv_buffer) > 1024 * 1024:  # 1MB limit
+                    self._mkv_buffer = self._mkv_buffer[-512*1024:]  # Keep last 512KB
             return
             
         try:
@@ -93,14 +96,16 @@ class FastVideoProcessor:
             # Also send any buffered data
             with self._buffer_lock:
                 if self._mkv_buffer:
+                    print(f"[FastVideoProcessor] Sending {len(self._mkv_buffer)} buffered bytes to FFmpeg")
                     self._ffmpeg_process.stdin.write(self._mkv_buffer)
                     self._ffmpeg_process.stdin.flush()
                     self._mkv_buffer.clear()
                     
         except (BrokenPipeError, OSError) as e:
             print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
-            # Restart FFmpeg
-            self._restart_ffmpeg()
+            # Buffer the data instead of restarting immediately
+            with self._buffer_lock:
+                self._mkv_buffer.extend(data)
             
     def get_frame(self, timeout: float = 0.1) -> Optional[dict]:
         """Get next processed frame if available."""
@@ -148,6 +153,7 @@ class FastVideoProcessor:
         """Read frames from FFmpeg stdout."""
         frame_count_since_restart = 0
         last_restart_time = time.time()
+        last_frame_time = time.time()  # Initialize properly
         
         while self._running:
             if not self._ffmpeg_process:
@@ -161,6 +167,7 @@ class FastVideoProcessor:
                 if frame_data:
                     current_time = time.time()
                     frame_count_since_restart += 1
+                    last_frame_time = current_time  # Update local frame time
                     
                     # Throttle frame rate
                     if current_time - self._last_frame_time >= self.frame_interval:
@@ -183,14 +190,18 @@ class FastVideoProcessor:
                 else:
                     # No frame available - check if FFmpeg might be stuck
                     current_time = time.time()
+                    time_since_last_frame = current_time - last_frame_time
+                    time_since_restart = current_time - last_restart_time
                     
-                    # Restart FFmpeg if no frames for 10 seconds or after 100 frames
-                    if (current_time - self._last_frame_time > 10.0 or 
+                    # Only restart if we've been running for at least 5 seconds without frames
+                    # OR after processing 100 frames successfully
+                    if ((time_since_last_frame > 15.0 and time_since_restart > 5.0) or 
                         frame_count_since_restart > 100):
-                        print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {current_time - self._last_frame_time:.1f}s, {frame_count_since_restart} frames processed)")
+                        print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed, {time_since_restart:.1f}s since restart)")
                         self._restart_ffmpeg()
                         frame_count_since_restart = 0
                         last_restart_time = current_time
+                        last_frame_time = current_time  # Reset frame timer
                         continue
                         
                     time.sleep(0.01)
