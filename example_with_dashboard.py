@@ -17,7 +17,7 @@ def main():
     pipeline = StreamPipeline(fifo_path)
     
     # Create dashboard subscriber
-    dashboard = create_dashboard_subscriber(host="localhost", port=8765)
+    dashboard = create_dashboard_subscriber(host="0.0.0.0", port=8765)
     dashboard.set_pipeline(pipeline)  # Give dashboard access to pipeline stats
     
     # Add dashboard as subscriber
