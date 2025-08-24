@@ -119,10 +119,12 @@ class FastVideoProcessor:
                 '-vf', f'scale={self.target_width}:-1',  # Scale to target width
                 '-f', 'image2pipe',
                 '-vcodec', 'mjpeg',
-                '-q:v', '8',  # Balanced quality/speed
-                '-r', '3',    # 3 FPS for dashboard
-                '-an',        # No audio
-                '-loglevel', 'error',  # Minimal logging
+                '-q:v', '10',  # Lower quality for stability
+                '-r', '2',     # 2 FPS to reduce load
+                '-an',         # No audio
+                '-flush_packets', '1',  # Flush packets immediately
+                '-fflags', '+genpts',   # Generate presentation timestamps
+                '-loglevel', 'error',   # Minimal logging
                 'pipe:1'
             ]
             
@@ -144,6 +146,9 @@ class FastVideoProcessor:
             
     def _read_frames(self) -> None:
         """Read frames from FFmpeg stdout."""
+        frame_count_since_restart = 0
+        last_restart_time = time.time()
+        
         while self._running:
             if not self._ffmpeg_process:
                 time.sleep(0.1)
@@ -155,6 +160,7 @@ class FastVideoProcessor:
                 
                 if frame_data:
                     current_time = time.time()
+                    frame_count_since_restart += 1
                     
                     # Throttle frame rate
                     if current_time - self._last_frame_time >= self.frame_interval:
@@ -175,6 +181,18 @@ class FastVideoProcessor:
                             self.frames_dropped += 1
                             print(f"[FastVideoProcessor] Frame dropped - queue full")
                 else:
+                    # No frame available - check if FFmpeg might be stuck
+                    current_time = time.time()
+                    
+                    # Restart FFmpeg if no frames for 10 seconds or after 100 frames
+                    if (current_time - self._last_frame_time > 10.0 or 
+                        frame_count_since_restart > 100):
+                        print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {current_time - self._last_frame_time:.1f}s, {frame_count_since_restart} frames processed)")
+                        self._restart_ffmpeg()
+                        frame_count_since_restart = 0
+                        last_restart_time = current_time
+                        continue
+                        
                     time.sleep(0.01)
                     
             except Exception as e:
@@ -189,35 +207,58 @@ class FastVideoProcessor:
         # Stop current process
         if self._ffmpeg_process:
             try:
+                if self._ffmpeg_process.stdin:
+                    self._ffmpeg_process.stdin.close()
                 self._ffmpeg_process.terminate()
                 self._ffmpeg_process.wait(timeout=2)
             except:
-                pass
+                try:
+                    self._ffmpeg_process.kill()
+                except:
+                    pass
             self._ffmpeg_process = None
             
-        # Start new process
-        time.sleep(0.5)  # Brief delay
+        # Start new process after brief delay
+        time.sleep(1.0)
         self._start_ffmpeg_streaming()
             
     def _read_ffmpeg_frame(self, process) -> Optional[str]:
-        """Read a single JPEG frame from FFmpeg stdout."""
+        """Read a single JPEG frame from FFmpeg stdout with timeout."""
         try:
             # Check if process is still running
             if process.poll() is not None:
-                print(f"FFmpeg process ended with return code: {process.returncode}")
+                print(f"[FastVideoProcessor] FFmpeg process ended with return code: {process.returncode}")
                 # Print stderr for debugging
-                stderr_output = process.stderr.read().decode('utf-8', errors='ignore')
-                if stderr_output:
-                    print(f"FFmpeg stderr: {stderr_output[:500]}...")
+                try:
+                    stderr_output = process.stderr.read().decode('utf-8', errors='ignore')
+                    if stderr_output:
+                        print(f"[FastVideoProcessor] FFmpeg stderr: {stderr_output[:300]}")
+                except:
+                    pass
+                # Trigger restart
+                self._restart_ffmpeg()
                 return None
             
-            # Try to read a chunk of data instead of byte-by-byte
-            chunk = process.stdout.read(4096)
+            # Use non-blocking read with timeout
+            import select
+            import sys
+            
+            # Check if data is available (Linux/Unix only)
+            if hasattr(select, 'select'):
+                ready, _, _ = select.select([process.stdout], [], [], 0.1)  # 100ms timeout
+                if not ready:
+                    return None
+            
+            # Try to read a chunk of data
+            try:
+                chunk = process.stdout.read(4096)
+            except:
+                return None
+                
             if not chunk:
                 return None
                 
             # Look for JPEG markers in the chunk
-            # JPEG starts with FF D8 and ends with FF D9
             start_marker = b'\xff\xd8'
             end_marker = b'\xff\xd9'
             
@@ -228,11 +269,14 @@ class FastVideoProcessor:
             # Find end marker
             end_idx = chunk.find(end_marker, start_idx + 2)
             if end_idx == -1:
-                # Read more data to find the end
-                additional_data = process.stdout.read(8192)
-                if additional_data:
-                    chunk += additional_data
-                    end_idx = chunk.find(end_marker, start_idx + 2)
+                # Read more data to find the end, but with limit
+                try:
+                    additional_data = process.stdout.read(8192)
+                    if additional_data:
+                        chunk += additional_data
+                        end_idx = chunk.find(end_marker, start_idx + 2)
+                except:
+                    return None
                     
             if end_idx != -1:
                 # Extract complete JPEG frame
@@ -243,7 +287,7 @@ class FastVideoProcessor:
             return None
             
         except Exception as e:
-            print(f"Error reading FFmpeg frame: {e}")
+            print(f"[FastVideoProcessor] Error reading FFmpeg frame: {e}")
             return None
             
             
