@@ -214,7 +214,7 @@ class FastVideoProcessor:
                     
                     # Restart if no frames for 5 seconds after initial startup period
                     # Give FFmpeg time to analyze the irregular MKV stream
-                    if (time_since_last_frame > 5.0 and time_since_restart > 15.0):
+                    if (time_since_last_frame > 10.0 and time_since_restart > 15.0):
                         print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed, {time_since_restart:.1f}s since restart)")
                         print(f"[FastVideoProcessor] Buffer state: {len(self._mkv_buffer)} bytes, valid_header: {self._has_valid_header}")
                         self._restart_ffmpeg()
