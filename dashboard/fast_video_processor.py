@@ -138,7 +138,7 @@ class FastVideoProcessor:
             cmd = [
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
-                '-analyzeduration', '500000',   # 2 second analysis - balanced
+                '-analyzeduration', '100000',   # 2 second analysis - balanced
                 '-probesize', '1000000',         # 2MB probe size - balanced
                 '-fflags', '+igndts+ignidx+genpts',  # Generate PTS for irregular streams
                 '-avoid_negative_ts', 'make_zero',   # Handle timing issues
@@ -147,8 +147,8 @@ class FastVideoProcessor:
                 '-vf', f'scale={self.target_width}:-1',  # Scale to target width
                 '-f', 'image2pipe',
                 '-vcodec', 'mjpeg',
-                '-q:v', '10',      # Faster encoding (lower quality)
-                '-r', '30',        # Match expected source FPS
+                '-q:v', '20',      # Faster encoding (lower quality)
+                '-r', '60',        # Match expected source FPS
                 '-an',             # No audio
                 '-flush_packets', '1',  # Flush immediately
                 '-loglevel', 'error',   # Less verbose
@@ -308,7 +308,7 @@ class FastVideoProcessor:
             
             # Try to read larger chunks for better throughput
             try:
-                chunk = process.stdout.read(2048)  # 2KB chunks for better frame batching
+                chunk = process.stdout.read(4096)  # 4KB chunks for better frame batching
             except:
                 return None
                 
