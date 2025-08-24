@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CRPlayer Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ff4757;
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: #2ed573;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .main-content {
+            flex: 1;
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 2rem;
+            padding: 2rem;
+            max-height: calc(100vh - 80px);
+        }
+
+        .screen-section {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 15px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .screen-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+            position: relative;
+            min-height: 400px;
+        }
+
+        .screen-placeholder {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        .screen-canvas {
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 8px;
+            cursor: crosshair;
+        }
+
+        .metrics-section {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5rem;
+        }
+
+        .metric-card {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 1.5rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .metric-title {
+            font-size: 0.9rem;
+            opacity: 0.8;
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+
+        .metric-unit {
+            font-size: 0.8rem;
+            opacity: 0.7;
+        }
+
+        .chart-container {
+            height: 100px;
+            margin-top: 1rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .chart-line {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #2ed573;
+            transform-origin: left;
+            animation: chartPulse 1s ease-in-out infinite alternate;
+        }
+
+        @keyframes chartPulse {
+            from { transform: scaleX(0.8); }
+            to { transform: scaleX(1); }
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(10px);
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.3);
+            transform: translateY(-2px);
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .log-section {
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 12px;
+            padding: 1rem;
+            backdrop-filter: blur(10px);
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            font-family: 'Courier New', monospace;
+            font-size: 0.8rem;
+            margin-bottom: 0.3rem;
+            opacity: 0.8;
+        }
+
+        .log-timestamp {
+            color: #ffa502;
+        }
+
+        .log-level-info { color: #2ed573; }
+        .log-level-warn { color: #ff6b35; }
+        .log-level-error { color: #ff4757; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>CRPlayer Dashboard</h1>
+        <div class="status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Disconnected</span>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div class="screen-section">
+            <h2>Device Screen</h2>
+            <div class="screen-container" id="screenContainer">
+                <div class="screen-placeholder" id="screenPlaceholder">
+                    <h3>📱 Device Screen</h3>
+                    <p>Waiting for stream connection...</p>
+                </div>
+                <canvas id="screenCanvas" class="screen-canvas" style="display: none;"></canvas>
+            </div>
+            <div class="controls">
+                <button class="btn" id="connectBtn">Connect</button>
+                <button class="btn" id="disconnectBtn" disabled>Disconnect</button>
+                <button class="btn" id="screenshotBtn" disabled>Screenshot</button>
+            </div>
+        </div>
+
+        <div class="metrics-section">
+            <div class="metric-card">
+                <div class="metric-title">Data Rate</div>
+                <div class="metric-value" id="dataRate">0</div>
+                <div class="metric-unit">bytes/sec</div>
+                <div class="chart-container">
+                    <div class="chart-line"></div>
+                </div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-title">Frame Rate</div>
+                <div class="metric-value" id="frameRate">0</div>
+                <div class="metric-unit">fps</div>
+            </div>
+
+            <div class="metric-card">
+                <div class="metric-title">Total Data</div>
+                <div class="metric-value" id="totalData">0</div>
+                <div class="metric-unit">MB</div>
+            </div>
+
+            <div class="log-section">
+                <div class="metric-title">Activity Log</div>
+                <div id="logContainer">
+                    <div class="log-entry">
+                        <span class="log-timestamp">[00:00:00]</span>
+                        <span class="log-level-info">INFO</span>
+                        Dashboard initialized
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>
