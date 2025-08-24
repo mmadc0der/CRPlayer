@@ -58,20 +58,21 @@ class WebSocketDashboardSubscriber:
         print("Stopping WebSocket server...")
         self._running = False
         
-        # Stop FFmpeg process
+        # Stop FFmpeg process first
         self._stop_ffmpeg()
         
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=2)
-            
-            # Schedule server close in the event loop
-            future = asyncio.run_coroutine_threadsafe(self._close_server(), self.loop)
+        # Close server gracefully if loop exists
+        if self.loop and not self.loop.is_closed():
             try:
-                future.result(timeout=2.0)
+                future = asyncio.run_coroutine_threadsafe(self._close_server(), self.loop)
+                future.result(timeout=3.0)
             except Exception as e:
                 print(f"Error closing server: {e}")
-        if self.thread:
-            self.thread.join(timeout=2.0)
+        
+        # Wait for thread to finish
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=3.0)
+            
         print("WebSocket server stopped")
         
     def _start_ffmpeg_process(self) -> None:
@@ -105,10 +106,19 @@ class WebSocketDashboardSubscriber:
         """Stop FFmpeg process."""
         if self._ffmpeg_process:
             try:
+                # Close stdin first to signal end of input
+                if self._ffmpeg_process.stdin:
+                    self._ffmpeg_process.stdin.close()
+                    
+                # Give process time to finish
                 self._ffmpeg_process.terminate()
-                self._ffmpeg_process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._ffmpeg_process.kill()
+                try:
+                    self._ffmpeg_process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    print("FFmpeg didn't terminate gracefully, killing...")
+                    self._ffmpeg_process.kill()
+                    self._ffmpeg_process.wait(timeout=2)
+                    
             except Exception as e:
                 print(f"Error stopping FFmpeg: {e}")
             finally:
@@ -166,8 +176,18 @@ class WebSocketDashboardSubscriber:
     async def _close_server(self) -> None:
         """Close the WebSocket server."""
         if self.server:
+            # Close all client connections first
+            if self.clients:
+                await asyncio.gather(
+                    *[client.close() for client in self.clients.copy()],
+                    return_exceptions=True
+                )
+                self.clients.clear()
+                
+            # Close server
             self.server.close()
             await self.server.wait_closed()
+            self.server = None
         
     def _run_server(self) -> None:
         """Run the WebSocket server in its own event loop."""
@@ -185,6 +205,17 @@ class WebSocketDashboardSubscriber:
         except Exception as e:
             print(f"WebSocket server error: {e}")
         finally:
+            # Cancel all pending tasks
+            pending = asyncio.all_tasks(self.loop)
+            for task in pending:
+                task.cancel()
+            
+            # Wait for tasks to complete cancellation
+            if pending:
+                self.loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+            
             self.loop.close()
             
     async def _start_server(self) -> None:
@@ -328,8 +359,9 @@ class WebSocketDashboardSubscriber:
                 self._ffmpeg_process.stdin.flush()
                 self._mkv_buffer.clear()
             except (BrokenPipeError, OSError) as e:
-                print(f"FFmpeg pipe error: {e}")
-                self._restart_ffmpeg()
+                if self._running:  # Only restart if we're still supposed to be running
+                    print(f"FFmpeg pipe error: {e}")
+                    self._restart_ffmpeg()
                 
     def _get_device_resolution(self) -> tuple:
         """Get device resolution from ADB."""
