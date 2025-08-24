@@ -35,6 +35,11 @@ class FastVideoProcessor:
         self._last_frame_time = 0
         self._buffer_lock = threading.Lock()
         
+        # MKV stream synchronization
+        self._has_valid_header = False
+        self._segment_buffer = bytearray()
+        self._looking_for_header = True
+        
         # Statistics
         self.frames_processed = 0
         self.frames_dropped = 0
@@ -78,34 +83,35 @@ class FastVideoProcessor:
         print("Fast video processor stopped")
         
     def add_mkv_data(self, data: bytes) -> None:
-        """Add MKV data to FFmpeg stdin."""
-        if not self._ffmpeg_process or not self._ffmpeg_process.stdin:
-            # Buffer data until FFmpeg is ready
-            with self._buffer_lock:
-                self._mkv_buffer.extend(data)
-                # Limit buffer size to prevent memory issues
-                if len(self._mkv_buffer) > 1024 * 1024:  # 1MB limit
-                    self._mkv_buffer = self._mkv_buffer[-512*1024:]  # Keep last 512KB
-            return
+        """Add MKV data with proper stream synchronization."""
+        with self._buffer_lock:
+            self._mkv_buffer.extend(data)
             
-        try:
-            # Send data directly to FFmpeg stdin
-            self._ffmpeg_process.stdin.write(data)
-            self._ffmpeg_process.stdin.flush()
+            # Look for valid MKV segment start
+            if self._looking_for_header:
+                self._find_mkv_segment_start()
+                
+            # Send data to FFmpeg if we have a valid stream
+            if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
+                try:
+                    # Send accumulated data
+                    if self._mkv_buffer:
+                        self._ffmpeg_process.stdin.write(self._mkv_buffer)
+                        self._ffmpeg_process.stdin.flush()
+                        self._mkv_buffer.clear()
+                        
+                except (BrokenPipeError, OSError) as e:
+                    print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
+                    # Reset header flag to resync
+                    self._has_valid_header = False
+                    self._looking_for_header = True
             
-            # Also send any buffered data
-            with self._buffer_lock:
-                if self._mkv_buffer:
-                    print(f"[FastVideoProcessor] Sending {len(self._mkv_buffer)} buffered bytes to FFmpeg")
-                    self._ffmpeg_process.stdin.write(self._mkv_buffer)
-                    self._ffmpeg_process.stdin.flush()
-                    self._mkv_buffer.clear()
-                    
-        except (BrokenPipeError, OSError) as e:
-            print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
-            # Buffer the data instead of restarting immediately
-            with self._buffer_lock:
-                self._mkv_buffer.extend(data)
+            # Limit buffer size
+            if len(self._mkv_buffer) > 2 * 1024 * 1024:  # 2MB limit
+                print(f"[FastVideoProcessor] Buffer overflow, clearing {len(self._mkv_buffer)} bytes")
+                self._mkv_buffer.clear()
+                self._has_valid_header = False
+                self._looking_for_header = True
             
     def get_frame(self, timeout: float = 0.1) -> Optional[dict]:
         """Get next processed frame if available."""
@@ -193,10 +199,10 @@ class FastVideoProcessor:
                     time_since_last_frame = current_time - last_frame_time
                     time_since_restart = current_time - last_restart_time
                     
-                    # Only restart if we've been running for at least 5 seconds without frames
-                    # OR after processing 100 frames successfully
-                    if ((time_since_last_frame > 15.0 and time_since_restart > 5.0) or 
-                        frame_count_since_restart > 100):
+                    # Only restart if we've been running for at least 10 seconds without frames
+                    # OR after processing 150 frames successfully
+                    if ((time_since_last_frame > 20.0 and time_since_restart > 10.0) or 
+                        frame_count_since_restart > 150):
                         print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed, {time_since_restart:.1f}s since restart)")
                         self._restart_ffmpeg()
                         frame_count_since_restart = 0
@@ -228,6 +234,14 @@ class FastVideoProcessor:
                 except:
                     pass
             self._ffmpeg_process = None
+            
+        # Reset stream synchronization
+        with self._buffer_lock:
+            self._has_valid_header = False
+            self._looking_for_header = True
+            # Keep some buffer data for resyncing
+            if len(self._mkv_buffer) > 64 * 1024:
+                self._mkv_buffer = self._mkv_buffer[-32*1024:]  # Keep last 32KB
             
         # Start new process after brief delay
         time.sleep(1.0)
@@ -300,6 +314,39 @@ class FastVideoProcessor:
         except Exception as e:
             print(f"[FastVideoProcessor] Error reading FFmpeg frame: {e}")
             return None
+            
+    def _find_mkv_segment_start(self) -> None:
+        """Find a valid MKV segment start in the buffer."""
+        # Look for EBML header (0x1A45DFA3) or Segment header (0x18538067)
+        ebml_header = b'\x1a\x45\xdf\xa3'
+        segment_header = b'\x18\x53\x80\x67'
+        
+        # Search for EBML header first (start of new file)
+        ebml_pos = self._mkv_buffer.find(ebml_header)
+        if ebml_pos != -1:
+            print(f"[FastVideoProcessor] Found EBML header at position {ebml_pos}")
+            # Remove data before EBML header
+            if ebml_pos > 0:
+                self._mkv_buffer = self._mkv_buffer[ebml_pos:]
+            self._has_valid_header = True
+            self._looking_for_header = False
+            return
+            
+        # Look for segment header (continuation)
+        segment_pos = self._mkv_buffer.find(segment_header)
+        if segment_pos != -1 and len(self._mkv_buffer) > segment_pos + 100:  # Need some data after header
+            print(f"[FastVideoProcessor] Found Segment header at position {segment_pos}")
+            # Remove data before segment header
+            if segment_pos > 0:
+                self._mkv_buffer = self._mkv_buffer[segment_pos:]
+            self._has_valid_header = True
+            self._looking_for_header = False
+            return
+            
+        # If buffer is too large without finding headers, clear old data
+        if len(self._mkv_buffer) > 256 * 1024:  # 256KB
+            print(f"[FastVideoProcessor] No valid headers found, clearing buffer")
+            self._mkv_buffer = self._mkv_buffer[-64*1024:]  # Keep last 64KB
             
             
     def get_stats(self) -> dict:
