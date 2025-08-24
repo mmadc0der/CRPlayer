@@ -31,6 +31,7 @@ class WebSocketDashboardSubscriber:
         self._ffmpeg_process: Optional[subprocess.Popen] = None
         self._frame_queue = queue.Queue(maxsize=10)
         self._frame_thread: Optional[threading.Thread] = None
+        self._device_resolution = None
         
         # Pipeline reference for stats
         self._pipeline = None
@@ -81,7 +82,7 @@ class WebSocketDashboardSubscriber:
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
                 '-i', 'pipe:0',    # Read from stdin
-                '-vf', 'scale=640:480',  # Resize for dashboard
+                '-vf', self._get_scale_filter(),  # Dynamic scaling based on device
                 '-f', 'image2pipe',      # Output format
                 '-vcodec', 'png',        # PNG output
                 '-r', '5',               # 5 FPS for dashboard
@@ -330,13 +331,59 @@ class WebSocketDashboardSubscriber:
                 print(f"FFmpeg pipe error: {e}")
                 self._restart_ffmpeg()
                 
+    def _get_device_resolution(self) -> tuple:
+        """Get device resolution from ADB."""
+        try:
+            result = subprocess.run(
+                ['adb', 'shell', 'wm', 'size'],
+                capture_output=True, text=True, check=True
+            )
+            # Parse output like "Physical size: 1080x2400"
+            for line in result.stdout.strip().split('\n'):
+                if 'size:' in line:
+                    size_part = line.split('size:')[1].strip()
+                    width, height = map(int, size_part.split('x'))
+                    return (width, height)
+        except Exception as e:
+            print(f"Could not get device resolution: {e}")
+        
+        # Default fallback
+        return (1080, 1920)
+        
+    def _get_scale_filter(self) -> str:
+        """Generate FFmpeg scale filter maintaining aspect ratio."""
+        if not self._device_resolution:
+            self._device_resolution = self._get_device_resolution()
+            
+        width, height = self._device_resolution
+        
+        # Calculate target size maintaining aspect ratio
+        # Max width/height for dashboard display
+        max_width = 400
+        max_height = 600
+        
+        # Calculate scale factor
+        scale_w = max_width / width
+        scale_h = max_height / height
+        scale = min(scale_w, scale_h)
+        
+        target_width = int(width * scale)
+        target_height = int(height * scale)
+        
+        # Ensure even dimensions for video encoding
+        target_width = target_width - (target_width % 2)
+        target_height = target_height - (target_height % 2)
+        
+        print(f"Device resolution: {width}x{height}, scaling to: {target_width}x{target_height}")
+        return f'scale={target_width}:{target_height}'
+                
         # Send frame processing status
         if self.loop and self._running:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({
                     "type": "log",
                     "level": "info",
-                    "message": f"Processing MKV data ({len(self._mkv_buffer)} bytes buffered, {self._frame_count} frames)"
+                    "message": f"Processing MKV data ({len(self._mkv_buffer)} bytes buffered, {self._frame_count} frames, {self._device_resolution})"
                 }),
                 self.loop
             )

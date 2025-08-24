@@ -132,9 +132,30 @@ class CRPlayerDashboard {
         // Create image from base64 data
         const img = new Image();
         img.onload = () => {
-            // Resize canvas to match image
-            this.screenCanvas.width = img.width;
-            this.screenCanvas.height = img.height;
+            // Set canvas dimensions to match image while maintaining aspect ratio
+            const maxWidth = 400;
+            const maxHeight = 600;
+            
+            let displayWidth = img.width;
+            let displayHeight = img.height;
+            
+            // Scale down if too large
+            if (displayWidth > maxWidth || displayHeight > maxHeight) {
+                const scaleW = maxWidth / displayWidth;
+                const scaleH = maxHeight / displayHeight;
+                const scale = Math.min(scaleW, scaleH);
+                
+                displayWidth = Math.floor(displayWidth * scale);
+                displayHeight = Math.floor(displayHeight * scale);
+            }
+            
+            // Set canvas size
+            this.screenCanvas.width = displayWidth;
+            this.screenCanvas.height = displayHeight;
+            
+            // Set CSS size to maintain aspect ratio
+            this.screenCanvas.style.width = displayWidth + 'px';
+            this.screenCanvas.style.height = displayHeight + 'px';
             
             // Draw frame
             this.ctx.drawImage(img, 0, 0);
