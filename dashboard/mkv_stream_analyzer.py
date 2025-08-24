@@ -31,7 +31,7 @@ class MKVStreamAnalyzer:
         
         while time.time() - start_time < duration_seconds:
             try:
-                data = self.reader.read()
+                data = self.reader.read_available()
                 if data:
                     self.total_bytes += len(data)
                     self.chunk_count += 1
