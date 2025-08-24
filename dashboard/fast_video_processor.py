@@ -106,17 +106,16 @@ class FastVideoProcessor:
                         self._has_valid_header = True
                         print(f"[FastVideoProcessor] Valid MKV stream detected, buffer size: {len(self._mkv_buffer)}")
                 
-                # Only feed data to FFmpeg if we have a valid header
+                # Feed ALL available data immediately for fastest response
                 if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
-                    # Feed buffered data in larger chunks to handle timing gaps better
-                    chunk_size = min(1024, len(self._mkv_buffer))  # 1KB chunks
-                    if chunk_size > 0:
-                        chunk = bytes(self._mkv_buffer[:chunk_size])
+                    if len(self._mkv_buffer) > 0:
+                        # Send all buffered data immediately
+                        chunk = bytes(self._mkv_buffer)
                         self._ffmpeg_process.stdin.write(chunk)
                         self._ffmpeg_process.stdin.flush()
                         
-                        # Remove processed data from buffer
-                        self._mkv_buffer = self._mkv_buffer[chunk_size:]
+                        # Clear buffer after sending
+                        self._mkv_buffer.clear()
                 
         except (BrokenPipeError, OSError) as e:
             print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
@@ -135,21 +134,21 @@ class FastVideoProcessor:
             cmd = [
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
-                '-analyzeduration', '10000000',  # 10 second analysis for chunked data
-                '-probesize', '10000000',        # 10MB probe size for larger buffers
-                '-fflags', '+igndts+ignidx+genpts+nobuffer',  # Generate PTS, ignore discontinuities, no buffering
-                '-avoid_negative_ts', 'make_zero',   # Handle timing issues
-                '-max_delay', '0',               # Minimize delay
-                '-thread_queue_size', '1024',    # Larger thread queue
+                '-analyzeduration', '1000000',   # 1 second analysis - FAST
+                '-probesize', '1000000',         # 1MB probe size - FAST
+                '-fflags', '+igndts+ignidx+genpts+nobuffer+flush_packets',  # Fast flags
+                '-avoid_negative_ts', 'make_zero',
+                '-max_delay', '0',               # No delay
+                '-fpsprobesize', '0',            # Skip FPS probing
                 '-i', 'pipe:0',    # Read from stdin
                 '-vf', f'scale={self.target_width}:-1',  # Scale to target width
                 '-f', 'image2pipe',
                 '-vcodec', 'mjpeg',
-                '-q:v', '8',   # Better quality
-                '-r', '10',    # 10 FPS for responsive updates
-                '-an',         # No audio
-                '-flush_packets', '1',  # Flush packets immediately
-                '-loglevel', 'warning',   # More verbose for debugging
+                '-q:v', '10',      # Faster encoding (lower quality)
+                '-r', '15',        # Higher FPS for responsiveness
+                '-an',             # No audio
+                '-flush_packets', '1',  # Flush immediately
+                '-loglevel', 'error',   # Less verbose
                 'pipe:1'
             ]
             
@@ -213,11 +212,9 @@ class FastVideoProcessor:
                     time_since_last_frame = current_time - last_frame_time
                     time_since_restart = current_time - last_restart_time
                     
-                    # Be very tolerant of gaps - your debug log shows 1+ second gaps are normal
-                    # Only restart if we've been running for at least 10 seconds without frames
-                    # AND we've had time to establish the stream (60s since restart) 
-                    # AND we've processed some frames successfully
-                    if (time_since_last_frame > 10.0 and time_since_restart > 60.0 and frame_count_since_restart > 5):
+                    # For fastest response, restart more aggressively if no frames
+                    # Restart if no frames for 3 seconds after initial startup period
+                    if (time_since_last_frame > 3.0 and time_since_restart > 10.0):
                         print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed, {time_since_restart:.1f}s since restart)")
                         print(f"[FastVideoProcessor] Buffer state: {len(self._mkv_buffer)} bytes, valid_header: {self._has_valid_header}")
                         self._restart_ffmpeg()
