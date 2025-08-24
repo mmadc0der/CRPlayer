@@ -137,7 +137,7 @@ class FastVideoProcessor:
                 '-f', 'matroska',  # Input format
                 '-analyzeduration', '2000000',   # 2 second analysis - balanced
                 '-probesize', '2000000',         # 2MB probe size - balanced
-                '-fflags', '+igndts+ignidx+genpts+low_delay',  # Generate PTS for irregular streams
+                '-fflags', '+igndts+ignidx+genpts',  # Generate PTS for irregular streams
                 '-avoid_negative_ts', 'make_zero',   # Handle timing issues
                 '-max_delay', '0',               # Minimize delay
                 '-i', 'pipe:0',    # Read from stdin
