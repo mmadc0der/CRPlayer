@@ -109,7 +109,7 @@ class FastVideoProcessor:
                 # Only feed data to FFmpeg if we have a valid header
                 if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
                     # Feed buffered data in reasonable chunks to maintain stream integrity
-                    chunk_size = min(1024, len(self._mkv_buffer))  # 1KB chunks
+                    chunk_size = min(4096, len(self._mkv_buffer))  # 1KB chunks
                     if chunk_size > 0:
                         chunk = bytes(self._mkv_buffer[:chunk_size])
                         self._ffmpeg_process.stdin.write(chunk)
