@@ -128,6 +128,7 @@ if __name__ == "__main__":
     # Add stats subscriber (every 5 seconds)
     last_stats_time = 0
     def stats_subscriber(chunk: DataChunk) -> None:
+        global last_stats_time
         if chunk.timestamp - last_stats_time >= 5.0:
             stats = pipeline.get_stats()
             print(f"[STATS] {stats['total_bytes']} bytes, {stats['total_chunks']} chunks, "
