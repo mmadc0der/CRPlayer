@@ -135,9 +135,10 @@ class FastVideoProcessor:
             cmd = [
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
-                '-analyzeduration', '2000000',   # 2 second analysis - balanced
-                '-probesize', '2000000',         # 2MB probe size - balanced
-                '-fflags', '+igndts+ignidx+genpts',  # Generate PTS for irregular streams
+                '-analyzeduration', '500000',   # 2 second analysis - balanced
+                '-probesize', '1000000',         # 2MB probe size - balanced
+                '-fflags', '+igndts+ignidx+genpts+low_delay+discardcorrupt',  # Generate PTS for irregular streams
+                '-avioflags', 'direct',
                 '-avoid_negative_ts', 'make_zero',   # Handle timing issues
                 '-max_delay', '0',               # Minimize delay
                 '-i', 'pipe:0',    # Read from stdin
