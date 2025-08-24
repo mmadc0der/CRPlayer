@@ -8,6 +8,7 @@ import subprocess
 import base64
 from io import BytesIO
 import queue
+from .fast_video_processor import FastVideoProcessor
 
 
 class WebSocketDashboardSubscriber:
@@ -23,13 +24,11 @@ class WebSocketDashboardSubscriber:
         self._running = False
         
         # Data accumulation for frame processing
-        self._mkv_buffer = bytearray()
         self._frame_count = 0
         self._last_stats_time = 0
         
-        # FFmpeg process for frame extraction
-        self._ffmpeg_process: Optional[subprocess.Popen] = None
-        self._frame_queue = queue.Queue(maxsize=10)
+        # Fast video processor (replaces FFmpeg)
+        self._video_processor: Optional[FastVideoProcessor] = None
         self._frame_thread: Optional[threading.Thread] = None
         self._device_resolution = None
         
@@ -58,8 +57,8 @@ class WebSocketDashboardSubscriber:
         print("Stopping WebSocket server...")
         self._running = False
         
-        # Stop FFmpeg process first
-        self._stop_ffmpeg()
+        # Stop video processor first
+        self._stop_video_processor()
         
         # Close server gracefully if loop exists
         if self.loop and not self.loop.is_closed():
@@ -75,103 +74,70 @@ class WebSocketDashboardSubscriber:
             
         print("WebSocket server stopped")
         
-    def _start_ffmpeg_process(self) -> None:
-        """Start FFmpeg process for frame extraction."""
+    def _start_video_processor(self) -> None:
+        """Start fast video processor for frame extraction."""
         try:
-            # FFmpeg command to extract frames from MKV stream
-            cmd = [
-                'ffmpeg',
-                '-f', 'matroska',  # Input format
-                '-i', 'pipe:0',    # Read from stdin
-                '-vf', self._get_scale_filter(),  # Dynamic scaling based on device
-                '-f', 'image2pipe',      # Output format
-                '-vcodec', 'png',        # PNG output
-                '-r', '5',               # 5 FPS for dashboard
-                'pipe:1'                 # Write to stdout
-            ]
+            # Get device resolution for optimal scaling
+            if not self._device_resolution:
+                self._device_resolution = self._get_device_resolution()
+                
+            width, height = self._device_resolution
             
-            self._ffmpeg_process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                bufsize=0
+            # Calculate optimal target width maintaining aspect ratio
+            max_width = 400
+            max_height = 600
+            scale_w = max_width / width
+            scale_h = max_height / height
+            scale = min(scale_w, scale_h)
+            target_width = int(width * scale)
+            
+            # Create fast processor
+            self._video_processor = FastVideoProcessor(
+                max_fps=10,  # Higher FPS than FFmpeg approach
+                target_width=target_width
             )
-            print("FFmpeg process started for frame extraction")
+            self._video_processor.start()
+            print(f"Fast video processor started (target: {target_width}px wide)")
             
         except Exception as e:
-            print(f"Failed to start FFmpeg: {e}")
+            print(f"Failed to start video processor: {e}")
             
-    def _stop_ffmpeg(self) -> None:
-        """Stop FFmpeg process."""
-        if self._ffmpeg_process:
+    def _stop_video_processor(self) -> None:
+        """Stop video processor."""
+        if self._video_processor:
             try:
-                # Close stdin first to signal end of input
-                if self._ffmpeg_process.stdin:
-                    self._ffmpeg_process.stdin.close()
-                    
-                # Give process time to finish
-                self._ffmpeg_process.terminate()
-                try:
-                    self._ffmpeg_process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    print("FFmpeg didn't terminate gracefully, killing...")
-                    self._ffmpeg_process.kill()
-                    self._ffmpeg_process.wait(timeout=2)
-                    
+                self._video_processor.stop()
+                print("Video processor stopped")
             except Exception as e:
-                print(f"Error stopping FFmpeg: {e}")
+                print(f"Error stopping video processor: {e}")
             finally:
-                self._ffmpeg_process = None
+                self._video_processor = None
                 
-    def _restart_ffmpeg(self) -> None:
-        """Restart FFmpeg process."""
-        self._stop_ffmpeg()
-        self._start_ffmpeg_process()
+    def _restart_video_processor(self) -> None:
+        """Restart video processor."""
+        self._stop_video_processor()
+        self._start_video_processor()
         
     def _frame_processor(self) -> None:
-        """Process frames from FFmpeg output."""
+        """Process frames from video processor output."""
         while self._running:
-            # Process FFmpeg output
-            if self._ffmpeg_process and self._ffmpeg_process.stdout:
+            if self._video_processor:
                 try:
-                    # Read PNG header to determine frame size
-                    png_header = self._ffmpeg_process.stdout.read(8)
-                    if len(png_header) == 8 and png_header[:4] == b'\x89PNG':
-                        # Read rest of PNG data (simplified - assumes small frames)
-                        frame_data = png_header + self._ffmpeg_process.stdout.read(65536)
+                    # Get processed frame from fast processor
+                    frame_data = self._video_processor.get_frame(timeout=0.1)
+                    
+                    if frame_data and self.loop and self._running:
+                        # Frame already contains base64 JPEG data
+                        asyncio.run_coroutine_threadsafe(
+                            self._broadcast(frame_data),
+                            self.loop
+                        )
+                        self._frame_count += 1
                         
-                        if frame_data:
-                            # Convert to base64 for transmission
-                            frame_b64 = base64.b64encode(frame_data).decode('utf-8')
-                            
-                            # Queue frame for transmission
-                            try:
-                                self._frame_queue.put_nowait({
-                                    "type": "frame",
-                                    "data": frame_b64,
-                                    "timestamp": time.time()
-                                })
-                                self._frame_count += 1
-                            except queue.Full:
-                                # Drop frame if queue is full
-                                pass
-                                
                 except Exception as e:
                     print(f"Frame processing error: {e}")
-                    
-            # Send queued frames to clients
-            try:
-                frame_data = self._frame_queue.get(timeout=0.1)
-                if self.loop and self._running:
-                    asyncio.run_coroutine_threadsafe(
-                        self._broadcast(frame_data),
-                        self.loop
-                    )
-            except queue.Empty:
+            else:
                 time.sleep(0.1)
-            except Exception as e:
-                print(f"Frame transmission error: {e}")
         
     async def _close_server(self) -> None:
         """Close the WebSocket server."""
@@ -330,12 +296,8 @@ class WebSocketDashboardSubscriber:
         
     def handle_chunk(self, chunk) -> None:
         """Handle data chunk from pipeline (subscriber callback)."""
-        # Accumulate MKV data
-        self._mkv_buffer.extend(chunk.data.tobytes())
-        
-        # Try to extract frame every 64KB or so
-        if len(self._mkv_buffer) > 65536:
-            self._process_mkv_buffer()
+        # Process MKV data directly with fast processor
+        self._process_mkv_data(chunk.data.tobytes())
             
         # Send stats periodically
         current_time = time.time()
@@ -343,25 +305,20 @@ class WebSocketDashboardSubscriber:
             self._send_stats()
             self._last_stats_time = current_time
             
-    def _process_mkv_buffer(self) -> None:
-        """Process accumulated MKV data to extract frames."""
-        if len(self._mkv_buffer) < 1024:  # Wait for more data
-            return
+    def _process_mkv_data(self, data: bytes) -> None:
+        """Process MKV data using fast video processor."""
+        # Start video processor if not running
+        if self._video_processor is None:
+            self._start_video_processor()
             
-        # Start FFmpeg process if not running
-        if self._ffmpeg_process is None or self._ffmpeg_process.poll() is not None:
-            self._start_ffmpeg_process()
-            
-        # Send data to FFmpeg
-        if self._ffmpeg_process and self._ffmpeg_process.stdin:
+        # Send data to fast processor
+        if self._video_processor:
             try:
-                self._ffmpeg_process.stdin.write(bytes(self._mkv_buffer))
-                self._ffmpeg_process.stdin.flush()
-                self._mkv_buffer.clear()
-            except (BrokenPipeError, OSError) as e:
+                self._video_processor.add_mkv_data(data)
+            except Exception as e:
                 if self._running:  # Only restart if we're still supposed to be running
-                    print(f"FFmpeg pipe error: {e}")
-                    self._restart_ffmpeg()
+                    print(f"Video processor error: {e}")
+                    self._restart_video_processor()
                 
     def _get_device_resolution(self) -> tuple:
         """Get device resolution from ADB."""
@@ -408,17 +365,6 @@ class WebSocketDashboardSubscriber:
         
         print(f"Device resolution: {width}x{height}, scaling to: {target_width}x{target_height}")
         return f'scale={target_width}:{target_height}'
-                
-        # Send frame processing status
-        if self.loop and self._running:
-            asyncio.run_coroutine_threadsafe(
-                self._broadcast({
-                    "type": "log",
-                    "level": "info",
-                    "message": f"Processing MKV data ({len(self._mkv_buffer)} bytes buffered, {self._frame_count} frames, {self._device_resolution})"
-                }),
-                self.loop
-            )
             
     def _send_stats(self) -> None:
         """Send pipeline statistics to clients."""
@@ -426,6 +372,11 @@ class WebSocketDashboardSubscriber:
             return
             
         stats = self._pipeline.get_stats()
+        
+        # Get video processor stats
+        video_stats = {}
+        if self._video_processor:
+            video_stats = self._video_processor.get_stats()
         
         # Send metrics to dashboard
         asyncio.run_coroutine_threadsafe(
@@ -436,7 +387,10 @@ class WebSocketDashboardSubscriber:
                     "frameRate": self._frame_count,  # Frames processed this second
                     "totalData": stats.get("total_bytes", 0),
                     "totalChunks": stats.get("total_chunks", 0),
-                    "uptime": stats.get("elapsed_time", 0)
+                    "uptime": stats.get("elapsed_time", 0),
+                    "framesProcessed": video_stats.get("frames_processed", 0),
+                    "framesDropped": video_stats.get("frames_dropped", 0),
+                    "processorQueueSize": video_stats.get("queue_size", 0)
                 }
             }),
             self.loop

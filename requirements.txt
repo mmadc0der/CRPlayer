@@ -1,8 +1,8 @@
 # WebSocket server for dashboard
-websockets==11.0.3
+websockets>=11.0.3
 
-# FFmpeg for video processing (future MKV decoding)
-# opencv-python==4.8.1.78
+# OpenCV for fast video processing (replaces FFmpeg)
+opencv-python>=4.8.1.78
 
 # Performance monitoring
 # psutil==5.9.5
