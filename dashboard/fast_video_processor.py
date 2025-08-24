@@ -14,24 +14,26 @@ import os
 
 
 class FastVideoProcessor:
-    """High-performance video frame processor using OpenCV."""
+    """High-performance video frame processor using FFmpeg stdin."""
     
     def __init__(self, max_fps: int = 10, target_width: int = 400):
         self.max_fps = max_fps
         self.target_width = target_width
         self.frame_interval = 1.0 / max_fps
         
-        # FFmpeg subprocess for video processing
-        self._temp_file: Optional[str] = None
+        # FFmpeg subprocess for streaming processing
+        self._ffmpeg_process: Optional[subprocess.Popen] = None
         
         # Frame processing
         self._frame_queue = queue.Queue(maxsize=5)
         self._processor_thread: Optional[threading.Thread] = None
+        self._reader_thread: Optional[threading.Thread] = None
         self._running = False
         
         # Buffer for incoming MKV data
         self._mkv_buffer = bytearray()
         self._last_frame_time = 0
+        self._buffer_lock = threading.Lock()
         
         # Statistics
         self.frames_processed = 0
@@ -43,27 +45,62 @@ class FastVideoProcessor:
             return
             
         self._running = True
-        self._processor_thread = threading.Thread(target=self._process_frames, daemon=True)
-        self._processor_thread.start()
+        
+        # Start FFmpeg process for streaming
+        self._start_ffmpeg_streaming()
+        
+        # Start frame reader thread
+        self._reader_thread = threading.Thread(target=self._read_frames, daemon=True)
+        self._reader_thread.start()
+        
         print("Fast video processor started")
         
     def stop(self) -> None:
         """Stop the video processor."""
         self._running = False
         
-        if self._processor_thread:
-            self._processor_thread.join(timeout=2.0)
+        # Stop FFmpeg process
+        if self._ffmpeg_process:
+            try:
+                if self._ffmpeg_process.stdin:
+                    self._ffmpeg_process.stdin.close()
+                self._ffmpeg_process.terminate()
+                self._ffmpeg_process.wait(timeout=3)
+            except:
+                if self._ffmpeg_process:
+                    self._ffmpeg_process.kill()
+            self._ffmpeg_process = None
+        
+        # Wait for threads
+        if self._reader_thread:
+            self._reader_thread.join(timeout=2.0)
             
-        self._cleanup_resources()
         print("Fast video processor stopped")
         
     def add_mkv_data(self, data: bytes) -> None:
-        """Add MKV data to processing buffer."""
-        self._mkv_buffer.extend(data)
-        
-        # Process when we have enough data
-        if len(self._mkv_buffer) > 32768:  # 32KB threshold
-            self._update_video_source()
+        """Add MKV data to FFmpeg stdin."""
+        if not self._ffmpeg_process or not self._ffmpeg_process.stdin:
+            # Buffer data until FFmpeg is ready
+            with self._buffer_lock:
+                self._mkv_buffer.extend(data)
+            return
+            
+        try:
+            # Send data directly to FFmpeg stdin
+            self._ffmpeg_process.stdin.write(data)
+            self._ffmpeg_process.stdin.flush()
+            
+            # Also send any buffered data
+            with self._buffer_lock:
+                if self._mkv_buffer:
+                    self._ffmpeg_process.stdin.write(self._mkv_buffer)
+                    self._ffmpeg_process.stdin.flush()
+                    self._mkv_buffer.clear()
+                    
+        except (BrokenPipeError, OSError) as e:
+            print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
+            # Restart FFmpeg
+            self._restart_ffmpeg()
             
     def get_frame(self, timeout: float = 0.1) -> Optional[dict]:
         """Get next processed frame if available."""
@@ -72,129 +109,95 @@ class FastVideoProcessor:
         except queue.Empty:
             return None
             
-    def _update_video_source(self) -> None:
-        """Update video source with new MKV data using FFmpeg subprocess."""
-        if len(self._mkv_buffer) < 1024:
-            return
-            
-        try:
-            # Use FFmpeg subprocess with optimized settings for real-time processing
-            if not self._temp_file:
-                fd, self._temp_file = tempfile.mkstemp(suffix='.mkv')
-                os.close(fd)
-                
-            # Write accumulated data
-            with open(self._temp_file, 'wb') as f:
-                f.write(self._mkv_buffer)
-                
-            # Check if file has enough data for FFmpeg
-            file_size = os.path.getsize(self._temp_file)
-            if file_size < 8192:  # Need more data for reliable FFmpeg processing
-                return
-                
-            print(f"[FastVideoProcessor] Processing MKV file with {file_size} bytes")
-            
-            # Clear buffer after writing
-            self._mkv_buffer.clear()
-            
-        except Exception as e:
-            print(f"Error updating video source: {e}")
-            
-    def _process_frames(self) -> None:
-        """Main frame processing loop using FFmpeg subprocess."""
-        ffmpeg_process = None
-        
-        while self._running:
-            current_time = time.time()
-            
-            # Throttle frame rate
-            if current_time - self._last_frame_time < self.frame_interval:
-                time.sleep(0.01)
-                continue
-                
-            # Check if we have a temp file to process
-            if self._temp_file and os.path.exists(self._temp_file):
-                file_size = os.path.getsize(self._temp_file)
-                
-                if file_size > 4096 and not ffmpeg_process:
-                    # Start FFmpeg process with optimized settings
-                    ffmpeg_process = self._start_ffmpeg_extraction()
-                    
-                if ffmpeg_process:
-                    try:
-                        # Read frame from FFmpeg stdout
-                        frame_data = self._read_ffmpeg_frame(ffmpeg_process)
-                        
-                        if frame_data:
-                            print(f"[FastVideoProcessor] Frame extracted, base64 length: {len(frame_data)}")
-                            # Try to queue frame
-                            try:
-                                self._frame_queue.put_nowait({
-                                    "type": "frame",
-                                    "data": frame_data,
-                                    "timestamp": current_time,
-                                    "width": self.target_width
-                                })
-                                self.frames_processed += 1
-                                self._last_frame_time = current_time
-                                print(f"[FastVideoProcessor] Frame queued successfully (total: {self.frames_processed})")
-                                
-                            except queue.Full:
-                                # Drop frame if queue is full
-                                self.frames_dropped += 1
-                                print(f"[FastVideoProcessor] Frame dropped - queue full (total dropped: {self.frames_dropped})")
-                        else:
-                            # No frame available - this is normal
-                            pass
-                                
-                    except Exception as e:
-                        print(f"Frame processing error: {e}")
-                        # Restart FFmpeg on error
-                        if ffmpeg_process:
-                            ffmpeg_process.terminate()
-                            ffmpeg_process = None
-                        
-            time.sleep(0.01)
-            
-        # Cleanup FFmpeg process
-        if ffmpeg_process:
-            ffmpeg_process.terminate()
-            ffmpeg_process.wait()
-            
-            
-    def _start_ffmpeg_extraction(self) -> Optional[object]:
-        """Start FFmpeg process for frame extraction with optimized settings."""
+    def _start_ffmpeg_streaming(self) -> None:
+        """Start FFmpeg process for streaming MKV input."""
         try:
             cmd = [
                 'ffmpeg',
-                '-y',  # Overwrite output files
-                '-i', self._temp_file,
-                '-vf', f'scale={self.target_width}:-1',  # Scale to target width, auto height
+                '-f', 'matroska',  # Input format
+                '-i', 'pipe:0',    # Read from stdin
+                '-vf', f'scale={self.target_width}:-1',  # Scale to target width
                 '-f', 'image2pipe',
-                '-vcodec', 'mjpeg',  # Use MJPEG for faster encoding
-                '-q:v', '5',  # Higher quality for better results (2-31, lower = better)
-                '-r', '2',  # Lower frame rate for testing
-                '-an',  # No audio
-                '-loglevel', 'warning',  # Reduce FFmpeg output
+                '-vcodec', 'mjpeg',
+                '-q:v', '8',  # Balanced quality/speed
+                '-r', '3',    # 3 FPS for dashboard
+                '-an',        # No audio
+                '-loglevel', 'error',  # Minimal logging
                 'pipe:1'
             ]
             
-            print(f"FFmpeg command: {' '.join(cmd)}")
+            print(f"[FastVideoProcessor] Starting streaming FFmpeg: {' '.join(cmd)}")
             
-            process = subprocess.Popen(
+            self._ffmpeg_process = subprocess.Popen(
                 cmd,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 bufsize=0
             )
             
-            print(f"[FastVideoProcessor] Started FFmpeg extraction process (PID: {process.pid})")
-            print(f"[FastVideoProcessor] Command: {' '.join(cmd)}")
-            return process
+            print(f"[FastVideoProcessor] FFmpeg streaming process started (PID: {self._ffmpeg_process.pid})")
             
         except Exception as e:
-            print(f"Failed to start FFmpeg extraction: {e}")
-            return None
+            print(f"[FastVideoProcessor] Failed to start streaming FFmpeg: {e}")
+            self._ffmpeg_process = None
+            
+    def _read_frames(self) -> None:
+        """Read frames from FFmpeg stdout."""
+        while self._running:
+            if not self._ffmpeg_process:
+                time.sleep(0.1)
+                continue
+                
+            try:
+                # Read frame from FFmpeg stdout
+                frame_data = self._read_ffmpeg_frame(self._ffmpeg_process)
+                
+                if frame_data:
+                    current_time = time.time()
+                    
+                    # Throttle frame rate
+                    if current_time - self._last_frame_time >= self.frame_interval:
+                        print(f"[FastVideoProcessor] Frame extracted, base64 length: {len(frame_data)}")
+                        
+                        try:
+                            self._frame_queue.put_nowait({
+                                "type": "frame",
+                                "data": frame_data,
+                                "timestamp": current_time,
+                                "width": self.target_width
+                            })
+                            self.frames_processed += 1
+                            self._last_frame_time = current_time
+                            print(f"[FastVideoProcessor] Frame queued (total: {self.frames_processed})")
+                            
+                        except queue.Full:
+                            self.frames_dropped += 1
+                            print(f"[FastVideoProcessor] Frame dropped - queue full")
+                else:
+                    time.sleep(0.01)
+                    
+            except Exception as e:
+                print(f"[FastVideoProcessor] Frame reading error: {e}")
+                time.sleep(0.1)
+            
+            
+    def _restart_ffmpeg(self) -> None:
+        """Restart FFmpeg process."""
+        print("[FastVideoProcessor] Restarting FFmpeg process...")
+        
+        # Stop current process
+        if self._ffmpeg_process:
+            try:
+                self._ffmpeg_process.terminate()
+                self._ffmpeg_process.wait(timeout=2)
+            except:
+                pass
+            self._ffmpeg_process = None
+            
+        # Start new process
+        time.sleep(0.5)  # Brief delay
+        self._start_ffmpeg_streaming()
             
     def _read_ffmpeg_frame(self, process) -> Optional[str]:
         """Read a single JPEG frame from FFmpeg stdout."""
@@ -243,14 +246,6 @@ class FastVideoProcessor:
             print(f"Error reading FFmpeg frame: {e}")
             return None
             
-    def _cleanup_resources(self) -> None:
-        """Clean up resources."""
-        if self._temp_file and os.path.exists(self._temp_file):
-            try:
-                os.unlink(self._temp_file)
-            except OSError:
-                pass
-            self._temp_file = None
             
     def get_stats(self) -> dict:
         """Get processor statistics."""
