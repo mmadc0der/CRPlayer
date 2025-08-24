@@ -292,7 +292,7 @@ class FastVideoProcessor:
             
             # Try to read larger chunks for better throughput
             try:
-                chunk = process.stdout.read(1024)  # 1KB chunks for better frame batching
+                chunk = process.stdout.read(4096)  # 4KB chunks for better frame batching
             except:
                 return None
                 
