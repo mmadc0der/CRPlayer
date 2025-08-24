@@ -86,6 +86,10 @@ class FastVideoProcessor:
             
         print("Fast video processor stopped")
         
+    def add_mkv_data(self, data: bytes) -> None:
+        """Add MKV data to the processor (alias for process_mkv_data)."""
+        self.process_mkv_data(data)
+        
     def process_mkv_data(self, data: bytes) -> None:
         """Process incoming MKV data with buffering for smooth FFmpeg feeding."""
         if not self._running or not self._ffmpeg_process:
