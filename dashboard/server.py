@@ -1,12 +1,13 @@
 import asyncio
-import json
 import websockets
 import threading
+import json
 import time
 from typing import Set, Optional, Dict, Any
 import subprocess
 import base64
 from io import BytesIO
+import queue
 
 
 class WebSocketDashboardSubscriber:
@@ -25,6 +26,11 @@ class WebSocketDashboardSubscriber:
         self._mkv_buffer = bytearray()
         self._frame_count = 0
         self._last_stats_time = 0
+        
+        # FFmpeg process for frame extraction
+        self._ffmpeg_process: Optional[subprocess.Popen] = None
+        self._frame_queue = queue.Queue(maxsize=10)
+        self._frame_thread: Optional[threading.Thread] = None
         
         # Pipeline reference for stats
         self._pipeline = None
@@ -45,8 +51,18 @@ class WebSocketDashboardSubscriber:
         
     def stop(self) -> None:
         """Stop the WebSocket server."""
+        if not self._running:
+            return
+            
+        print("Stopping WebSocket server...")
         self._running = False
-        if self.loop and self.server:
+        
+        # Stop FFmpeg process
+        self._stop_ffmpeg()
+        
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=2)
+            
             # Schedule server close in the event loop
             future = asyncio.run_coroutine_threadsafe(self._close_server(), self.loop)
             try:
@@ -56,6 +72,95 @@ class WebSocketDashboardSubscriber:
         if self.thread:
             self.thread.join(timeout=2.0)
         print("WebSocket server stopped")
+        
+    def _start_ffmpeg_process(self) -> None:
+        """Start FFmpeg process for frame extraction."""
+        try:
+            # FFmpeg command to extract frames from MKV stream
+            cmd = [
+                'ffmpeg',
+                '-f', 'matroska',  # Input format
+                '-i', 'pipe:0',    # Read from stdin
+                '-vf', 'scale=640:480',  # Resize for dashboard
+                '-f', 'image2pipe',      # Output format
+                '-vcodec', 'png',        # PNG output
+                '-r', '5',               # 5 FPS for dashboard
+                'pipe:1'                 # Write to stdout
+            ]
+            
+            self._ffmpeg_process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0
+            )
+            print("FFmpeg process started for frame extraction")
+            
+        except Exception as e:
+            print(f"Failed to start FFmpeg: {e}")
+            
+    def _stop_ffmpeg(self) -> None:
+        """Stop FFmpeg process."""
+        if self._ffmpeg_process:
+            try:
+                self._ffmpeg_process.terminate()
+                self._ffmpeg_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._ffmpeg_process.kill()
+            except Exception as e:
+                print(f"Error stopping FFmpeg: {e}")
+            finally:
+                self._ffmpeg_process = None
+                
+    def _restart_ffmpeg(self) -> None:
+        """Restart FFmpeg process."""
+        self._stop_ffmpeg()
+        self._start_ffmpeg_process()
+        
+    def _frame_processor(self) -> None:
+        """Process frames from FFmpeg output."""
+        while self._running:
+            # Process FFmpeg output
+            if self._ffmpeg_process and self._ffmpeg_process.stdout:
+                try:
+                    # Read PNG header to determine frame size
+                    png_header = self._ffmpeg_process.stdout.read(8)
+                    if len(png_header) == 8 and png_header[:4] == b'\x89PNG':
+                        # Read rest of PNG data (simplified - assumes small frames)
+                        frame_data = png_header + self._ffmpeg_process.stdout.read(65536)
+                        
+                        if frame_data:
+                            # Convert to base64 for transmission
+                            frame_b64 = base64.b64encode(frame_data).decode('utf-8')
+                            
+                            # Queue frame for transmission
+                            try:
+                                self._frame_queue.put_nowait({
+                                    "type": "frame",
+                                    "data": frame_b64,
+                                    "timestamp": time.time()
+                                })
+                                self._frame_count += 1
+                            except queue.Full:
+                                # Drop frame if queue is full
+                                pass
+                                
+                except Exception as e:
+                    print(f"Frame processing error: {e}")
+                    
+            # Send queued frames to clients
+            try:
+                frame_data = self._frame_queue.get(timeout=0.1)
+                if self.loop and self._running:
+                    asyncio.run_coroutine_threadsafe(
+                        self._broadcast(frame_data),
+                        self.loop
+                    )
+            except queue.Empty:
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"Frame transmission error: {e}")
         
     async def _close_server(self) -> None:
         """Close the WebSocket server."""
@@ -70,6 +175,11 @@ class WebSocketDashboardSubscriber:
         
         try:
             print(f"WebSocket server thread started, binding to {self.host}:{self.port}")
+            
+            # Start frame processing thread
+            self._frame_thread = threading.Thread(target=self._frame_processor, daemon=True)
+            self._frame_thread.start()
+            
             self.loop.run_until_complete(self._start_server())
         except Exception as e:
             print(f"WebSocket server error: {e}")
@@ -203,21 +313,30 @@ class WebSocketDashboardSubscriber:
             
     def _process_mkv_buffer(self) -> None:
         """Process accumulated MKV data to extract frames."""
-        # For now, just clear buffer and increment frame count
-        # TODO: Implement proper MKV parsing and frame extraction
-        self._frame_count += 1
-        
-        # Keep only last 32KB to prevent memory growth
-        if len(self._mkv_buffer) > 32768:
-            self._mkv_buffer = self._mkv_buffer[-32768:]
+        if len(self._mkv_buffer) < 1024:  # Wait for more data
+            return
             
-        # Send frame placeholder (for testing)
+        # Start FFmpeg process if not running
+        if self._ffmpeg_process is None or self._ffmpeg_process.poll() is not None:
+            self._start_ffmpeg_process()
+            
+        # Send data to FFmpeg
+        if self._ffmpeg_process and self._ffmpeg_process.stdin:
+            try:
+                self._ffmpeg_process.stdin.write(bytes(self._mkv_buffer))
+                self._ffmpeg_process.stdin.flush()
+                self._mkv_buffer.clear()
+            except (BrokenPipeError, OSError) as e:
+                print(f"FFmpeg pipe error: {e}")
+                self._restart_ffmpeg()
+                
+        # Send frame processing status
         if self.loop and self._running:
             asyncio.run_coroutine_threadsafe(
                 self._broadcast({
                     "type": "log",
                     "level": "info",
-                    "message": f"Frame {self._frame_count} processed ({len(self._mkv_buffer)} bytes buffered)"
+                    "message": f"Processing MKV data ({len(self._mkv_buffer)} bytes buffered, {self._frame_count} frames)"
                 }),
                 self.loop
             )
