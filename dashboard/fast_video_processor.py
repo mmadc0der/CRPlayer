@@ -89,10 +89,10 @@ class FastVideoProcessor:
                 
             # Check if file has enough data for FFmpeg
             file_size = os.path.getsize(self._temp_file)
-            if file_size < 4096:  # Need minimum data for FFmpeg header parsing
+            if file_size < 8192:  # Need more data for reliable FFmpeg processing
                 return
                 
-            print(f"Processing MKV file with {file_size} bytes")
+            print(f"[FastVideoProcessor] Processing MKV file with {file_size} bytes")
             
             # Clear buffer after writing
             self._mkv_buffer.clear()
@@ -126,6 +126,7 @@ class FastVideoProcessor:
                         frame_data = self._read_ffmpeg_frame(ffmpeg_process)
                         
                         if frame_data:
+                            print(f"[FastVideoProcessor] Frame extracted, base64 length: {len(frame_data)}")
                             # Try to queue frame
                             try:
                                 self._frame_queue.put_nowait({
@@ -136,10 +137,15 @@ class FastVideoProcessor:
                                 })
                                 self.frames_processed += 1
                                 self._last_frame_time = current_time
+                                print(f"[FastVideoProcessor] Frame queued successfully (total: {self.frames_processed})")
                                 
                             except queue.Full:
                                 # Drop frame if queue is full
                                 self.frames_dropped += 1
+                                print(f"[FastVideoProcessor] Frame dropped - queue full (total dropped: {self.frames_dropped})")
+                        else:
+                            # No frame available - this is normal
+                            pass
                                 
                     except Exception as e:
                         print(f"Frame processing error: {e}")
@@ -161,15 +167,19 @@ class FastVideoProcessor:
         try:
             cmd = [
                 'ffmpeg',
+                '-y',  # Overwrite output files
                 '-i', self._temp_file,
                 '-vf', f'scale={self.target_width}:-1',  # Scale to target width, auto height
                 '-f', 'image2pipe',
                 '-vcodec', 'mjpeg',  # Use MJPEG for faster encoding
-                '-q:v', '8',  # Good quality/speed balance (2-31, lower = better)
-                '-r', str(self.max_fps),  # Frame rate
+                '-q:v', '5',  # Higher quality for better results (2-31, lower = better)
+                '-r', '2',  # Lower frame rate for testing
                 '-an',  # No audio
+                '-loglevel', 'warning',  # Reduce FFmpeg output
                 'pipe:1'
             ]
+            
+            print(f"FFmpeg command: {' '.join(cmd)}")
             
             process = subprocess.Popen(
                 cmd,
@@ -178,7 +188,8 @@ class FastVideoProcessor:
                 bufsize=0
             )
             
-            print(f"Started FFmpeg extraction process (PID: {process.pid})")
+            print(f"[FastVideoProcessor] Started FFmpeg extraction process (PID: {process.pid})")
+            print(f"[FastVideoProcessor] Command: {' '.join(cmd)}")
             return process
             
         except Exception as e:
@@ -188,29 +199,44 @@ class FastVideoProcessor:
     def _read_ffmpeg_frame(self, process) -> Optional[str]:
         """Read a single JPEG frame from FFmpeg stdout."""
         try:
-            # Read JPEG header (FF D8)
-            header = process.stdout.read(2)
-            if len(header) != 2 or header != b'\xff\xd8':
+            # Check if process is still running
+            if process.poll() is not None:
+                print(f"FFmpeg process ended with return code: {process.returncode}")
+                # Print stderr for debugging
+                stderr_output = process.stderr.read().decode('utf-8', errors='ignore')
+                if stderr_output:
+                    print(f"FFmpeg stderr: {stderr_output[:500]}...")
+                return None
+            
+            # Try to read a chunk of data instead of byte-by-byte
+            chunk = process.stdout.read(4096)
+            if not chunk:
                 return None
                 
-            # Read until JPEG end marker (FF D9)
-            frame_data = header
-            while True:
-                byte = process.stdout.read(1)
-                if not byte:
-                    break
-                    
-                frame_data += byte
+            # Look for JPEG markers in the chunk
+            # JPEG starts with FF D8 and ends with FF D9
+            start_marker = b'\xff\xd8'
+            end_marker = b'\xff\xd9'
+            
+            start_idx = chunk.find(start_marker)
+            if start_idx == -1:
+                return None
                 
-                # Check for JPEG end marker
-                if len(frame_data) >= 2 and frame_data[-2:] == b'\xff\xd9':
-                    # Convert to base64
-                    return base64.b64encode(frame_data).decode('utf-8')
+            # Find end marker
+            end_idx = chunk.find(end_marker, start_idx + 2)
+            if end_idx == -1:
+                # Read more data to find the end
+                additional_data = process.stdout.read(8192)
+                if additional_data:
+                    chunk += additional_data
+                    end_idx = chunk.find(end_marker, start_idx + 2)
                     
-                # Prevent reading too much data
-                if len(frame_data) > 1024 * 1024:  # 1MB limit
-                    break
-                    
+            if end_idx != -1:
+                # Extract complete JPEG frame
+                frame_data = chunk[start_idx:end_idx + 2]
+                print(f"[FastVideoProcessor] Extracted JPEG frame: {len(frame_data)} bytes")
+                return base64.b64encode(frame_data).decode('utf-8')
+                
             return None
             
         except Exception as e:
