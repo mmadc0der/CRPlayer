@@ -47,6 +47,9 @@ class FastVideoProcessor:
         # Statistics
         self.frames_processed = 0
         self.frames_dropped = 0
+        self.last_fps_time = 0
+        self.fps_frame_count = 0
+        self.current_fps = 0.0
         
     def start(self) -> None:
         """Start the video processor."""
@@ -145,7 +148,7 @@ class FastVideoProcessor:
                 '-f', 'image2pipe',
                 '-vcodec', 'mjpeg',
                 '-q:v', '10',      # Faster encoding (lower quality)
-                '-r', '15',        # Higher FPS for responsiveness
+                '-r', '30',        # Match expected source FPS
                 '-an',             # No audio
                 '-flush_packets', '1',  # Flush immediately
                 '-loglevel', 'error',   # Less verbose
@@ -202,7 +205,20 @@ class FastVideoProcessor:
                             })
                             self.frames_processed += 1
                             self._last_frame_time = current_time
-                            print(f"[FastVideoProcessor] Frame queued (total: {self.frames_processed})")
+                            
+                            # Calculate and report FPS every 30 frames
+                            self.fps_frame_count += 1
+                            if self.fps_frame_count >= 30:
+                                if self.last_fps_time > 0:
+                                    fps_elapsed = current_time - self.last_fps_time
+                                    self.current_fps = 30.0 / fps_elapsed if fps_elapsed > 0 else 0
+                                    print(f"[FastVideoProcessor] Frame queued (total: {self.frames_processed}) - Current FPS: {self.current_fps:.1f}")
+                                else:
+                                    print(f"[FastVideoProcessor] Frame queued (total: {self.frames_processed})")
+                                self.last_fps_time = current_time
+                                self.fps_frame_count = 0
+                            else:
+                                print(f"[FastVideoProcessor] Frame queued (total: {self.frames_processed})")
                             
                         except queue.Full:
                             self.frames_dropped += 1
@@ -373,7 +389,8 @@ class FastVideoProcessor:
             'frames_processed': self.frames_processed,
             'frames_dropped': self.frames_dropped,
             'queue_size': self._frame_queue.qsize(),
-            'buffer_size': len(self._mkv_buffer)
+            'buffer_size': len(self._mkv_buffer),
+            'current_fps': self.current_fps
         }
 
 
