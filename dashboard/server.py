@@ -249,6 +249,6 @@ class WebSocketDashboardSubscriber:
 
 
 # Integration helper
-def create_dashboard_subscriber(host: str = "localhost", port: int = 8765) -> WebSocketDashboardSubscriber:
+def create_dashboard_subscriber(host: str = "0.0.0.0", port: int = 8765) -> WebSocketDashboardSubscriber:
     """Create and return a dashboard subscriber ready for pipeline integration."""
     return WebSocketDashboardSubscriber(host, port)
