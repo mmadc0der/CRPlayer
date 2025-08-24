@@ -41,7 +41,8 @@ class FastVideoProcessor:
         self._segment_buffer = bytearray()
         self._looking_for_header = True
         self._restart_count = 0
-        self._max_restarts = 3
+        self._max_restarts = 10
+        self._buffer_timer = None
         
         # Statistics
         self.frames_processed = 0
@@ -85,23 +86,36 @@ class FastVideoProcessor:
             
         print("Fast video processor stopped")
         
-    def add_mkv_data(self, data: bytes) -> None:
-        """Add MKV data with improved streaming."""
-        if not self._ffmpeg_process or not self._ffmpeg_process.stdin:
+    def process_mkv_data(self, data: bytes) -> None:
+        """Process incoming MKV data with buffering for smooth FFmpeg feeding."""
+        if not self._running or not self._ffmpeg_process:
             return
             
         try:
-            # Send data immediately in smaller chunks for better streaming
-            chunk_size = 4096  # 4KB chunks
-            for i in range(0, len(data), chunk_size):
-                chunk = data[i:i + chunk_size]
-                self._ffmpeg_process.stdin.write(chunk)
-                # Force immediate write to pipe
-                self._ffmpeg_process.stdin.flush()
+            with self._buffer_lock:
+                self._mkv_buffer.extend(data)
+                
+                # Check for EBML header to ensure proper stream start
+                if not self._has_valid_header and len(self._mkv_buffer) >= 4:
+                    if self._mkv_buffer[:4] == b'\x1a\x45\xdf\xa3':  # EBML signature
+                        self._has_valid_header = True
+                        print(f"[FastVideoProcessor] EBML header detected, buffer size: {len(self._mkv_buffer)}")
+                
+                # Only feed data to FFmpeg if we have a valid header
+                if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
+                    # Feed buffered data in chunks to smooth out timing gaps
+                    chunk_size = min(8192, len(self._mkv_buffer))  # 8KB chunks
+                    if chunk_size > 0:
+                        chunk = bytes(self._mkv_buffer[:chunk_size])
+                        self._ffmpeg_process.stdin.write(chunk)
+                        self._ffmpeg_process.stdin.flush()
+                        
+                        # Remove processed data from buffer
+                        self._mkv_buffer = self._mkv_buffer[chunk_size:]
                 
         except (BrokenPipeError, OSError) as e:
             print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
-            # Don't restart immediately, let the monitoring handle it
+            self._has_valid_header = False  # Reset header flag on error
             
     def get_frame(self, timeout: float = 0.1) -> Optional[dict]:
         """Get next processed frame if available."""
@@ -116,18 +130,19 @@ class FastVideoProcessor:
             cmd = [
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
-                '-analyzeduration', '1000000',  # 1 second analysis
-                '-probesize', '1000000',        # 1MB probe size
-                '-fflags', '+igndts+ignidx',    # Ignore timestamps and index
+                '-analyzeduration', '5000000',  # 5 second analysis for chunked data
+                '-probesize', '5000000',        # 5MB probe size for larger buffers
+                '-fflags', '+igndts+ignidx+genpts',  # Generate PTS for irregular streams
+                '-avoid_negative_ts', 'make_zero',   # Handle timing issues
                 '-i', 'pipe:0',    # Read from stdin
                 '-vf', f'scale={self.target_width}:-1',  # Scale to target width
                 '-f', 'image2pipe',
                 '-vcodec', 'mjpeg',
-                '-q:v', '10',  # Lower quality for stability
-                '-r', '2',     # 2 FPS to reduce load
+                '-q:v', '8',   # Better quality
+                '-r', '3',     # 3 FPS for smoother updates
                 '-an',         # No audio
                 '-flush_packets', '1',  # Flush packets immediately
-                '-loglevel', 'error',   # Minimal logging
+                '-loglevel', 'warning',   # More verbose for debugging
                 'pipe:1'
             ]
             

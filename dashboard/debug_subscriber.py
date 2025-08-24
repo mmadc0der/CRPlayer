@@ -133,9 +133,12 @@ class DebugSubscriber:
         except Exception as e:
             self._log(f"Log rotation error: {e}")
     
-    def close(self) -> None:
-        """Close the debug subscriber."""
-        if hasattr(self, 'log_fd') and self.log_fd:
+    def close(self):
+        """Close the debug subscriber and write final statistics."""
+        if not self.is_closed and self.log_fd and not self.log_fd.closed:
+            self.is_closed = True
+            
+            # Calculate final statistics
             elapsed = time.time() - self.start_time
             rate = self.total_bytes / elapsed if elapsed > 0 else 0
             
@@ -148,10 +151,14 @@ class DebugSubscriber:
             self._log("=== DEBUG SUBSCRIBER STOPPED ===")
             
             self.log_fd.close()
+            self.log_fd = None
     
     def __del__(self):
         """Cleanup on destruction."""
-        self.close()
+        try:
+            self.close()
+        except:
+            pass  # Ignore errors during cleanup
 
 
 def main():
