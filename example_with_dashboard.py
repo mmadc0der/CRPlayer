@@ -3,8 +3,9 @@
 import sys
 import time
 from pipeline import StreamPipeline
-from dashboard import create_dashboard_subscriber
-
+from dashboard.server import start_dashboard_server, create_dashboard_subscriber
+from dashboard.fast_video_processor import FastVideoProcessor
+from dashboard.debug_subscriber import DebugSubscriber
 
 def main():
     if len(sys.argv) != 2:
@@ -22,6 +23,10 @@ def main():
     
     # Add dashboard as subscriber
     pipeline.add_subscriber(dashboard.handle_chunk)
+    
+    # Add file debug subscriber for detailed logging
+    debug_sub = DebugSubscriber("stream_debug.log")
+    pipeline.add_subscriber(debug_sub)
     
     # Add debug subscriber for console output
     def debug_subscriber(chunk):
@@ -63,6 +68,7 @@ def main():
     except KeyboardInterrupt:
         print("\nStopping...")
     finally:
+        debug_sub.close()
         dashboard.stop()
         pipeline.stop()
         print("Shutdown complete")
