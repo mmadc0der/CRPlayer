@@ -137,7 +137,7 @@ class FastVideoProcessor:
                 '-f', 'matroska',  # Input format
                 '-analyzeduration', '1000000',   # 2 second analysis - balanced
                 '-probesize', '1000000',         # 2MB probe size - balanced
-                '-fflags', '+igndts+ignidx+genpts+discardcorrupt',
+                '-fflags', '+igndts+ignidx+genpts',
                 '-avioflags', 'direct',
                 '-avoid_negative_ts', 'make_zero',   # Handle timing issues
                 '-max_delay', '0',               # Minimize delay
