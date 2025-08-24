@@ -61,43 +61,53 @@ class StreamHub:
 
     def start(self) -> None:
         def _run():
+            print(f"[DEBUG] StreamHub starting, reading from {type(self.input_stream)}")
             read = self.input_stream.read
             bytes_received = 0
             chunks_received = 0
-            while not self._stop.is_set():
-                data = read(self.chunk_size)
-                if not data:
-                    if self.monitor:
-                        self.monitor.report_error("stream_end", f"Stream ended after {bytes_received} bytes in {chunks_received} chunks")
-                    break
-                    
-                bytes_received += len(data)
-                chunks_received += 1
-                self._bytes_read += len(data)
-                mv = memoryview(data)
-                
-                # Debug: Log first few chunks
-                if chunks_received <= 3:
-                    print(f"[DEBUG] Chunk {chunks_received}: {len(data)} bytes, first 16 bytes: {data[:16].hex()}")
-                elif chunks_received == 4:
-                    print(f"[DEBUG] Stream active - received {chunks_received} chunks, {bytes_received} total bytes")
-                
-                # Update monitoring metrics
-                if self.monitor:
-                    total_queue_size = sum(q.qsize() for q, _ in self.subs)
-                    self.monitor.update_stream_metrics(len(data), total_queue_size)
-                
-                for q, mode in list(self.subs):
-                    try:
-                        if mode == 'block':
-                            q.put(mv, timeout=0.1)
-                        else:
-                            q.put_nowait(mv)
-                    except queue.Full:
+            
+            # Test initial read
+            print(f"[DEBUG] Attempting first read of {self.chunk_size} bytes...")
+            try:
+                while not self._stop.is_set():
+                    data = read(self.chunk_size)
+                    if not data:
+                        print(f"[DEBUG] No data received - stream ended after {bytes_received} bytes in {chunks_received} chunks")
                         if self.monitor:
-                            self.monitor.report_error("queue_full", f"Dropped chunk for {mode} subscriber")
-                        # drop
-                        pass
+                            self.monitor.report_error("stream_end", f"Stream ended after {bytes_received} bytes in {chunks_received} chunks")
+                        break
+                        
+                    bytes_received += len(data)
+                    chunks_received += 1
+                    self._bytes_read += len(data)
+                    mv = memoryview(data)
+                    
+                    # Debug: Log first few chunks
+                    if chunks_received <= 3:
+                        print(f"[DEBUG] Chunk {chunks_received}: {len(data)} bytes, first 16 bytes: {data[:16].hex()}")
+                    elif chunks_received == 4:
+                        print(f"[DEBUG] Stream active - received {chunks_received} chunks, {bytes_received} total bytes")
+                    
+                    # Update monitoring metrics
+                    if self.monitor:
+                        total_queue_size = sum(q.qsize() for q, _ in self.subs)
+                        self.monitor.update_stream_metrics(len(data), total_queue_size)
+                    
+                    for q, mode in list(self.subs):
+                        try:
+                            if mode == 'block':
+                                q.put(mv, timeout=0.1)
+                            else:
+                                q.put_nowait(mv)
+                        except queue.Full:
+                            if self.monitor:
+                                self.monitor.report_error("queue_full", f"Dropped chunk for {mode} subscriber")
+                            # drop
+                            pass
+            except Exception as e:
+                print(f"[DEBUG] StreamHub read error: {e}")
+                if self.monitor:
+                    self.monitor.report_error("read_error", str(e))
         self._thread = threading.Thread(target=_run, daemon=False)
         self._thread.start()
 
