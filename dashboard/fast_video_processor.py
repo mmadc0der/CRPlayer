@@ -39,6 +39,8 @@ class FastVideoProcessor:
         self._has_valid_header = False
         self._segment_buffer = bytearray()
         self._looking_for_header = True
+        self._restart_count = 0
+        self._max_restarts = 3
         
         # Statistics
         self.frames_processed = 0
@@ -83,9 +85,21 @@ class FastVideoProcessor:
         print("Fast video processor stopped")
         
     def add_mkv_data(self, data: bytes) -> None:
-        """Add MKV data with proper stream synchronization."""
+        """Add MKV data with adaptive stream handling."""
         with self._buffer_lock:
             self._mkv_buffer.extend(data)
+            
+            # If we've restarted too many times, just send data directly
+            if self._restart_count >= self._max_restarts:
+                if self._ffmpeg_process and self._ffmpeg_process.stdin:
+                    try:
+                        self._ffmpeg_process.stdin.write(data)
+                        self._ffmpeg_process.stdin.flush()
+                        # Don't accumulate in buffer when sending directly
+                        self._mkv_buffer = self._mkv_buffer[-len(data):]
+                    except (BrokenPipeError, OSError) as e:
+                        print(f"[FastVideoProcessor] FFmpeg stdin error (direct mode): {e}")
+                return
             
             # Look for valid MKV segment start
             if self._looking_for_header:
@@ -107,11 +121,10 @@ class FastVideoProcessor:
                     self._looking_for_header = True
             
             # Limit buffer size
-            if len(self._mkv_buffer) > 2 * 1024 * 1024:  # 2MB limit
-                print(f"[FastVideoProcessor] Buffer overflow, clearing {len(self._mkv_buffer)} bytes")
+            if len(self._mkv_buffer) > 1024 * 1024:  # 1MB limit (reduced)
+                print(f"[FastVideoProcessor] Buffer size limit reached, switching to direct mode")
+                self._restart_count = self._max_restarts  # Force direct mode
                 self._mkv_buffer.clear()
-                self._has_valid_header = False
-                self._looking_for_header = True
             
     def get_frame(self, timeout: float = 0.1) -> Optional[dict]:
         """Get next processed frame if available."""
@@ -235,13 +248,22 @@ class FastVideoProcessor:
                     pass
             self._ffmpeg_process = None
             
-        # Reset stream synchronization
+        # Track restart count and reset stream synchronization
+        self._restart_count += 1
+        print(f"[FastVideoProcessor] Restart #{self._restart_count}")
+        
         with self._buffer_lock:
-            self._has_valid_header = False
-            self._looking_for_header = True
-            # Keep some buffer data for resyncing
-            if len(self._mkv_buffer) > 64 * 1024:
-                self._mkv_buffer = self._mkv_buffer[-32*1024:]  # Keep last 32KB
+            if self._restart_count < self._max_restarts:
+                self._has_valid_header = False
+                self._looking_for_header = True
+                # Keep some buffer data for resyncing
+                if len(self._mkv_buffer) > 64 * 1024:
+                    self._mkv_buffer = self._mkv_buffer[-32*1024:]  # Keep last 32KB
+            else:
+                print(f"[FastVideoProcessor] Max restarts reached, switching to direct streaming mode")
+                self._has_valid_header = True  # Skip header detection
+                self._looking_for_header = False
+                self._mkv_buffer.clear()
             
         # Start new process after brief delay
         time.sleep(1.0)
@@ -330,6 +352,7 @@ class FastVideoProcessor:
                 self._mkv_buffer = self._mkv_buffer[ebml_pos:]
             self._has_valid_header = True
             self._looking_for_header = False
+            self._restart_count = 0  # Reset restart counter on success
             return
             
         # Look for segment header (continuation)
@@ -341,12 +364,19 @@ class FastVideoProcessor:
                 self._mkv_buffer = self._mkv_buffer[segment_pos:]
             self._has_valid_header = True
             self._looking_for_header = False
+            self._restart_count = 0  # Reset restart counter on success
             return
             
-        # If buffer is too large without finding headers, clear old data
-        if len(self._mkv_buffer) > 256 * 1024:  # 256KB
-            print(f"[FastVideoProcessor] No valid headers found, clearing buffer")
-            self._mkv_buffer = self._mkv_buffer[-64*1024:]  # Keep last 64KB
+        # If buffer is too large without finding headers, try direct mode
+        if len(self._mkv_buffer) > 128 * 1024:  # 128KB (reduced threshold)
+            print(f"[FastVideoProcessor] No valid headers found in {len(self._mkv_buffer)} bytes")
+            if self._restart_count >= 2:  # After 2 failed attempts, go direct
+                print(f"[FastVideoProcessor] Switching to direct streaming mode")
+                self._restart_count = self._max_restarts
+                self._has_valid_header = True
+                self._looking_for_header = False
+            else:
+                self._mkv_buffer = self._mkv_buffer[-32*1024:]  # Keep last 32KB
             
             
     def get_stats(self) -> dict:
