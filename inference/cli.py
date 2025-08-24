@@ -21,7 +21,7 @@ def stdin(
 ):
     """Consume raw H.264 from stdin, fan-out to subscribers.
 
-    Example (PowerShell): scrcpy --no-window --no-audio --v4l2-buffer 0 --video-bit-rate 6000000 --output-format=h264 --record - | python -m inference.cli stdin --mp4-out recordings/replay.mp4 --expected-width 360 --expected-height 800
+    Example (PowerShell): scrcpy --no-window --no-audio --v4l2-buffer 0 --video-bit-rate 6000000 --record - | python -m inference.cli stdin --mp4-out recordings/replay.mp4 --expected-width 360 --expected-height 800
     """
     crop_tuple = None
     if crop:

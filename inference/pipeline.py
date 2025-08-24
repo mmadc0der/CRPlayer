@@ -62,13 +62,25 @@ class StreamHub:
     def start(self) -> None:
         def _run():
             read = self.input_stream.read
+            bytes_received = 0
+            chunks_received = 0
             while not self._stop.is_set():
                 data = read(self.chunk_size)
                 if not data:
+                    if self.monitor:
+                        self.monitor.report_error("stream_end", f"Stream ended after {bytes_received} bytes in {chunks_received} chunks")
                     break
                     
+                bytes_received += len(data)
+                chunks_received += 1
                 self._bytes_read += len(data)
                 mv = memoryview(data)
+                
+                # Debug: Log first few chunks
+                if chunks_received <= 3:
+                    print(f"[DEBUG] Chunk {chunks_received}: {len(data)} bytes, first 16 bytes: {data[:16].hex()}")
+                elif chunks_received == 4:
+                    print(f"[DEBUG] Stream active - received {chunks_received} chunks, {bytes_received} total bytes")
                 
                 # Update monitoring metrics
                 if self.monitor:
@@ -170,11 +182,22 @@ class FFmpegStdinDecoder:
             raise RuntimeError("expected_size not known; provide crop or expected_size")
         frame_bytes = self.width * self.height * 3
         read = self.proc.stdout.read
+        frames_decoded = 0
+        
+        print(f"[DEBUG] FFmpeg decoder expecting {frame_bytes} bytes per frame ({self.width}x{self.height})")
+        
         while True:
             frame_start = time.time()
             chunk = read(frame_bytes)
             if not chunk or len(chunk) < frame_bytes:
+                print(f"[DEBUG] Decoder stopping: got {len(chunk) if chunk else 0} bytes, expected {frame_bytes}")
                 break
+                
+            frames_decoded += 1
+            if frames_decoded <= 3:
+                print(f"[DEBUG] Frame {frames_decoded} decoded: {len(chunk)} bytes")
+            elif frames_decoded == 4:
+                print(f"[DEBUG] Decoder active - {frames_decoded} frames decoded")
                 
             # Update monitoring metrics
             if self.monitor:

@@ -140,7 +140,7 @@ class PerformanceMonitor:
                         
                         # Get screen resolution
                         res_result = subprocess.run(
-                            ["adb", "-s", device_id, "shell", "wm", "size"],
+                            ["adb", "-s", device_id, "shell", "dumpsys display"],
                             capture_output=True,
                             text=True,
                             timeout=2.0
