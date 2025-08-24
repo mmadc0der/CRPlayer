@@ -9,9 +9,9 @@ import queue
 import os
 import sys
 import subprocess
+import time
 from typing import Optional, Callable, Tuple
 import tempfile
-import os
 
 
 class FastVideoProcessor:
