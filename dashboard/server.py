@@ -198,7 +198,7 @@ class WebSocketDashboardSubscriber:
             
             # Keep server running
             while self._running:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)
                 
         except Exception as e:
             print(f"[ERROR] Failed to start WebSocket server on {self.host}:{self.port}: {e}")
