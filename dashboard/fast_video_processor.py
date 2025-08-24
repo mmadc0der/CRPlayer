@@ -308,7 +308,7 @@ class FastVideoProcessor:
             
             # Try to read larger chunks for better throughput
             try:
-                chunk = process.stdout.read(4096)  # 4KB chunks for better frame batching
+                chunk = process.stdout.read(2048)  # 2KB chunks for better frame batching
             except:
                 return None
                 
@@ -328,7 +328,7 @@ class FastVideoProcessor:
             if end_idx == -1:
                 # Read more data to find the end, but with limit
                 try:
-                    additional_data = process.stdout.read(8192)
+                    additional_data = process.stdout.read(4096)
                     if additional_data:
                         chunk += additional_data
                         end_idx = chunk.find(end_marker, start_idx + 2)
