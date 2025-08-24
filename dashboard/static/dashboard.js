@@ -46,8 +46,8 @@ class CRPlayerDashboard {
         
         this.addLog('Attempting to connect to pipeline...', 'info');
         
-        // Try to connect to WebSocket server - use same host as web page
-        const wsUrl = `ws://${window.location.hostname}:8765/ws`;
+        // Try to connect to WebSocket server - direct connection to port 8765
+        const wsUrl = `ws://${window.location.hostname}:8765`;
         this.addLog(`Connecting to ${wsUrl}`, 'info');
         this.ws = new WebSocket(wsUrl);
         
