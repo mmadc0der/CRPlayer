@@ -99,16 +99,17 @@ class FastVideoProcessor:
             with self._buffer_lock:
                 self._mkv_buffer.extend(data)
                 
-                # Check for EBML header to ensure proper stream start
+                # Check for valid MKV elements to ensure proper stream start
                 if not self._has_valid_header and len(self._mkv_buffer) >= 4:
-                    if self._mkv_buffer[:4] == b'\x1a\x45\xdf\xa3':  # EBML signature
+                    # Look for any valid MKV element that indicates a proper stream
+                    if self._find_mkv_element_in_buffer():
                         self._has_valid_header = True
-                        print(f"[FastVideoProcessor] EBML header detected, buffer size: {len(self._mkv_buffer)}")
+                        print(f"[FastVideoProcessor] Valid MKV stream detected, buffer size: {len(self._mkv_buffer)}")
                 
                 # Only feed data to FFmpeg if we have a valid header
                 if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
-                    # Feed buffered data in chunks to smooth out timing gaps
-                    chunk_size = min(8192, len(self._mkv_buffer))  # 8KB chunks
+                    # Feed buffered data in larger chunks to handle timing gaps better
+                    chunk_size = min(16384, len(self._mkv_buffer))  # 16KB chunks for better buffering
                     if chunk_size > 0:
                         chunk = bytes(self._mkv_buffer[:chunk_size])
                         self._ffmpeg_process.stdin.write(chunk)
@@ -134,10 +135,12 @@ class FastVideoProcessor:
             cmd = [
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
-                '-analyzeduration', '5000000',  # 5 second analysis for chunked data
-                '-probesize', '5000000',        # 5MB probe size for larger buffers
-                '-fflags', '+igndts+ignidx+genpts',  # Generate PTS for irregular streams
+                '-analyzeduration', '10000000',  # 10 second analysis for chunked data
+                '-probesize', '10000000',        # 10MB probe size for larger buffers
+                '-fflags', '+igndts+ignidx+genpts+nobuffer',  # Generate PTS, ignore discontinuities, no buffering
                 '-avoid_negative_ts', 'make_zero',   # Handle timing issues
+                '-max_delay', '0',               # Minimize delay
+                '-thread_queue_size', '1024',    # Larger thread queue
                 '-i', 'pipe:0',    # Read from stdin
                 '-vf', f'scale={self.target_width}:-1',  # Scale to target width
                 '-f', 'image2pipe',
@@ -210,11 +213,13 @@ class FastVideoProcessor:
                     time_since_last_frame = current_time - last_frame_time
                     time_since_restart = current_time - last_restart_time
                     
-                    # Only restart if we've been running for at least 30 seconds without frames
-                    # OR after processing 300 frames successfully (avoid premature restarts)
-                    if ((time_since_last_frame > 30.0 and time_since_restart > 30.0) or 
-                        frame_count_since_restart > 300):
+                    # Be very tolerant of gaps - your debug log shows 1+ second gaps are normal
+                    # Only restart if we've been running for at least 10 seconds without frames
+                    # AND we've had time to establish the stream (60s since restart) 
+                    # AND we've processed some frames successfully
+                    if (time_since_last_frame > 10.0 and time_since_restart > 60.0 and frame_count_since_restart > 5):
                         print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed, {time_since_restart:.1f}s since restart)")
+                        print(f"[FastVideoProcessor] Buffer state: {len(self._mkv_buffer)} bytes, valid_header: {self._has_valid_header}")
                         self._restart_ffmpeg()
                         frame_count_since_restart = 0
                         last_restart_time = current_time
@@ -328,46 +333,40 @@ class FastVideoProcessor:
             print(f"[FastVideoProcessor] Error reading FFmpeg frame: {e}")
             return None
             
-    def _find_mkv_segment_start(self) -> None:
-        """Find a valid MKV segment start in the buffer."""
-        # Look for EBML header (0x1A45DFA3) or Segment header (0x18538067)
-        ebml_header = b'\x1a\x45\xdf\xa3'
-        segment_header = b'\x18\x53\x80\x67'
+    def _find_mkv_element_in_buffer(self) -> bool:
+        """Find any valid MKV element in the buffer to confirm it's a valid stream."""
+        # Common MKV element IDs that indicate a valid stream
+        mkv_elements = {
+            b'\x1a\x45\xdf\xa3': 'EBML',           # EBML header
+            b'\x18\x53\x80\x67': 'Segment',        # Segment
+            b'\x1f\x43\xb6\x75': 'Cluster',        # Cluster (most common in your stream)
+            b'\x11\x4d\x9b\x74': 'SeekHead',       # SeekHead
+            b'\x15\x49\xa9\x66': 'Info',           # Info
+            b'\x16\x54\xae\x6b': 'Tracks',         # Tracks
+            b'\xa3': 'SimpleBlock',                 # SimpleBlock (3-byte ID)
+        }
         
-        # Search for EBML header first (start of new file)
-        ebml_pos = self._mkv_buffer.find(ebml_header)
-        if ebml_pos != -1:
-            print(f"[FastVideoProcessor] Found EBML header at position {ebml_pos}")
-            # Remove data before EBML header
-            if ebml_pos > 0:
-                self._mkv_buffer = self._mkv_buffer[ebml_pos:]
-            self._has_valid_header = True
-            self._looking_for_header = False
-            self._restart_count = 0  # Reset restart counter on success
-            return
+        # Search for any valid MKV element in the buffer
+        for element_id, element_name in mkv_elements.items():
+            pos = self._mkv_buffer.find(element_id)
+            if pos != -1:
+                print(f"[FastVideoProcessor] Found {element_name} element at position {pos}")
+                # Remove data before the valid element if needed
+                if pos > 0 and element_name in ['EBML', 'Segment', 'Cluster']:
+                    print(f"[FastVideoProcessor] Trimming {pos} bytes before {element_name}")
+                    self._mkv_buffer = self._mkv_buffer[pos:]
+                return True
+                
+        # If buffer is too large without finding any valid elements, assume it's valid anyway
+        if len(self._mkv_buffer) > 64 * 1024:  # 64KB threshold
+            print(f"[FastVideoProcessor] No MKV elements found in {len(self._mkv_buffer)} bytes, assuming valid stream")
+            return True
             
-        # Look for segment header (continuation)
-        segment_pos = self._mkv_buffer.find(segment_header)
-        if segment_pos != -1 and len(self._mkv_buffer) > segment_pos + 100:  # Need some data after header
-            print(f"[FastVideoProcessor] Found Segment header at position {segment_pos}")
-            # Remove data before segment header
-            if segment_pos > 0:
-                self._mkv_buffer = self._mkv_buffer[segment_pos:]
-            self._has_valid_header = True
-            self._looking_for_header = False
-            self._restart_count = 0  # Reset restart counter on success
-            return
-            
-        # If buffer is too large without finding headers, try direct mode
-        if len(self._mkv_buffer) > 128 * 1024:  # 128KB (reduced threshold)
-            print(f"[FastVideoProcessor] No valid headers found in {len(self._mkv_buffer)} bytes")
-            if self._restart_count >= 2:  # After 2 failed attempts, go direct
-                print(f"[FastVideoProcessor] Switching to direct streaming mode")
-                self._restart_count = self._max_restarts
-                self._has_valid_header = True
-                self._looking_for_header = False
-            else:
-                self._mkv_buffer = self._mkv_buffer[-32*1024:]  # Keep last 32KB
+        return False
+        
+    def _find_mkv_segment_start(self) -> None:
+        """Legacy method - kept for compatibility."""
+        self._find_mkv_element_in_buffer()
             
             
     def get_stats(self) -> dict:
