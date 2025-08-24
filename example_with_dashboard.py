@@ -3,7 +3,7 @@
 import sys
 import time
 from pipeline import StreamPipeline
-from dashboard.server import start_dashboard_server, create_dashboard_subscriber
+from dashboard.server import create_dashboard_subscriber
 from dashboard.fast_video_processor import FastVideoProcessor
 from dashboard.debug_subscriber import DebugSubscriber
 
