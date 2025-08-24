@@ -135,8 +135,8 @@ class FastVideoProcessor:
             cmd = [
                 'ffmpeg',
                 '-f', 'matroska',  # Input format
-                '-analyzeduration', '1000000',   # 2 second analysis - balanced
-                '-probesize', '1000000',         # 2MB probe size - balanced
+                '-analyzeduration', '2000000',   # 2 second analysis - balanced
+                '-probesize', '2000000',         # 2MB probe size - balanced
                 '-fflags', '+igndts+ignidx+genpts',
                 '-avioflags', 'direct',
                 '-avoid_negative_ts', 'make_zero',   # Handle timing issues
