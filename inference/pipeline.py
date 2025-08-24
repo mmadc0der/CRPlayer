@@ -39,7 +39,7 @@ class StreamHub:
     - Backpressure policy: 'drop' (default) drops chunks for slow subscribers; 'block' waits.
     """
 
-    def __init__(self, input_stream, chunk_size: int = 16 * 1024, monitor: Optional[PerformanceMonitor] = None) -> None:
+    def __init__(self, input_stream, chunk_size: int = 4 * 1024, monitor: Optional[PerformanceMonitor] = None) -> None:
         self.input_stream = input_stream
         self.chunk_size = chunk_size
         self.subs: List[Tuple[queue.Queue, str]] = []
@@ -54,7 +54,7 @@ class StreamHub:
         self.subs.append((q, 'drop'))
         return q
 
-    def add_blocking_subscriber(self, max_queue: int = 256) -> queue.Queue:
+    def add_blocking_subscriber(self, max_queue: int = 8) -> queue.Queue:
         q: queue.Queue = queue.Queue(maxsize=max_queue)
         self.subs.append((q, 'block'))
         return q
@@ -140,8 +140,11 @@ class FFmpegStdinDecoder:
             ffmpeg,
             "-hide_banner",
             "-loglevel", "error",
-            "-fflags", "nobuffer",
-            "-f", "h264",
+            "-fflags", "nobuffer+low_delay",
+            "-flags", "low_delay",
+            "-probesize", "32",
+            "-analyzeduration", "0",
+            "-f", "h264",  # H.264 format from screenrecord
             "-i", "-",
             *vf,
             "-f", "rawvideo",
