@@ -3,9 +3,9 @@ import subprocess
 import time
 import threading
 import queue
-import socket
+import errno
+from typing import Generator, List, Optional, Tuple
 from dataclasses import dataclass
-from typing import Generator, Optional, Tuple, Callable, List
 from .monitoring import PerformanceMonitor, ConsoleReporter
 
 # Minimal utils kept in this file to limit file count
