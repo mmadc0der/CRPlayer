@@ -17,7 +17,7 @@ import tempfile
 class FastVideoProcessor:
     """High-performance video frame processor using FFmpeg stdin."""
     
-    def __init__(self, max_fps: int = 10, target_width: int = 400):
+    def __init__(self, max_fps: int = 15, target_width: int = 400):
         self.max_fps = max_fps
         self.target_width = target_width
         self.frame_interval = 1.0 / max_fps
@@ -143,7 +143,7 @@ class FastVideoProcessor:
                 '-f', 'image2pipe',
                 '-vcodec', 'mjpeg',
                 '-q:v', '8',   # Better quality
-                '-r', '3',     # 3 FPS for smoother updates
+                '-r', '10',    # 10 FPS for responsive updates
                 '-an',         # No audio
                 '-flush_packets', '1',  # Flush packets immediately
                 '-loglevel', 'warning',   # More verbose for debugging
@@ -210,10 +210,10 @@ class FastVideoProcessor:
                     time_since_last_frame = current_time - last_frame_time
                     time_since_restart = current_time - last_restart_time
                     
-                    # Only restart if we've been running for at least 10 seconds without frames
-                    # OR after processing 150 frames successfully
-                    if ((time_since_last_frame > 20.0 and time_since_restart > 10.0) or 
-                        frame_count_since_restart > 150):
+                    # Only restart if we've been running for at least 30 seconds without frames
+                    # OR after processing 300 frames successfully (avoid premature restarts)
+                    if ((time_since_last_frame > 30.0 and time_since_restart > 30.0) or 
+                        frame_count_since_restart > 300):
                         print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed, {time_since_restart:.1f}s since restart)")
                         self._restart_ffmpeg()
                         frame_count_since_restart = 0
