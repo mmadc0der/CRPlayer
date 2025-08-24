@@ -3,12 +3,11 @@ Fast video frame processor using OpenCV for real-time dashboard streaming.
 Replaces slow FFmpeg-based approach with optimized frame extraction.
 """
 
-import cv2
-import numpy as np
 import base64
 import threading
 import queue
 import time
+import subprocess
 from typing import Optional, Callable, Tuple
 import tempfile
 import os
@@ -22,8 +21,7 @@ class FastVideoProcessor:
         self.target_width = target_width
         self.frame_interval = 1.0 / max_fps
         
-        # OpenCV video capture
-        self._cap: Optional[cv2.VideoCapture] = None
+        # FFmpeg subprocess for video processing
         self._temp_file: Optional[str] = None
         
         # Frame processing
@@ -56,7 +54,7 @@ class FastVideoProcessor:
         if self._processor_thread:
             self._processor_thread.join(timeout=2.0)
             
-        self._cleanup_opencv()
+        self._cleanup_resources()
         print("Fast video processor stopped")
         
     def add_mkv_data(self, data: bytes) -> None:
@@ -75,12 +73,12 @@ class FastVideoProcessor:
             return None
             
     def _update_video_source(self) -> None:
-        """Update OpenCV video source with new MKV data."""
+        """Update video source with new MKV data using FFmpeg subprocess."""
         if len(self._mkv_buffer) < 1024:
             return
             
         try:
-            # Write buffer to temporary file for OpenCV
+            # Use FFmpeg subprocess with optimized settings for real-time processing
             if not self._temp_file:
                 fd, self._temp_file = tempfile.mkstemp(suffix='.mkv')
                 os.close(fd)
@@ -89,25 +87,23 @@ class FastVideoProcessor:
             with open(self._temp_file, 'wb') as f:
                 f.write(self._mkv_buffer)
                 
-            # Reinitialize OpenCV capture
-            self._cleanup_opencv()
-            self._cap = cv2.VideoCapture(self._temp_file)
-            
-            if self._cap.isOpened():
-                # Configure for performance
-                self._cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffering
-                print(f"OpenCV capture initialized with {len(self._mkv_buffer)} bytes")
-            else:
-                print("Failed to open video with OpenCV")
+            # Check if file has enough data for FFmpeg
+            file_size = os.path.getsize(self._temp_file)
+            if file_size < 4096:  # Need minimum data for FFmpeg header parsing
+                return
                 
-            # Clear buffer after processing
+            print(f"Processing MKV file with {file_size} bytes")
+            
+            # Clear buffer after writing
             self._mkv_buffer.clear()
             
         except Exception as e:
             print(f"Error updating video source: {e}")
             
     def _process_frames(self) -> None:
-        """Main frame processing loop."""
+        """Main frame processing loop using FFmpeg subprocess."""
+        ffmpeg_process = None
+        
         while self._running:
             current_time = time.time()
             
@@ -116,20 +112,25 @@ class FastVideoProcessor:
                 time.sleep(0.01)
                 continue
                 
-            if self._cap and self._cap.isOpened():
-                ret, frame = self._cap.read()
+            # Check if we have a temp file to process
+            if self._temp_file and os.path.exists(self._temp_file):
+                file_size = os.path.getsize(self._temp_file)
                 
-                if ret and frame is not None:
+                if file_size > 4096 and not ffmpeg_process:
+                    # Start FFmpeg process with optimized settings
+                    ffmpeg_process = self._start_ffmpeg_extraction()
+                    
+                if ffmpeg_process:
                     try:
-                        # Process frame
-                        processed_frame = self._process_frame(frame)
+                        # Read frame from FFmpeg stdout
+                        frame_data = self._read_ffmpeg_frame(ffmpeg_process)
                         
-                        if processed_frame:
+                        if frame_data:
                             # Try to queue frame
                             try:
                                 self._frame_queue.put_nowait({
                                     "type": "frame",
-                                    "data": processed_frame,
+                                    "data": frame_data,
                                     "timestamp": current_time,
                                     "width": self.target_width
                                 })
@@ -142,45 +143,82 @@ class FastVideoProcessor:
                                 
                     except Exception as e:
                         print(f"Frame processing error: {e}")
+                        # Restart FFmpeg on error
+                        if ffmpeg_process:
+                            ffmpeg_process.terminate()
+                            ffmpeg_process = None
                         
             time.sleep(0.01)
             
-    def _process_frame(self, frame: np.ndarray) -> Optional[str]:
-        """Process single frame for web transmission."""
+        # Cleanup FFmpeg process
+        if ffmpeg_process:
+            ffmpeg_process.terminate()
+            ffmpeg_process.wait()
+            
+            
+    def _start_ffmpeg_extraction(self) -> Optional[object]:
+        """Start FFmpeg process for frame extraction with optimized settings."""
         try:
-            # Get original dimensions
-            height, width = frame.shape[:2]
+            cmd = [
+                'ffmpeg',
+                '-i', self._temp_file,
+                '-vf', f'scale={self.target_width}:-1',  # Scale to target width, auto height
+                '-f', 'image2pipe',
+                '-vcodec', 'mjpeg',  # Use MJPEG for faster encoding
+                '-q:v', '8',  # Good quality/speed balance (2-31, lower = better)
+                '-r', str(self.max_fps),  # Frame rate
+                '-an',  # No audio
+                'pipe:1'
+            ]
             
-            # Calculate target height maintaining aspect ratio
-            aspect_ratio = height / width
-            target_height = int(self.target_width * aspect_ratio)
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0
+            )
             
-            # Resize frame
-            resized = cv2.resize(frame, (self.target_width, target_height), 
-                               interpolation=cv2.INTER_LINEAR)
+            print(f"Started FFmpeg extraction process (PID: {process.pid})")
+            return process
             
-            # Encode as JPEG (much faster than PNG)
-            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 75]  # Good quality/speed balance
-            success, buffer = cv2.imencode('.jpg', resized, encode_params)
-            
-            if success:
-                # Convert to base64 for web transmission
-                jpg_as_text = base64.b64encode(buffer).decode('utf-8')
-                return jpg_as_text
-            else:
-                print("Failed to encode frame as JPEG")
-                return None
-                
         except Exception as e:
-            print(f"Error processing frame: {e}")
+            print(f"Failed to start FFmpeg extraction: {e}")
             return None
             
-    def _cleanup_opencv(self) -> None:
-        """Clean up OpenCV resources."""
-        if self._cap:
-            self._cap.release()
-            self._cap = None
+    def _read_ffmpeg_frame(self, process) -> Optional[str]:
+        """Read a single JPEG frame from FFmpeg stdout."""
+        try:
+            # Read JPEG header (FF D8)
+            header = process.stdout.read(2)
+            if len(header) != 2 or header != b'\xff\xd8':
+                return None
+                
+            # Read until JPEG end marker (FF D9)
+            frame_data = header
+            while True:
+                byte = process.stdout.read(1)
+                if not byte:
+                    break
+                    
+                frame_data += byte
+                
+                # Check for JPEG end marker
+                if len(frame_data) >= 2 and frame_data[-2:] == b'\xff\xd9':
+                    # Convert to base64
+                    return base64.b64encode(frame_data).decode('utf-8')
+                    
+                # Prevent reading too much data
+                if len(frame_data) > 1024 * 1024:  # 1MB limit
+                    break
+                    
+            return None
             
+        except Exception as e:
+            print(f"Error reading FFmpeg frame: {e}")
+            return None
+            
+    def _cleanup_resources(self) -> None:
+        """Clean up resources."""
         if self._temp_file and os.path.exists(self._temp_file):
             try:
                 os.unlink(self._temp_file)
