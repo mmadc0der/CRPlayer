@@ -144,7 +144,7 @@ class FFmpegStdinDecoder:
             "-flags", "low_delay",
             "-probesize", "32",
             "-analyzeduration", "0",
-            "-f", "h264",  # H.264 format from screenrecord
+            "-f", "matroska",  # MKV format from scrcpy
             "-i", "-",
             *vf,
             "-f", "rawvideo",
