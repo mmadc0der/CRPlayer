@@ -115,7 +115,7 @@ class DirectScrcpyServer:
                 return False
             
             # Push the jar file to device
-            self.device.push(local_jar_path, device_jar_path)
+            self.device.sync.push(local_jar_path, device_jar_path)
             
             # Verify the file was actually deployed
             result = self.device.shell("ls -la /data/local/tmp/scrcpy-server.jar", timeout=5)
@@ -134,6 +134,16 @@ class DirectScrcpyServer:
     async def _start_server(self) -> bool:
         """Start scrcpy server process on device"""
         try:
+            # Kill any existing scrcpy processes first
+            logger.info("Cleaning up any existing scrcpy processes...")
+            try:
+                # Kill any existing scrcpy server processes
+                self.device.shell("pkill -f scrcpy", timeout=5)
+                self.device.shell("pkill -f com.genymobile.scrcpy.Server", timeout=5)
+                await asyncio.sleep(1)  # Give processes time to die
+            except Exception as e:
+                logger.info(f"Process cleanup (expected if no processes): {e}")
+            
             # Server command - back to app_process with proper parameter format
             # Based on py-scrcpy-client working implementation
             scrcpy_version = "2.4"
