@@ -135,42 +135,42 @@ class DirectScrcpyServer:
         """Start scrcpy server process on device"""
         try:
             # Server command based on py-scrcpy-client
-            commands = [
-                "CLASSPATH=/data/local/tmp/scrcpy-server.jar",
-                "app_process",
-                "/",
-                "com.genymobile.scrcpy.Server",
-                "2.4",  # Scrcpy server version
-                "log_level=info",
-                "max_size=1600",
-                "max_fps=60", 
-                "video_bit_rate=20000000",
-                "video_encoder=OMX.google.h264.encoder",
-                "video_codec=h264",
-                "tunnel_forward=true",
-                "send_frame_meta=false",
-                "control=true",
-                "audio=false",
-                "show_touches=false",
-                "stay_awake=false",
-                "power_off_on_close=false",
-                "clipboard_autosync=false",
-            ]
+            command = (
+                "CLASSPATH=/data/local/tmp/scrcpy-server.jar "
+                "app_process / com.genymobile.scrcpy.Server "
+                "2.4 log_level=info max_size=1600 max_fps=60 "
+                "video_bit_rate=20000000 video_encoder=OMX.google.h264.encoder "
+                "video_codec=h264 tunnel_forward=true send_frame_meta=false "
+                "control=true audio=false show_touches=false stay_awake=false "
+                "power_off_on_close=false clipboard_autosync=false"
+            )
             
-            logger.info("Starting scrcpy server process...")
-            self.server_process = self.device.shell(commands, stream=True)
+            logger.info("Starting scrcpy server process in background...")
+            
+            # Start server process in background using nohup to prevent blocking
+            background_command = f"nohup {command} > /dev/null 2>&1 &"
+            result = self.device.shell(background_command, timeout=5)
+            logger.info(f"Server start command result: {result}")
             
             # Wait for server to initialize
-            await asyncio.sleep(3)
+            logger.info("Waiting for server to initialize...")
+            await asyncio.sleep(5)
             
-            # Read initial server output
-            try:
-                initial_output = self.server_process.read(100)
-                logger.info(f"Server output: {initial_output}")
-            except:
-                pass
-            
-            return True
+            # Check if server process is running
+            ps_result = self.device.shell("ps | grep scrcpy", timeout=5)
+            if "scrcpy" in ps_result:
+                logger.info("Scrcpy server process is running")
+                return True
+            else:
+                logger.warning("Scrcpy server process not found in ps output")
+                # Try alternative approach - check for java process
+                java_result = self.device.shell("ps | grep java", timeout=5)
+                if "com.genymobile.scrcpy.Server" in java_result:
+                    logger.info("Found scrcpy server java process")
+                    return True
+                else:
+                    logger.error("Scrcpy server process not found")
+                    return False
             
         except Exception as e:
             logger.error(f"Failed to start server process: {e}")
