@@ -163,11 +163,20 @@ class DirectScrcpyServer:
             
             logger.info("Starting scrcpy server process in background...")
             
-            # Start server process in background and capture stderr for debugging
-            # Redirect stderr to a file so we can read the actual errors
-            background_command = f"nohup sh -c '{command}' > /data/local/tmp/scrcpy.log 2>&1 &"
-            result = self.device.shell(background_command, timeout=5)
-            logger.info(f"Server start command result: {result}")
+            # Test the command directly first to see if it works
+            logger.info(f"Testing server command: {command}")
+            test_result = self.device.shell(f"sh -c '{command}' 2>&1", timeout=10)
+            logger.info(f"Direct command test result:\n{test_result}")
+            
+            # If direct test works, try background execution
+            if "ERROR" not in test_result and "Exception" not in test_result:
+                logger.info("Direct command succeeded, trying background execution...")
+                background_command = f"nohup sh -c '{command}' > /data/local/tmp/scrcpy.log 2>&1 &"
+                result = self.device.shell(background_command, timeout=5)
+                logger.info(f"Background command result: {result}")
+            else:
+                logger.error("Direct command failed, not attempting background execution")
+                return False
             
             # Wait for server to initialize
             logger.info("Waiting for server to initialize...")
@@ -195,7 +204,7 @@ class DirectScrcpyServer:
             else:
                 logger.warning("Scrcpy server process not found in ps output")
                 # Try alternative approach - check for java process
-                logger.info(f"Java process output: {self.device.shell('ps', timeout=5)}")
+                logger.info(f"Java process output: \n{self.device.shell('ps', timeout=5)}")
                 java_result = self.device.shell("ps | grep java", timeout=5)
                 if "com.genymobile.scrcpy.Server" in java_result:
                     logger.info("Found scrcpy server java process")
