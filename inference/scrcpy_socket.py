@@ -9,7 +9,7 @@ import socket
 import subprocess
 import time
 import logging
-from typing import Optional, AsyncIterator, NamedTuple
+from typing import Optional, AsyncIterator, NamedTuple, Dict, Any
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
