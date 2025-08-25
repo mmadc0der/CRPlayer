@@ -106,54 +106,38 @@ class ScrcpySocketDemux:
             logger.error(f"Error in NAL unit stream: {e}")
             raise
     
-    async def _setup_adb_forward(self):
-        """Setup ADB port forwarding for scrcpy video socket"""
-        try:
-            # Check if scrcpy is already running and using the port
-            result = subprocess.run([
-                'adb', 'forward', '--list'
-            ], capture_output=True, text=True)
-            
-            # Look for existing scrcpy forward
-            existing_forward = None
-            for line in result.stdout.strip().split('\n'):
-                if 'localabstract:scrcpy' in line:
-                    parts = line.split()
-                    if len(parts) >= 2:
-                        existing_forward = parts[1].split(':')[-1]  # Extract port
-                        break
-            
-            if existing_forward:
-                self.adb_port = int(existing_forward)
-                logger.info(f"Found scrcpy forward on port: {self.adb_port}")
-            else:
-                # Clean up any stale forwards first
-                logger.info("Cleaning up stale ADB forwards...")
-                subprocess.run([
-                    'adb', 'forward', '--remove-all'
-                ], capture_output=True)
-                
-                # Find available port starting from 27183
-                for port in range(27183, 27200):
-                    try:
-                        cmd = ['adb']
-                        if self.device_id:
-                            cmd.extend(['-s', self.device_id])
-                        cmd.extend([
-                            'forward', f'tcp:{port}', 'localabstract:scrcpy'
-                        ])
-                        
-                        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                        self.adb_port = port
-                        logger.info(f"Created new scrcpy forward on port: {self.adb_port}")
-                        break
-                    except subprocess.CalledProcessError:
-                        continue
-                else:
-                    raise ScrcpyProtocolError("No available ports for ADB forward")
-            
-        except subprocess.CalledProcessError as e:
-            raise ScrcpyProtocolError(f"ADB forward failed: {e.stderr}")
+    async def _read_initial_protocol(self):
+        """Read initial scrcpy protocol data"""
+        # Read dummy byte (if forward tunnel)
+        dummy = self.socket.recv(1)
+        logger.debug(f"Received dummy byte: {dummy.hex() if dummy else 'none'}")
+        
+        # Read device metadata length (4 bytes)
+        meta_len_data = self.socket.recv(4)
+        if len(meta_len_data) != 4:
+            raise Exception("Failed to read metadata length")
+        
+        meta_len = struct.unpack('>I', meta_len_data)[0]
+        logger.debug(f"Device metadata length: {meta_len}")
+        
+        # Read device metadata
+        if meta_len > 0:
+            metadata = self.socket.recv(meta_len)
+            device_name = metadata.decode('utf-8', errors='ignore')
+            logger.info(f"Connected to device: {device_name}")
+        
+        # Read video codec metadata (12 bytes)
+        # This is the first socket (video socket)
+        codec_data = self.socket.recv(12)
+        if len(codec_data) != 12:
+            raise Exception("Failed to read video codec metadata")
+        
+        codec_id, width, height = struct.unpack('>III', codec_data)
+        codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
+        codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
+        
+        logger.info(f"Video codec: {codec_name}, resolution: {width}x{height}")
+        self.stats.codec_info = f"{codec_name} {width}x{height}"
     
     async def _read_device_metadata(self):
         """Read initial device metadata from scrcpy socket"""
