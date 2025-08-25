@@ -68,9 +68,29 @@ class GPUAndroidStreamer:
         # Callbacks
         self.frame_callback: Optional[Callable] = None
         
+    def cleanup_existing_servers(self):
+        """Kill any existing scrcpy server processes."""
+        try:
+            # Kill any existing scrcpy server processes on device
+            kill_cmd = ["adb", "shell", "pkill", "-f", "scrcpy-server"]
+            subprocess.run(kill_cmd, capture_output=True, text=True)
+            
+            # Clear all reverse tunnels
+            clear_cmd = ["adb", "reverse", "--remove-all"]
+            subprocess.run(clear_cmd, capture_output=True, text=True)
+            
+            print("🧹 Cleaned up existing servers and tunnels")
+            time.sleep(1)  # Wait for cleanup
+            
+        except Exception as e:
+            print(f"Cleanup warning: {e}")
+    
     def setup_adb_tunnel(self) -> Tuple[int, int]:
         """Setup ADB reverse tunnel for scrcpy connection."""
-        # Generate random port and session ID
+        # Clean up any existing servers first
+        self.cleanup_existing_servers()
+        
+        # Generate random port and session ID (decimal for scid)
         port = random.randint(27000, 28000)
         scid = random.randint(0x10000000, 0xFFFFFFFF)
         
@@ -84,7 +104,7 @@ class GPUAndroidStreamer:
             print(f"ADB tunnel failed - STDERR: {result.stderr}")
             raise RuntimeError(f"Failed to setup ADB tunnel: {result.stderr}")
         
-        print(f" ADB tunnel setup: localhost:{port} -> device:{port}")
+        print(f"✅ ADB tunnel setup: localhost:{port} -> device:{port}")
         
         # Verify tunnel is active
         list_cmd = ["adb", "reverse", "--list"]
@@ -124,7 +144,7 @@ class GPUAndroidStreamer:
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
             "3.3.1",  # version
-            f"scid={scid:08x}",
+            f"scid={scid}",
             "log_level=info",
             f"max_size={self.max_size}",
             f"video_bit_rate={self.bit_rate.replace('M', '000000')}",  # correct parameter name
@@ -477,29 +497,19 @@ class GPUAndroidStreamer:
     
     def cleanup(self):
         """Clean up resources."""
+        self.is_streaming = False
+        
         if self.video_socket:
-            try:
-                self.video_socket.close()
-            except:
-                pass
+            self.video_socket.close()
             self.video_socket = None
         
         if self.scrcpy_process:
-            try:
-                self.scrcpy_process.terminate()
-                self.scrcpy_process.wait(timeout=5)
-            except:
-                try:
-                    self.scrcpy_process.kill()
-                except:
-                    pass
+            self.scrcpy_process.terminate()
+            self.scrcpy_process.wait()
             self.scrcpy_process = None
         
-        # Clear ADB tunnel
-        try:
-            subprocess.run(["adb", "reverse", "--remove-all"], capture_output=True)
-        except:
-            pass
+        # Clean up server processes and tunnels
+        self.cleanup_existing_servers()
 
 
 # Example usage for RL agent
