@@ -38,12 +38,17 @@ class DirectScrcpyServer:
             if not await self._deploy_server():
                 return False
             
-            # Start server process
+            # With tunnel_forward=true, we need to establish socket connections FIRST
+            # then start the server process
+            if not await self._setup_sockets():
+                return False
+            
+            # Start server process (it will connect to our established sockets)
             if not await self._start_server():
                 return False
             
-            # Connect to sockets
-            if not await self._connect_sockets():
+            # Complete the socket handshake
+            if not await self._complete_socket_setup():
                 return False
             
             logger.info(f"Direct scrcpy server started successfully")
@@ -202,6 +207,65 @@ class DirectScrcpyServer:
             logger.error(f"Failed to start server process: {e}")
             return False
     
+    async def _setup_sockets(self) -> bool:
+        """Setup socket connections before starting server (tunnel_forward=true)"""
+        try:
+            # Create socket connections that the server will connect to
+            logger.info("Setting up socket connections...")
+            
+            # Create video socket connection
+            self.video_socket = self.device.create_connection(
+                Network.LOCAL_ABSTRACT, "scrcpy"
+            )
+            logger.info("Video socket created")
+            
+            # Create control socket connection  
+            self.control_socket = self.device.create_connection(
+                Network.LOCAL_ABSTRACT, "scrcpy"
+            )
+            logger.info("Control socket created")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to setup sockets: {e}")
+            return False
+    
+    async def _complete_socket_setup(self) -> bool:
+        """Complete socket setup after server connects"""
+        try:
+            # Read dummy byte
+            dummy_byte = self.video_socket.recv(1)
+            if not dummy_byte or dummy_byte != b"\x00":
+                raise ConnectionError(f"Expected dummy byte \\x00, got: {dummy_byte}")
+            
+            logger.info("Received dummy byte successfully")
+            
+            # Read device name (64 bytes)
+            device_name_bytes = self.video_socket.recv(64)
+            self.device_name = device_name_bytes.decode("utf-8").rstrip("\x00")
+            
+            if not self.device_name:
+                raise ConnectionError("Failed to receive device name")
+            
+            # Read resolution (4 bytes: width, height as uint16 big-endian)
+            resolution_bytes = self.video_socket.recv(4)
+            if len(resolution_bytes) != 4:
+                raise ConnectionError("Failed to receive resolution data")
+            
+            width, height = struct.unpack(">HH", resolution_bytes)
+            self.resolution = (width, height)
+            
+            # Set video socket to non-blocking for streaming
+            self.video_socket.setblocking(False)
+            
+            logger.info("Socket setup completed successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to complete socket setup: {e}")
+            return False
+
     async def _connect_sockets(self) -> bool:
         """Connect to video and control sockets"""
         try:
