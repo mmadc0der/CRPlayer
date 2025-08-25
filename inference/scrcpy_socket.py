@@ -52,8 +52,8 @@ class ScrcpySocketDemux:
             raise Exception("No running scrcpy process found")
         
         # The correct socket name uses the SCID in 8-character hex format (scrcpy 2.0+)
-        scid_hex = format(int(scid), '08x')
-        correct_socket = f"localabstract:scrcpy_{scid_hex}"
+        # SCID is already in hex format
+        correct_socket = f"localabstract:scrcpy_{scid}"
         logger.info(f"Looking for scrcpy socket: {correct_socket} (SCID: {scid})")
         
         # Check if we already have a forward for the correct socket
@@ -100,9 +100,16 @@ class ScrcpySocketDemux:
                     for part in parts:
                         if part.startswith('scid='):
                             scid_value = part.split('=')[1]
-                            # Validate SCID is numeric
+                            # Validate SCID is valid hex format (8 characters)
                             try:
-                                scid = str(int(scid_value))  # Ensure it's a valid integer
+                                # SCID can be hex string or decimal - handle both
+                                if len(scid_value) == 8 and all(c in '0123456789abcdefABCDEF' for c in scid_value):
+                                    # Already in hex format
+                                    scid = scid_value.lower()
+                                else:
+                                    # Try as decimal and convert to hex
+                                    scid_int = int(scid_value)
+                                    scid = format(scid_int, '08x')
                                 logger.info(f"Found scrcpy SCID: {scid}")
                                 return scid
                             except ValueError:

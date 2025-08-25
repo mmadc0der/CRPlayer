@@ -127,9 +127,16 @@ class ScrcpyHeadlessManager:
                     for part in parts:
                         if part.startswith('scid='):
                             scid_value = part.split('=')[1]
-                            # Validate SCID is numeric
+                            # Validate SCID is valid hex format (8 characters)
                             try:
-                                self.scid = str(int(scid_value))  # Ensure it's a valid integer
+                                # SCID can be hex string or decimal - handle both
+                                if len(scid_value) == 8 and all(c in '0123456789abcdefABCDEF' for c in scid_value):
+                                    # Already in hex format
+                                    self.scid = scid_value.lower()
+                                else:
+                                    # Try as decimal and convert to hex
+                                    scid_int = int(scid_value)
+                                    self.scid = format(scid_int, '08x')
                                 logger.info(f"Detected SCID: {self.scid} -> socket: {self.get_socket_name()}")
                                 return
                             except ValueError:
@@ -142,9 +149,8 @@ class ScrcpyHeadlessManager:
     def get_socket_name(self) -> str:
         """Get the socket name for this headless instance (scrcpy 2.0+ format)"""
         if self.scid:
-            # Convert SCID to 8-character hex string as per scrcpy protocol
-            scid_hex = format(int(self.scid), '08x')
-            return f"localabstract:scrcpy_{scid_hex}"
+            # SCID is already in hex format
+            return f"localabstract:scrcpy_{self.scid}"
         else:
             return "localabstract:scrcpy"
     
