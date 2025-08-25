@@ -46,71 +46,6 @@ class ScrcpySocketDemux:
             'start_time': 0.0
         }
         
-    async def _setup_adb_tunnel(self):
-        """Setup ADB forward tunnel to scrcpy socket (simpler for programmatic access)"""
-        # First, check running scrcpy processes to get the actual SCID
-        scid = await self._get_scrcpy_scid()
-        if not scid:
-            raise Exception("No running scrcpy process found")
-        
-        # Try different socket naming schemes for scrcpy 3.3.1
-        # Option 1: Original socket (might work for single-socket mode)
-        main_socket = f"localabstract:scrcpy_{scid}"
-        # Option 2: Video-specific socket (newer versions)
-        video_socket = f"localabstract:scrcpy_{scid}_video"
-        
-        logger.info(f"Looking for scrcpy sockets: {main_socket} or {video_socket} (SCID: {scid})")
-        
-        # Try main socket first (scrcpy 3.3.1 seems to use single socket), then video socket
-        socket_candidates = [main_socket, video_socket]
-        
-        # Use forward tunnel for programmatic access (simpler)
-        self._tunnel_type = 'forward'
-        self.adb_port = 27184
-        
-        # Check existing forwards first
-        logger.debug("Checking existing ADB forwards...")
-        result = subprocess.run(['adb', 'forward', '--list'], 
-                              capture_output=True, text=True, check=True)
-        
-        logger.debug(f"ADB forward list output: {result.stdout}")
-        
-        # Check for existing forwards for any of our socket candidates
-        selected_socket = None
-        for line in result.stdout.strip().split('\n'):
-            for candidate_socket in socket_candidates:
-                if candidate_socket in line and line.strip():
-                    logger.debug(f"Found matching forward line: {line}")
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        port_part = parts[1]
-                        if port_part.startswith('tcp:'):
-                            self.adb_port = int(port_part.split(':')[1])
-                            selected_socket = candidate_socket
-                            logger.info(f"[OK] Found existing forward: tcp:{self.adb_port} -> {selected_socket}")
-                            return
-        
-        # Try to create forward tunnel for each socket candidate
-        for candidate_socket in socket_candidates:
-            logger.info(f"Trying to create forward tunnel: tcp:{self.adb_port} -> {candidate_socket}")
-            result = subprocess.run([
-                'adb', 'forward', f'tcp:{self.adb_port}', candidate_socket
-            ], capture_output=True, text=True)
-            
-            logger.debug(f"ADB forward command result: returncode={result.returncode}")
-            logger.debug(f"ADB forward stdout: {result.stdout}")
-            logger.debug(f"ADB forward stderr: {result.stderr}")
-            
-            if result.returncode == 0:
-                selected_socket = candidate_socket
-                logger.info(f"[OK] Forward tunnel established: tcp:{self.adb_port} -> {selected_socket}")
-                return
-            else:
-                logger.debug(f"Failed to create tunnel for {candidate_socket}: {result.stderr}")
-                # Try next port for next socket
-                self.adb_port += 1
-        
-        raise Exception(f"Failed to create forward tunnel for any socket candidate")
     
     async def _get_scrcpy_scid(self) -> Optional[str]:
         """Extract SCID from running scrcpy process"""
@@ -175,34 +110,15 @@ class ScrcpySocketDemux:
             try:
                 logger.info(f"Connection attempt {attempt + 1}/{max_retries}")
                 
-                # Setup ADB tunnel (reverse or forward)
-                await self._setup_adb_tunnel()
+                # Try to connect to any available socket
+                if await self._try_all_sockets():
+                    self._connected = True
+                    self._stats['start_time'] = time.time()
+                    logger.info(f"Successfully connected to scrcpy video socket on port {self.adb_port}")
+                    return True
+                else:
+                    logger.error(f"Failed to connect to any available socket on attempt {attempt + 1}")
                 
-                # Connect to video socket with timeout (forward tunnel)
-                logger.info(f"Connecting to localhost:{self.adb_port}...")
-                try:
-                    self.reader, self.writer = await asyncio.wait_for(
-                        asyncio.open_connection('localhost', self.adb_port),
-                        timeout=5.0
-                    )
-                    logger.debug(f"TCP connection established to localhost:{self.adb_port}")
-                except Exception as conn_error:
-                    logger.error(f"TCP connection failed: {conn_error}")
-                    raise
-                
-                # Read and validate device metadata with timeout
-                await asyncio.wait_for(self._read_device_metadata(), timeout=3.0)
-                
-                self._connected = True
-                self._stats['start_time'] = time.time()
-                logger.info(f"Successfully connected to scrcpy video socket on port {self.adb_port}")
-                return True
-                
-            except asyncio.TimeoutError:
-                logger.error(f"Timeout on attempt {attempt + 1} - scrcpy may not be running or video disabled")
-                if attempt == max_retries - 1:
-                    logger.error("Use: scrcpy --no-audio --max-fps=60 --max-size=1600 --video-bit-rate=20M")
-                await self.disconnect()
             except Exception as e:
                 logger.error(f"Connection attempt {attempt + 1} failed: {e}")
                 await self.disconnect()
@@ -211,6 +127,111 @@ class ScrcpySocketDemux:
                 await asyncio.sleep(2)  # Wait before retry
                 
         return False
+    
+    async def _try_all_sockets(self) -> bool:
+        """Try to connect to all possible socket candidates"""
+        # Get SCID
+        scid = await self._get_scrcpy_scid()
+        if not scid:
+            raise Exception("No running scrcpy process found")
+        
+        # Try different socket naming schemes
+        socket_candidates = [
+            f"localabstract:scrcpy_{scid}",           # Main socket
+            f"localabstract:scrcpy_{scid}_video",     # Video-specific socket
+            f"localabstract:scrcpy_{scid}_0",         # Numbered socket variant
+        ]
+        
+        logger.info(f"Trying socket candidates for SCID {scid}: {socket_candidates}")
+        
+        for i, socket_name in enumerate(socket_candidates):
+            try:
+                logger.info(f"Attempting socket {i+1}/{len(socket_candidates)}: {socket_name}")
+                
+                # Setup ADB tunnel for this socket
+                port = 27184 + i  # Use different ports for each attempt
+                if await self._setup_socket_tunnel(socket_name, port):
+                    # Try to connect and validate
+                    if await self._connect_and_validate(port, socket_name):
+                        logger.info(f"✓ Successfully connected to {socket_name} on port {port}")
+                        self.adb_port = port
+                        return True
+                    else:
+                        logger.debug(f"✗ Socket {socket_name} connected but validation failed")
+                else:
+                    logger.debug(f"✗ Failed to setup tunnel for {socket_name}")
+                    
+            except Exception as e:
+                logger.debug(f"✗ Error with socket {socket_name}: {e}")
+                continue
+        
+        logger.error("All socket candidates failed")
+        return False
+    
+    async def _setup_socket_tunnel(self, socket_name: str, port: int) -> bool:
+        """Setup ADB forward tunnel for a specific socket"""
+        try:
+            # Check if tunnel already exists
+            result = subprocess.run(['adb', 'forward', '--list'], 
+                                  capture_output=True, text=True, check=True)
+            
+            for line in result.stdout.strip().split('\n'):
+                if socket_name in line and line.strip():
+                    parts = line.split()
+                    if len(parts) >= 3 and parts[1].startswith('tcp:'):
+                        existing_port = int(parts[1].split(':')[1])
+                        logger.debug(f"Found existing tunnel: tcp:{existing_port} -> {socket_name}")
+                        return True
+            
+            # Create new tunnel
+            logger.debug(f"Creating tunnel: tcp:{port} -> {socket_name}")
+            result = subprocess.run([
+                'adb', 'forward', f'tcp:{port}', socket_name
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                logger.debug(f"✓ Tunnel created: tcp:{port} -> {socket_name}")
+                return True
+            else:
+                logger.debug(f"✗ Tunnel failed: {result.stderr}")
+                return False
+                
+        except Exception as e:
+            logger.debug(f"Error setting up tunnel for {socket_name}: {e}")
+            return False
+    
+    async def _connect_and_validate(self, port: int, socket_name: str) -> bool:
+        """Connect to socket and validate it has video data"""
+        try:
+            # Connect to socket
+            logger.debug(f"Connecting to localhost:{port}...")
+            self.reader, self.writer = await asyncio.wait_for(
+                asyncio.open_connection('localhost', port),
+                timeout=3.0
+            )
+            
+            # Try to read some data to validate this is the right socket
+            logger.debug(f"Testing data availability on {socket_name}...")
+            try:
+                test_data = await asyncio.wait_for(self.reader.read(16), timeout=2.0)
+                if test_data:
+                    logger.debug(f"✓ Socket {socket_name} has data: {len(test_data)} bytes")
+                    # Put data back in buffer for proper parsing
+                    self._initial_buffer = test_data
+                    
+                    # Try to validate as device metadata or video data
+                    await self._read_device_metadata()
+                    return True
+                else:
+                    logger.debug(f"✗ Socket {socket_name} has no data")
+                    return False
+            except asyncio.TimeoutError:
+                logger.debug(f"✗ Socket {socket_name} timeout - no data available")
+                return False
+                
+        except Exception as e:
+            logger.debug(f"✗ Connection to {socket_name} failed: {e}")
+            return False
     
     async def disconnect(self):
         """Close socket connection"""
