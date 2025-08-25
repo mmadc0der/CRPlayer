@@ -195,7 +195,7 @@ class DirectScrcpyServer:
             else:
                 logger.warning("Scrcpy server process not found in ps output")
                 # Try alternative approach - check for java process
-                logger.info(f"Java process output: {self.device.shell("ps", timeout=5)}")
+                logger.info(f"Java process output: {self.device.shell('ps', timeout=5)}")
                 java_result = self.device.shell("ps | grep java", timeout=5)
                 if "com.genymobile.scrcpy.Server" in java_result:
                     logger.info("Found scrcpy server java process")
