@@ -46,7 +46,7 @@ class ScrcpySocketDemux:
         }
         
     async def _setup_adb_tunnel(self):
-        """Setup ADB tunnel to scrcpy socket - try reverse first, fallback to forward"""
+        """Setup ADB forward tunnel to scrcpy socket (simpler for programmatic access)"""
         # First, check running scrcpy processes to get the actual SCID
         scid = await self._get_scrcpy_scid()
         if not scid:
@@ -56,23 +56,7 @@ class ScrcpySocketDemux:
         correct_socket = f"localabstract:scrcpy_{scid}"
         logger.info(f"Looking for scrcpy socket: {correct_socket} (SCID: {scid})")
         
-        # Try reverse tunnel first (scrcpy default)
-        self.adb_port = 27183  # Standard scrcpy port
-        self._tunnel_type = 'reverse'
-        
-        logger.info(f"Trying reverse tunnel: {correct_socket} -> tcp:{self.adb_port}")
-        result = subprocess.run([
-            'adb', 'reverse', f'tcp:{self.adb_port}', correct_socket
-        ], capture_output=True, text=True)
-        
-        if result.returncode == 0:
-            logger.info(f"✓ Reverse tunnel established: {correct_socket} -> tcp:{self.adb_port}")
-            return
-        
-        logger.warning(f"Reverse tunnel failed: {result.stderr}")
-        logger.info("Falling back to forward tunnel...")
-        
-        # Fallback to forward tunnel
+        # Use forward tunnel for programmatic access (simpler)
         self._tunnel_type = 'forward'
         self.adb_port = 27184
         
@@ -147,7 +131,8 @@ class ScrcpySocketDemux:
                 # Setup ADB tunnel (reverse or forward)
                 await self._setup_adb_tunnel()
                 
-                # Connect to video socket with timeout
+                # Connect to video socket with timeout (forward tunnel)
+                logger.info(f"Connecting to localhost:{self.adb_port}...")
                 self.reader, self.writer = await asyncio.wait_for(
                     asyncio.open_connection('localhost', self.adb_port),
                     timeout=5.0
@@ -224,9 +209,8 @@ class ScrcpySocketDemux:
             if self.writer.is_closing():
                 return False
                 
-            # For reverse tunnels, data should be immediately available
-            # For forward tunnels, we need to wait a bit
-            timeout = 0.1 if self._tunnel_type == 'reverse' else 2.0
+            # For forward tunnels, we need to wait a bit for data
+            timeout = 2.0
             
             try:
                 # Try to peek at data
@@ -240,12 +224,8 @@ class ScrcpySocketDemux:
                     logger.debug("Connection closed during validation")
                     return False
             except asyncio.TimeoutError:
-                if self._tunnel_type == 'reverse':
-                    logger.debug("Reverse tunnel validation timeout - likely wrong socket")
-                    return False
-                else:
-                    logger.debug("Forward tunnel validation timeout - connection may still be valid")
-                    return True
+                logger.debug("Forward tunnel validation timeout - connection may still be valid")
+                return True
                 
         except Exception as e:
             logger.debug(f"Connection validation failed: {e}")
@@ -263,25 +243,21 @@ class ScrcpySocketDemux:
             if self._initial_buffer:
                 logger.debug(f"Using buffered data: {len(self._initial_buffer)} bytes")
             
-            # Handle dummy byte based on tunnel type
+            # Handle dummy byte for forward tunnel
             dummy_byte = None
-            if self._tunnel_type == 'forward':
-                # Forward tunnel: expect dummy byte
-                if self._initial_buffer:
-                    dummy_byte = self._initial_buffer[:1]
-                    self._initial_buffer = self._initial_buffer[1:]
-                else:
-                    try:
-                        dummy_byte = await asyncio.wait_for(self.reader.read(1), timeout=2.0)
-                    except asyncio.TimeoutError:
-                        raise Exception("Expected dummy byte in forward tunnel but none received")
-                        
-                if dummy_byte:
-                    logger.debug(f"✓ Forward tunnel dummy byte: {dummy_byte.hex()}")
-                else:
-                    raise Exception("Forward tunnel dummy byte is empty")
+            if self._initial_buffer:
+                dummy_byte = self._initial_buffer[:1]
+                self._initial_buffer = self._initial_buffer[1:]
             else:
-                logger.debug("✓ Reverse tunnel - no dummy byte expected")
+                try:
+                    dummy_byte = await asyncio.wait_for(self.reader.read(1), timeout=2.0)
+                except asyncio.TimeoutError:
+                    raise Exception("Expected dummy byte in forward tunnel but none received")
+                    
+            if dummy_byte:
+                logger.debug(f"✓ Forward tunnel dummy byte: {dummy_byte.hex()}")
+            else:
+                raise Exception("Forward tunnel dummy byte is empty")
             
             # Read device metadata length (4 bytes)
             logger.debug("Reading device metadata length...")
