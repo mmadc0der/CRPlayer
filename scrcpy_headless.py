@@ -19,7 +19,7 @@ class ScrcpyHeadlessManager:
     def __init__(self, device_id: Optional[str] = None):
         self.device_id = device_id
         self.process: Optional[subprocess.Popen] = None
-        self.scid = "deadbeef"  # Fixed SCID for predictable socket name
+        self.scid = None  # Will be detected from running process
         
     async def start(self) -> bool:
         """Start headless scrcpy instance"""
@@ -33,11 +33,9 @@ class ScrcpyHeadlessManager:
                 '--no-playback',  # No video window
                 '--no-audio',     # No audio
                 '--no-control',   # No input control
-                f'--scid={self.scid}',  # Fixed SCID
                 '--max-fps=60',
                 '--max-size=1600', 
-                '--video-bit-rate=20M',
-                '--video-codec=h264'  # Ensure H.264
+                '--video-bit-rate=20M'
             ]
             
             if self.device_id:
@@ -59,6 +57,10 @@ class ScrcpyHeadlessManager:
             # Check if process is still running
             if self.process.poll() is None:
                 logger.info("Headless scrcpy started successfully")
+                
+                # Detect the SCID from the running process
+                await self._detect_scid()
+                
                 return True
             else:
                 stdout, stderr = self.process.communicate()
@@ -110,9 +112,28 @@ class ScrcpyHeadlessManager:
         except Exception as e:
             logger.warning(f"Error cleaning up existing scrcpy: {e}")
     
+    async def _detect_scid(self):
+        """Detect SCID from running scrcpy process"""
+        try:
+            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            for line in result.stdout.split('\n'):
+                if 'scrcpy-server.jar' in line and 'scid=' in line:
+                    parts = line.split()
+                    for part in parts:
+                        if part.startswith('scid='):
+                            self.scid = part.split('=')[1]
+                            logger.info(f"Detected SCID: {self.scid}")
+                            return
+            logger.warning("Could not detect SCID from process")
+        except Exception as e:
+            logger.error(f"Error detecting SCID: {e}")
+    
     def get_socket_name(self) -> str:
         """Get the socket name for this headless instance"""
-        return f"localabstract:scrcpy_{self.scid}"
+        if self.scid:
+            return f"localabstract:scrcpy_{self.scid}"
+        else:
+            return "localabstract:scrcpy"
     
     def is_running(self) -> bool:
         """Check if headless scrcpy is running"""

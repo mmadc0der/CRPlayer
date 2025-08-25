@@ -34,11 +34,11 @@ class HeadlessScrcpyPipeline:
         self._stream_task: Optional[asyncio.Task] = None
         self._stats_task: Optional[asyncio.Task] = None
         
-        # Override SCID detection to use our fixed SCID
-        self.socket_demux._get_scrcpy_scid = self._get_fixed_scid
+        # Override SCID detection to use detected SCID from headless manager
+        self.socket_demux._get_scrcpy_scid = self._get_detected_scid
         
-    async def _get_fixed_scid(self) -> str:
-        """Return the fixed SCID from headless manager"""
+    async def _get_detected_scid(self) -> str:
+        """Return the detected SCID from headless manager"""
         return self.scrcpy_manager.scid
     
     async def start(self) -> bool:
