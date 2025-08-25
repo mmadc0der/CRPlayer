@@ -307,6 +307,17 @@ class GPUAndroidStreamer:
             self.scrcpy_process = self.start_scrcpy_server(scid)
             print(f"Server process started with PID: {self.scrcpy_process.pid}")
             
+            # Check server process status immediately
+            time.sleep(0.5)
+            if self.scrcpy_process.poll() is not None:
+                stdout, stderr = self.scrcpy_process.communicate()
+                print(f" Server process exited early with code: {self.scrcpy_process.returncode}")
+                print(f"STDOUT: {stdout}")
+                print(f"STDERR: {stderr}")
+                raise RuntimeError(f"Server process failed to start")
+            
+            print(f" Server process running, checking port availability...")
+            
             # Connect to video socket (includes server readiness check)
             self.video_socket = self.connect_video_socket(port)
             
