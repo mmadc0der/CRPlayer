@@ -44,6 +44,24 @@ class ScrcpySocketDemux:
             'start_time': 0.0
         }
         
+    async def _setup_adb_forward(self):
+        """Setup ADB port forward to scrcpy socket"""
+        # Get existing ADB forwards - look for scrcpy_<SCID> pattern
+        result = subprocess.run(['adb', 'forward', '--list'], 
+                              capture_output=True, text=True, check=True)
+        
+        # Find existing scrcpy forward (could be scrcpy or scrcpy_<SCID>)
+        for line in result.stdout.strip().split('\n'):
+            if 'localabstract:scrcpy' in line:
+                parts = line.split()
+                if len(parts) >= 2:  # tcp:port localabstract:socket_name
+                    self.adb_port = int(parts[0].split(':')[-1])
+                    socket_name = parts[1]
+                    logger.info(f"Found existing scrcpy forward: {socket_name} -> port {self.adb_port}")
+                    return
+        
+        raise Exception("No scrcpy forward found - make sure scrcpy is running")
+
     async def connect(self) -> bool:
         """Connect to scrcpy video socket"""
         try:
@@ -106,62 +124,43 @@ class ScrcpySocketDemux:
             logger.error(f"Error in NAL unit stream: {e}")
             raise
     
-    async def _read_initial_protocol(self):
-        """Read initial scrcpy protocol data"""
-        # Read dummy byte (if forward tunnel)
-        dummy = self.socket.recv(1)
-        logger.debug(f"Received dummy byte: {dummy.hex() if dummy else 'none'}")
-        
-        # Read device metadata length (4 bytes)
-        meta_len_data = self.socket.recv(4)
-        if len(meta_len_data) != 4:
-            raise Exception("Failed to read metadata length")
-        
-        meta_len = struct.unpack('>I', meta_len_data)[0]
-        logger.debug(f"Device metadata length: {meta_len}")
-        
-        # Read device metadata
-        if meta_len > 0:
-            metadata = self.socket.recv(meta_len)
-            device_name = metadata.decode('utf-8', errors='ignore')
-            logger.info(f"Connected to device: {device_name}")
-        
-        # Read video codec metadata (12 bytes)
-        # This is the first socket (video socket)
-        codec_data = self.socket.recv(12)
-        if len(codec_data) != 12:
-            raise Exception("Failed to read video codec metadata")
-        
-        codec_id, width, height = struct.unpack('>III', codec_data)
-        codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
-        codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
-        
-        logger.info(f"Video codec: {codec_name}, resolution: {width}x{height}")
-        self.stats.codec_info = f"{codec_name} {width}x{height}"
     
     async def _read_device_metadata(self):
-        """Read initial device metadata from scrcpy socket"""
+        """Read initial scrcpy protocol data"""
         try:
-            # Scrcpy v3+ protocol: first read is the video stream header
-            # Try to read first few bytes to detect stream format
-            initial_data = await asyncio.wait_for(self.reader.read(16), timeout=2.0)
+            # Read dummy byte (if forward tunnel)
+            dummy = await self._read_exact(1)
+            logger.debug(f"Received dummy byte: {dummy.hex() if dummy else 'none'}")
             
-            if not initial_data:
-                raise ScrcpyProtocolError("No data received from scrcpy socket")
+            # Read device metadata length (4 bytes)
+            meta_len_data = await self._read_exact(4)
+            if not meta_len_data:
+                raise Exception("Failed to read metadata length")
             
-            logger.info(f"Received initial data: {len(initial_data)} bytes")
-            logger.debug(f"Initial bytes: {initial_data.hex()}")
+            meta_len = struct.unpack('>I', meta_len_data)[0]
+            logger.debug(f"Device metadata length: {meta_len}")
             
-            # Put the data back for frame reading (create a buffer)
-            self._initial_buffer = initial_data
+            # Read device metadata
+            if meta_len > 0:
+                metadata = await self._read_exact(meta_len)
+                if metadata:
+                    device_name = metadata.decode('utf-8', errors='ignore')
+                    logger.info(f"Connected to device: {device_name}")
             
-            # For now, skip metadata parsing and go straight to frame reading
-            logger.info("Connected to scrcpy video stream")
+            # Read video codec metadata (12 bytes)
+            codec_data = await self._read_exact(12)
+            if not codec_data:
+                raise Exception("Failed to read video codec metadata")
             
-        except asyncio.TimeoutError:
-            raise ScrcpyProtocolError("Timeout waiting for initial data from scrcpy")
+            codec_id, width, height = struct.unpack('>III', codec_data)
+            codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
+            codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
+            
+            logger.info(f"Video codec: {codec_name}, resolution: {width}x{height}")
+            self._stats['codec_info'] = f"{codec_name} {width}x{height}"
+            
         except Exception as e:
-            raise ScrcpyProtocolError(f"Failed to read initial data: {e}")
+            raise Exception(f"Failed to read initial protocol data: {e}")
     
     async def _read_next_frame(self) -> Optional[NALUnit]:
         """Read next video frame from scrcpy socket with proper protocol"""
@@ -188,11 +187,11 @@ class ScrcpySocketDemux:
                 logger.warning(f"Failed to read packet data ({packet_size} bytes)")
                 return None
             
-            self.stats.bytes_received += len(header_data) + len(packet_data)
-            self.stats.frames_received += 1
+            self._stats['bytes_received'] += len(header_data) + len(packet_data)
+            self._stats['frames_received'] += 1
             
             if key_frame:
-                self.stats.keyframes_received += 1
+                self._stats['keyframes'] += 1
             
             # Create NAL unit
             nal_unit = NALUnit(
@@ -223,6 +222,27 @@ class ScrcpySocketDemux:
                 return None
             data += chunk
         return data
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get current streaming statistics"""
+        stats = self._stats.copy()
+        if stats['start_time'] > 0:
+            elapsed = time.time() - stats['start_time']
+            stats['elapsed_time'] = elapsed
+            if elapsed > 0:
+                stats['fps'] = stats['frames_received'] / elapsed
+                stats['bitrate_kbps'] = (stats['bytes_received'] * 8) / (elapsed * 1000)
+        return stats
+    
+    async def disconnect(self):
+        """Disconnect from scrcpy socket"""
+        self._connected = False
+        if self.writer:
+            self.writer.close()
+            await self.writer.wait_closed()
+        self.reader = None
+        self.writer = None
+        logger.info("Disconnected from scrcpy socket")
     
     def _to_annexb(self, frame_data: bytes) -> bytes:
         """Convert scrcpy frame data to Annex-B format with start codes"""
