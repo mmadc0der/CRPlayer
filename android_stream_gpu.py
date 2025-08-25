@@ -79,7 +79,7 @@ class GPUAndroidStreamer:
             clear_cmd = ["adb", "reverse", "--remove-all"]
             subprocess.run(clear_cmd, capture_output=True, text=True)
             
-            print("🧹 Cleaned up existing servers and tunnels")
+            print("[CLEANUP] Cleaned up existing servers and tunnels")
             time.sleep(1)  # Wait for cleanup
             
         except Exception as e:
@@ -104,7 +104,7 @@ class GPUAndroidStreamer:
             print(f"ADB tunnel failed - STDERR: {result.stderr}")
             raise RuntimeError(f"Failed to setup ADB tunnel: {result.stderr}")
         
-        print(f"✅ ADB tunnel setup: localhost:{port} -> device:{port}")
+        print(f"[OK] ADB tunnel setup: localhost:{port} -> device:{port}")
         
         # Verify tunnel is active
         list_cmd = ["adb", "reverse", "--list"]
@@ -234,12 +234,12 @@ class GPUAndroidStreamer:
             return
         
         def read_output():
-            print("Starting server output monitoring...")
+            print("[MONITOR] Starting server output monitoring...")
             while self.is_streaming and self.scrcpy_process:
                 try:
                     poll_result = self.scrcpy_process.poll()
                     if poll_result is not None:
-                        print(f"Server process exited with code: {poll_result}")
+                        print(f"[ERROR] Server process exited with code: {poll_result}")
                         # Get remaining output
                         try:
                             remaining_output = self.scrcpy_process.stdout.read()
@@ -420,13 +420,25 @@ class GPUAndroidStreamer:
             port, scid = self.setup_adb_tunnel()
             time.sleep(1)  # Wait for tunnel
             
+            # Start scrcpy server
+            self.scrcpy_process = self.start_scrcpy_server(scid)
+            print(f"Server process started with PID: {self.scrcpy_process.pid}")
+            
+            # Connect to video socket (includes server readiness check)
+            self.video_socket = self.connect_video_socket(port)
+            
+            # Read codec metadata
+            codec_data = self.video_socket.recv(12)
+            codec_id, width, height = struct.unpack(">III", codec_data)
+            print(f"Video stream: {width}x{height}, codec_id: {codec_id}")
+            
             self.start_time = time.time()
             
             while self.is_streaming:
                 try:
                     # Validate socket connection
                     if not self.video_socket:
-                        print("❌ Video socket is None, stopping stream")
+                        print("[ERROR] Video socket is None, stopping stream")
                         break
                     
                     # Read frame header
@@ -437,11 +449,11 @@ class GPUAndroidStreamer:
                     remaining = packet_size
                     while remaining > 0:
                         if not self.video_socket:
-                            print("❌ Socket disconnected during frame read")
+                            print("[ERROR] Socket disconnected during frame read")
                             break
                         chunk = self.video_socket.recv(min(remaining, 8192))
                         if not chunk:
-                            print("❌ No data received, connection lost")
+                            print("[ERROR] No data received, connection lost")
                             break
                         frame_data += chunk
                         remaining -= len(chunk)
