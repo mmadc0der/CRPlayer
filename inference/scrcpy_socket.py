@@ -259,8 +259,27 @@ class ScrcpySocketDemux:
             
             # Read device metadata length (4 bytes)
             logger.debug("Reading device metadata length...")
+            
+            # First, let's see what data is available
+            try:
+                # Try to peek at available data
+                available_data = await asyncio.wait_for(self.reader.read(16), timeout=1.0)
+                if available_data:
+                    logger.debug(f"Raw data received ({len(available_data)} bytes): {available_data.hex()}")
+                    # Put it back in buffer
+                    self._initial_buffer = available_data + self._initial_buffer
+                else:
+                    logger.debug("No data available from socket")
+                    raise Exception("Socket closed or no data available")
+            except asyncio.TimeoutError:
+                logger.debug("Timeout waiting for initial data")
+                raise Exception("No data received from scrcpy socket - may be wrong socket type")
+            
             meta_len_data = await self._read_exact_with_buffer(4, timeout=5.0)
             if not meta_len_data or len(meta_len_data) != 4:
+                logger.error(f"Metadata length read failed: got {len(meta_len_data) if meta_len_data else 0} bytes")
+                if meta_len_data:
+                    logger.error(f"Partial data: {meta_len_data.hex()}")
                 raise Exception("Failed to read metadata length - connection may be to wrong socket type")
             
             meta_len = struct.unpack('>I', meta_len_data)[0]
@@ -352,8 +371,29 @@ class ScrcpySocketDemux:
             logger.error(f"Error reading frame: {e}")
             return None
     
-    async def _read_exact_with_buffer(self, size: int, timeout: float = 5.0) -> Optional[bytes]:
-        """Read exact number of bytes from socket, using internal buffer first"""
+    async def _read_exact_with_buffer(self, size: int, timeout: float = 5.0) -> bytes:
+        """Read exact number of bytes using buffer first"""
+        result = b''
+        
+        # Use buffered data first
+        if self._initial_buffer:
+            buffer_use = min(size, len(self._initial_buffer))
+            result = self._initial_buffer[:buffer_use]
+            self._initial_buffer = self._initial_buffer[buffer_use:]
+            size -= buffer_use
+            logger.debug(f"Used {buffer_use} bytes from buffer, need {size} more")
+        
+        # Read remaining from socket if needed
+        if size > 0:
+            logger.debug(f"Reading {size} bytes from socket...")
+            remaining = await asyncio.wait_for(self._read_exact(size), timeout=timeout)
+            result += remaining
+            logger.debug(f"Read {len(remaining)} bytes from socket")
+            
+        return result
+    
+    async def _read_exact(self, size: int, timeout: float = 5.0) -> Optional[bytes]:
+        """Read exact number of bytes from socket (legacy method)"""
         data = b''
         
         # Use buffered data first
@@ -361,6 +401,7 @@ class ScrcpySocketDemux:
             buffer_use = min(size, len(self._initial_buffer))
             data = self._initial_buffer[:buffer_use]
             self._initial_buffer = self._initial_buffer[buffer_use:]
+            size -= buffer_use
         
         # Read remaining data from socket
         while len(data) < size:
