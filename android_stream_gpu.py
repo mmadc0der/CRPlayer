@@ -108,34 +108,34 @@ class GPUAndroidStreamer:
         if not server_pushed:
             raise RuntimeError("Could not find or push scrcpy-server")
         
-        # Start server with scrcpy 3.3.1 compatible arguments
+        # Start server with scrcpy 3.3.1 key=value format
         server_cmd = [
             "adb", device_arg, "shell",
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
-            "3.3.1",  # version - match your scrcpy version
-            f"{scid:08x}",  # scid
-            "info",  # log_level
-            str(self.max_size),  # max_size
-            self.bit_rate.replace('M', '000000'),  # bit_rate
-            str(self.max_fps),  # max_fps
-            "-1",  # lock_video_orientation
-            "false",  # tunnel_forward
-            "-",  # crop
-            "false",  # send_frame_meta
-            "false",  # control
-            "0",  # display_id
-            "false",  # show_touches
-            "true",  # stay_awake
-            f"{1 if self.video_codec == 'h265' else 0}",  # video_codec
-            "0",  # video_encoder
-            "false",  # audio
-            "0",  # audio_codec
-            "0",  # audio_encoder
-            "false",  # camera
-            "false",  # video_playback
-            "false",  # audio_playback
-            "0"  # video_source
+            "3.3.1",  # version
+            f"scid={scid:08x}",
+            "log_level=info",
+            f"max_size={self.max_size}",
+            f"bit_rate={self.bit_rate.replace('M', '000000')}",
+            f"max_fps={self.max_fps}",
+            "lock_video_orientation=-1",
+            "tunnel_forward=false",
+            "crop=-",
+            "send_frame_meta=false",
+            "control=false",
+            "display_id=0",
+            "show_touches=false",
+            "stay_awake=true",
+            f"video_codec={1 if self.video_codec == 'h265' else 0}",
+            "video_encoder=0",
+            "audio=false",
+            "audio_codec=0",
+            "audio_encoder=0",
+            "camera=false",
+            "video_playback=false",
+            "audio_playback=false",
+            "video_source=0"
         ]
         
         # Remove empty args
