@@ -75,9 +75,11 @@ class GPUAndroidStreamer:
             kill_cmd = ["adb", "shell", "pkill", "-f", "scrcpy-server"]
             subprocess.run(kill_cmd, capture_output=True, text=True)
             
-            # Clear all reverse tunnels
-            clear_cmd = ["adb", "reverse", "--remove-all"]
-            subprocess.run(clear_cmd, capture_output=True, text=True)
+            # Clear all tunnels (both forward and reverse)
+            clear_reverse_cmd = ["adb", "reverse", "--remove-all"]
+            subprocess.run(clear_reverse_cmd, capture_output=True, text=True)
+            clear_forward_cmd = ["adb", "forward", "--remove-all"]
+            subprocess.run(clear_forward_cmd, capture_output=True, text=True)
             
             print("[CLEANUP] Cleaned up existing servers and tunnels")
             time.sleep(1)  # Wait for cleanup
@@ -86,17 +88,18 @@ class GPUAndroidStreamer:
             print(f"Cleanup warning: {e}")
     
     def setup_adb_tunnel(self) -> Tuple[int, int]:
-        """Setup ADB reverse tunnel for scrcpy connection."""
+        """Setup ADB forward tunnel for scrcpy connection."""
         # Clean up any existing servers first
         self.cleanup_existing_servers()
         
         # Generate random port and session ID (decimal for scid)
-        port = random.randint(27000, 28000)
+        local_port = random.randint(27000, 28000)
+        device_port = random.randint(27000, 28000)
         scid = random.randint(0x10000000, 0xFFFFFFFF)
         
-        # Setup reverse tunnel
-        tunnel_cmd = ["adb", "reverse", f"tcp:{port}", f"tcp:{port}"]
-        print(f"Setting up ADB tunnel: {' '.join(tunnel_cmd)}")
+        # Setup forward tunnel (PC -> device)
+        tunnel_cmd = ["adb", "forward", f"tcp:{local_port}", f"tcp:{device_port}"]
+        print(f"Setting up ADB forward tunnel: {' '.join(tunnel_cmd)}")
         result = subprocess.run(tunnel_cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
@@ -104,14 +107,14 @@ class GPUAndroidStreamer:
             print(f"ADB tunnel failed - STDERR: {result.stderr}")
             raise RuntimeError(f"Failed to setup ADB tunnel: {result.stderr}")
         
-        print(f"[OK] ADB tunnel setup: localhost:{port} -> device:{port}")
+        print(f"[OK] ADB forward tunnel setup: localhost:{local_port} -> device:{device_port}")
         
         # Verify tunnel is active
-        list_cmd = ["adb", "reverse", "--list"]
+        list_cmd = ["adb", "forward", "--list"]
         list_result = subprocess.run(list_cmd, capture_output=True, text=True)
         print(f"Active tunnels: {list_result.stdout.strip()}")
         
-        return port, scid
+        return local_port, scid
     
     def start_scrcpy_server(self, scid: int) -> subprocess.Popen:
         """Start scrcpy server manually for direct socket access."""
@@ -149,7 +152,7 @@ class GPUAndroidStreamer:
             f"max_size={self.max_size}",
             f"video_bit_rate={self.bit_rate.replace('M', '000000')}",  # correct parameter name
             f"max_fps={self.max_fps}",
-            "tunnel_forward=false",
+            "tunnel_forward=true",
             "send_frame_meta=false",
             "control=false",
             "display_id=0",
@@ -417,7 +420,7 @@ class GPUAndroidStreamer:
             decoder = self.setup_gpu_decoder()
             
             # Setup ADB tunnel and connect
-            port, scid = self.setup_adb_tunnel()
+            local_port, scid = self.setup_adb_tunnel()
             time.sleep(1)  # Wait for tunnel
             
             # Start scrcpy server
@@ -425,7 +428,7 @@ class GPUAndroidStreamer:
             print(f"Server process started with PID: {self.scrcpy_process.pid}")
             
             # Connect to video socket (includes server readiness check)
-            self.video_socket = self.connect_video_socket(port)
+            self.video_socket = self.connect_video_socket(local_port)
             
             # Read codec metadata
             codec_data = self.video_socket.recv(12)
