@@ -226,6 +226,23 @@ class DirectScrcpyServer:
             nohup_log = self.device.shell("cat /data/local/tmp/nohup_test.log", timeout=5)
             logger.info(f"Simple nohup log: {nohup_log}")
             
+            # Method 7: Test just the CLASSPATH export
+            logger.info("Testing CLASSPATH export...")
+            classpath_test = self.device.shell("export CLASSPATH=/data/local/tmp/scrcpy-server.jar && echo $CLASSPATH", timeout=5)
+            logger.info(f"CLASSPATH test: {classpath_test}")
+            
+            # Method 8: Test app_process without scrcpy parameters
+            logger.info("Testing basic app_process...")
+            try:
+                app_test = self.device.shell("timeout 2 sh -c 'export CLASSPATH=/data/local/tmp/scrcpy-server.jar && app_process / com.genymobile.scrcpy.Server --help'", timeout=5)
+                logger.info(f"App process test: {app_test}")
+            except Exception as e:
+                logger.info(f"App process test exception: {e}")
+            
+            # Method 9: Test if the jar file is valid
+            jar_test = self.device.shell("file /data/local/tmp/scrcpy-server.jar", timeout=5)
+            logger.info(f"JAR file check: {jar_test}")
+            
             if "scrcpy" in ps_scrcpy or "app_process" in ps_app or "scrcpy-server.jar" in ps_jar:
                 logger.info("Server process found!")
                 return True
