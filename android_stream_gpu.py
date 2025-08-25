@@ -149,7 +149,7 @@ class GPUAndroidStreamer:
             f"max_size={self.max_size}",
             f"video_bit_rate={self.bit_rate.replace('M', '000000')}",  # correct parameter name
             f"max_fps={self.max_fps}",
-            "tunnel_forward=true",
+            "tunnel_forward=false",
             "send_frame_meta=false",
             "control=false",
             "display_id=0",
