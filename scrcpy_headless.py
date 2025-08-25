@@ -1,98 +1,215 @@
 #!/usr/bin/env python3
 """
-Debug scrcpy socket connections to understand the actual protocol
+Complete Headless Scrcpy Pipeline - Integrated solution for zero-copy video streaming
 """
 
-import subprocess
-import socket
+import asyncio
+import logging
 import time
+from typing import Optional
+from scrcpy_headless import ScrcpyHeadlessManager
+from inference.scrcpy_socket import ScrcpySocketDemux
+from inference.nal_distributor import (
+    NALDistributor, 
+    create_rl_consumer, 
+    create_monitor_consumer, 
+    create_replay_consumer
+)
 
-def check_scrcpy_processes():
-    """Check running scrcpy processes"""
-    print("=== Scrcpy Processes ===")
-    try:
-        result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
-        for line in result.stdout.split('\n'):
-            if 'scrcpy' in line.lower():
-                print(f"Process: {line.strip()}")
-    except:
-        print("Cannot check processes on Windows")
+logger = logging.getLogger(__name__)
 
-def check_adb_forwards():
-    """Check ADB forwards"""
-    print("\n=== ADB Forwards ===")
-    result = subprocess.run(['adb', 'forward', '--list'], capture_output=True, text=True)
-    print(f"ADB forwards:\n{result.stdout}")
+class HeadlessScrcpyPipeline:
+    """Complete pipeline with headless scrcpy and zero-copy distribution"""
     
-    return result.stdout
-
-def check_device_sockets():
-    """Check sockets on device"""
-    print("\n=== Device Sockets ===")
-    try:
-        result = subprocess.run(['adb', 'shell', 'netstat', '-l'], capture_output=True, text=True)
-        print("Device listening sockets:")
-        for line in result.stdout.split('\n'):
-            if 'scrcpy' in line:
-                print(f"  {line.strip()}")
-    except:
-        print("Cannot check device sockets")
-
-def test_socket_connection(port):
-    """Test basic socket connection"""
-    print(f"\n=== Testing Socket Connection to Port {port} ===")
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5.0)
+    def __init__(self, device_id: Optional[str] = None):
+        self.device_id = device_id
         
-        print(f"Connecting to localhost:{port}...")
-        sock.connect(('localhost', port))
-        print("Connected successfully")
+        # Core components
+        self.scrcpy_manager = ScrcpyHeadlessManager(device_id)
+        self.socket_demux = ScrcpySocketDemux()
+        self.distributor = NALDistributor()
         
-        # Try to read immediately
-        sock.settimeout(2.0)
-        try:
-            data = sock.recv(1024)
-            if data:
-                print(f"Received {len(data)} bytes immediately: {data.hex()}")
-            else:
-                print("No immediate data")
-        except socket.timeout:
-            print("No immediate data (timeout)")
+        # Pipeline state
+        self._running = False
+        self._stream_task: Optional[asyncio.Task] = None
+        self._stats_task: Optional[asyncio.Task] = None
         
-        # Keep connection open and try again
-        print("Waiting 3 seconds...")
-        time.sleep(3)
+        # Override SCID detection to use detected SCID from headless manager
+        self.socket_demux._get_scrcpy_scid = self._get_detected_scid
+        
+    async def _get_detected_scid(self) -> str:
+        """Return the detected SCID from headless manager"""
+        return self.scrcpy_manager.scid
+    
+    async def start(self) -> bool:
+        """Start the complete headless pipeline"""
+        if self._running:
+            logger.warning("Pipeline already running")
+            return True
         
         try:
-            data = sock.recv(1024)
-            if data:
-                print(f"Received {len(data)} bytes after wait: {data.hex()}")
-            else:
-                print("Socket closed by remote")
-        except socket.timeout:
-            print("Still no data after wait")
-        
-        sock.close()
-        
-    except Exception as e:
-        print(f"Connection failed: {e}")
-
-def main():
-    check_scrcpy_processes()
-    forwards = check_adb_forwards()
-    check_device_sockets()
+            # Start headless scrcpy
+            logger.info("Starting headless scrcpy...")
+            if not await self.scrcpy_manager.start():
+                logger.error("Failed to start headless scrcpy")
+                return False
+            
+            # Wait for scrcpy to be ready
+            await asyncio.sleep(2)
+            
+            # Connect socket demux
+            logger.info("Connecting to scrcpy socket...")
+            if not await self.socket_demux.connect():
+                logger.error("Failed to connect to scrcpy socket")
+                await self.scrcpy_manager.stop()
+                return False
+            
+            # Start distributor
+            self.distributor.start()
+            
+            # Start pipeline tasks
+            self._running = True
+            self._stream_task = asyncio.create_task(self._stream_loop())
+            self._stats_task = asyncio.create_task(self._stats_loop())
+            
+            logger.info("Headless scrcpy pipeline started successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start pipeline: {e}")
+            await self.stop()
+            return False
     
-    # Extract port from forwards
-    for line in forwards.split('\n'):
-        if 'localabstract:scrcpy' in line:
-            parts = line.split()
-            if len(parts) >= 2:
-                port_part = parts[1] if len(parts) == 3 else parts[0]
-                if 'tcp:' in port_part:
-                    port = int(port_part.split(':')[1])
-                    test_socket_connection(port)
+    async def stop(self):
+        """Stop the complete pipeline"""
+        if not self._running:
+            return
+        
+        logger.info("Stopping headless scrcpy pipeline...")
+        self._running = False
+        
+        # Cancel tasks
+        if self._stream_task:
+            self._stream_task.cancel()
+            try:
+                await self._stream_task
+            except asyncio.CancelledError:
+                pass
+        
+        if self._stats_task:
+            self._stats_task.cancel()
+            try:
+                await self._stats_task
+            except asyncio.CancelledError:
+                pass
+        
+        # Stop components
+        self.distributor.stop()
+        await self.socket_demux.disconnect()
+        await self.scrcpy_manager.stop()
+        
+        logger.info("Headless scrcpy pipeline stopped")
+    
+    async def _stream_loop(self):
+        """Main streaming loop"""
+        try:
+            logger.info("Starting video stream processing...")
+            
+            async for nal_unit in self.socket_demux.stream_nal_units():
+                if not self._running:
                     break
+                
+                # Distribute NAL unit to consumers
+                await self.distributor.distribute_nal_unit(nal_unit)
+                
+        except asyncio.CancelledError:
+            logger.info("Stream loop cancelled")
+        except Exception as e:
+            logger.error(f"Error in stream loop: {e}")
+            raise
+    
+    async def _stats_loop(self):
+        """Statistics reporting loop"""
+        try:
+            while self._running:
+                await asyncio.sleep(5)  # Report every 5 seconds
+                
+                # Get stats from components
+                socket_stats = self.socket_demux.get_stats()
+                distributor_stats = self.distributor.get_stats()
+                
+                logger.info(f"Pipeline Stats - "
+                           f"Frames: {socket_stats.get('frames_received', 0)}, "
+                           f"FPS: {socket_stats.get('fps', 0):.1f}, "
+                           f"Bitrate: {socket_stats.get('bitrate_kbps', 0):.0f} kbps, "
+                           f"Consumers: {len(distributor_stats.get('consumers', {}))}")
+                
+        except asyncio.CancelledError:
+            logger.info("Stats loop cancelled")
+        except Exception as e:
+            logger.error(f"Error in stats loop: {e}")
+    
+    # Consumer management methods
+    async def add_rl_consumer(self, name: str = "rl_training"):
+        """Add RL training consumer"""
+        consumer = create_rl_consumer(name)
+        await self.distributor.add_consumer(consumer)
+        logger.info(f"Added RL consumer: {name}")
+        return consumer
+    
+    async def add_monitor_consumer(self, name: str = "monitor"):
+        """Add monitoring consumer"""
+        consumer = create_monitor_consumer(name)
+        await self.distributor.add_consumer(consumer)
+        logger.info(f"Added monitor consumer: {name}")
+        return consumer
+    
+    async def add_replay_consumer(self, name: str = "replay"):
+        """Add replay consumer"""
+        consumer = create_replay_consumer(name)
+        await self.distributor.add_consumer(consumer)
+        logger.info(f"Added replay consumer: {name}")
+        return consumer
+    
+    def get_stats(self):
+        """Get comprehensive pipeline statistics"""
+        return {
+            'scrcpy_running': self.scrcpy_manager.is_running(),
+            'socket_connected': self.socket_demux._connected,
+            'distributor_running': self.distributor._running,
+            'socket_stats': self.socket_demux.get_stats(),
+            'distributor_stats': self.distributor.get_stats()
+        }
+
+# Test the complete pipeline
+async def test_headless_pipeline():
+    """Test the complete headless pipeline"""
+    pipeline = HeadlessScrcpyPipeline()
+    
+    try:
+        # Start pipeline
+        if await pipeline.start():
+            logger.info("Pipeline started successfully!")
+            
+            # Add consumers
+            await pipeline.add_monitor_consumer("test_monitor")
+            await pipeline.add_rl_consumer("test_rl")
+            
+            # Run for 30 seconds
+            logger.info("Running pipeline for 30 seconds...")
+            await asyncio.sleep(30)
+            
+            # Print final stats
+            stats = pipeline.get_stats()
+            logger.info(f"Final stats: {stats}")
+            
+        else:
+            logger.error("Failed to start pipeline")
+    
+    finally:
+        await pipeline.stop()
 
 if __name__ == "__main__":
-    main()
+    logging.basicConfig(level=logging.INFO, 
+                       format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    asyncio.run(test_headless_pipeline())
