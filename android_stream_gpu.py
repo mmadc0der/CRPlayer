@@ -108,7 +108,7 @@ class GPUAndroidStreamer:
         if not server_pushed:
             raise RuntimeError("Could not find or push scrcpy-server")
         
-        # Start server with scrcpy 3.3.1 key=value format
+        # Start server with scrcpy 3.3.1 minimal valid arguments
         server_cmd = [
             "adb", device_arg, "shell",
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
@@ -117,25 +117,16 @@ class GPUAndroidStreamer:
             f"scid={scid:08x}",
             "log_level=info",
             f"max_size={self.max_size}",
-            f"bit_rate={self.bit_rate.replace('M', '000000')}",
+            f"video_bit_rate={self.bit_rate.replace('M', '000000')}",  # correct parameter name
             f"max_fps={self.max_fps}",
-            "lock_video_orientation=-1",
             "tunnel_forward=false",
-            "crop=-",
             "send_frame_meta=false",
             "control=false",
             "display_id=0",
             "show_touches=false",
             "stay_awake=true",
             f"video_codec={1 if self.video_codec == 'h265' else 0}",
-            "video_encoder=0",
-            "audio=false",
-            "audio_codec=0",
-            "audio_encoder=0",
-            "camera=false",
-            "video_playback=false",
-            "audio_playback=false",
-            "video_source=0"
+            "audio=false"
         ]
         
         # Remove empty args
