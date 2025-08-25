@@ -208,32 +208,49 @@ class DirectScrcpyServer:
             return False
     
     async def _setup_sockets(self) -> bool:
-        """Setup socket connections before starting server (tunnel_forward=true)"""
+        """Setup ADB port forwarding for tunnel_forward=true"""
         try:
-            # Create socket connections that the server will connect to
-            logger.info("Setting up socket connections...")
+            logger.info("Setting up ADB port forwarding...")
             
-            # Create video socket connection
-            self.video_socket = self.device.create_connection(
-                Network.LOCAL_ABSTRACT, "scrcpy"
-            )
-            logger.info("Video socket created")
+            # Set up port forwarding for video socket
+            video_port = 27183  # Default scrcpy video port
+            control_port = 27184  # Default scrcpy control port
             
-            # Create control socket connection  
-            self.control_socket = self.device.create_connection(
-                Network.LOCAL_ABSTRACT, "scrcpy"
-            )
-            logger.info("Control socket created")
+            # Forward local ports to device abstract sockets
+            self.device.forward(f"tcp:{video_port}", "localabstract:scrcpy")
+            logger.info(f"Video port forwarding: tcp:{video_port} -> localabstract:scrcpy")
+            
+            self.device.forward(f"tcp:{control_port}", "localabstract:scrcpy") 
+            logger.info(f"Control port forwarding: tcp:{control_port} -> localabstract:scrcpy")
+            
+            # Store ports for later use
+            self.video_port = video_port
+            self.control_port = control_port
             
             return True
             
         except Exception as e:
-            logger.error(f"Failed to setup sockets: {e}")
+            logger.error(f"Failed to setup port forwarding: {e}")
             return False
     
     async def _complete_socket_setup(self) -> bool:
         """Complete socket setup after server connects"""
         try:
+            import socket
+            
+            # Connect to the forwarded ports
+            logger.info("Connecting to forwarded ports...")
+            
+            # Connect to video socket via TCP
+            self.video_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.video_socket.connect(("127.0.0.1", self.video_port))
+            logger.info("Connected to video socket")
+            
+            # Connect to control socket via TCP
+            self.control_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.control_socket.connect(("127.0.0.1", self.control_port))
+            logger.info("Connected to control socket")
+            
             # Read dummy byte
             dummy_byte = self.video_socket.recv(1)
             if not dummy_byte or dummy_byte != b"\x00":
