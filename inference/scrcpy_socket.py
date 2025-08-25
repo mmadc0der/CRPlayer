@@ -53,10 +53,16 @@ class ScrcpySocketDemux:
         if not scid:
             raise Exception("No running scrcpy process found")
         
-        # The correct video socket name uses the SCID in 8-character hex format (scrcpy 2.0+)
-        # For video streaming, we need the video-specific socket
+        # Try different socket naming schemes for scrcpy 3.3.1
+        # Option 1: Original socket (might work for single-socket mode)
+        main_socket = f"localabstract:scrcpy_{scid}"
+        # Option 2: Video-specific socket (newer versions)
         video_socket = f"localabstract:scrcpy_{scid}_video"
-        logger.info(f"Looking for scrcpy video socket: {video_socket} (SCID: {scid})")
+        
+        logger.info(f"Looking for scrcpy sockets: {main_socket} or {video_socket} (SCID: {scid})")
+        
+        # Try video socket first, then fall back to main socket
+        socket_candidates = [video_socket, main_socket]
         
         # Use forward tunnel for programmatic access (simpler)
         self._tunnel_type = 'forward'
@@ -69,32 +75,42 @@ class ScrcpySocketDemux:
         
         logger.debug(f"ADB forward list output: {result.stdout}")
         
+        # Check for existing forwards for any of our socket candidates
+        selected_socket = None
         for line in result.stdout.strip().split('\n'):
-            if video_socket in line and line.strip():
-                logger.debug(f"Found matching forward line: {line}")
-                parts = line.split()
-                if len(parts) >= 3:
-                    port_part = parts[1]
-                    if port_part.startswith('tcp:'):
-                        self.adb_port = int(port_part.split(':')[1])
-                        logger.info(f"[OK] Found existing forward: tcp:{self.adb_port} -> {video_socket}")
-                        return
+            for candidate_socket in socket_candidates:
+                if candidate_socket in line and line.strip():
+                    logger.debug(f"Found matching forward line: {line}")
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        port_part = parts[1]
+                        if port_part.startswith('tcp:'):
+                            self.adb_port = int(port_part.split(':')[1])
+                            selected_socket = candidate_socket
+                            logger.info(f"[OK] Found existing forward: tcp:{self.adb_port} -> {selected_socket}")
+                            return
         
-        # Create new forward tunnel
-        logger.info(f"Creating forward tunnel: tcp:{self.adb_port} -> {video_socket}")
-        result = subprocess.run([
-            'adb', 'forward', f'tcp:{self.adb_port}', video_socket
-        ], capture_output=True, text=True)
+        # Try to create forward tunnel for each socket candidate
+        for candidate_socket in socket_candidates:
+            logger.info(f"Trying to create forward tunnel: tcp:{self.adb_port} -> {candidate_socket}")
+            result = subprocess.run([
+                'adb', 'forward', f'tcp:{self.adb_port}', candidate_socket
+            ], capture_output=True, text=True)
+            
+            logger.debug(f"ADB forward command result: returncode={result.returncode}")
+            logger.debug(f"ADB forward stdout: {result.stdout}")
+            logger.debug(f"ADB forward stderr: {result.stderr}")
+            
+            if result.returncode == 0:
+                selected_socket = candidate_socket
+                logger.info(f"[OK] Forward tunnel established: tcp:{self.adb_port} -> {selected_socket}")
+                return
+            else:
+                logger.debug(f"Failed to create tunnel for {candidate_socket}: {result.stderr}")
+                # Try next port for next socket
+                self.adb_port += 1
         
-        logger.debug(f"ADB forward command result: returncode={result.returncode}")
-        logger.debug(f"ADB forward stdout: {result.stdout}")
-        logger.debug(f"ADB forward stderr: {result.stderr}")
-        
-        if result.returncode == 0:
-            logger.info(f"[OK] Forward tunnel established: tcp:{self.adb_port} -> {video_socket}")
-            return
-        
-        raise Exception(f"Failed to create forward tunnel: {result.stderr}")
+        raise Exception(f"Failed to create forward tunnel for any socket candidate")
     
     async def _get_scrcpy_scid(self) -> Optional[str]:
         """Extract SCID from running scrcpy process"""
