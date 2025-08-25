@@ -171,9 +171,16 @@ class DirectScrcpyServer:
             
             # Start server in background immediately - it will wait for our connection
             logger.info("Starting server in background (it will wait for connection)...")
-            background_command = f"nohup sh -c '{command}' > /data/local/tmp/scrcpy.log 2>&1 &"
+            # Try without nohup since it seems to be failing
+            background_command = f"sh -c '{command}' > /data/local/tmp/scrcpy.log 2>&1 &"
             result = self.device.shell(background_command, timeout=5)
             logger.info(f"Background command result: {result}")
+            
+            # Also try a direct background execution
+            logger.info("Trying alternative background execution...")
+            alt_command = f"({command}) > /data/local/tmp/scrcpy_alt.log 2>&1 &"
+            alt_result = self.device.shell(alt_command, timeout=5)
+            logger.info(f"Alternative command result: {alt_result}")
             
             # Give server a moment to start
             await asyncio.sleep(2)
@@ -182,19 +189,31 @@ class DirectScrcpyServer:
             logger.info("Waiting for server to initialize...")
             await asyncio.sleep(10)
             
-            # Read the log file to see what happened
+            # Read both log files to see what happened
             try:
                 log_output = self.device.shell("cat /data/local/tmp/scrcpy.log", timeout=5)
                 if log_output.strip():
                     logger.info(f"Server log output:\n{log_output}")
                 else:
-                    logger.info("No log output yet, waiting longer...")
-                    await asyncio.sleep(10)
+                    logger.info("No primary log output yet...")
+                
+                alt_log = self.device.shell("cat /data/local/tmp/scrcpy_alt.log", timeout=5)
+                if alt_log.strip():
+                    logger.info(f"Alternative log output:\n{alt_log}")
+                else:
+                    logger.info("No alternative log output yet...")
+                    
+                if not log_output.strip() and not alt_log.strip():
+                    logger.info("No log output from either method, waiting longer...")
+                    await asyncio.sleep(5)
                     log_output = self.device.shell("cat /data/local/tmp/scrcpy.log", timeout=5)
+                    alt_log = self.device.shell("cat /data/local/tmp/scrcpy_alt.log", timeout=5)
                     if log_output.strip():
-                        logger.info(f"Server log output (after delay):\n{log_output}")
+                        logger.info(f"Server log (after delay):\n{log_output}")
+                    if alt_log.strip():
+                        logger.info(f"Alternative log (after delay):\n{alt_log}")
             except Exception as e:
-                logger.warning(f"Could not read server log: {e}")
+                logger.warning(f"Could not read server logs: {e}")
             
             # Check if server process is running with multiple methods
             logger.info("Checking if server process is running...")
