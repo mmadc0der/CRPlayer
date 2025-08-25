@@ -61,8 +61,8 @@ class ScrcpySocketDemux:
         
         logger.info(f"Looking for scrcpy sockets: {main_socket} or {video_socket} (SCID: {scid})")
         
-        # Try video socket first, then fall back to main socket
-        socket_candidates = [video_socket, main_socket]
+        # Try main socket first (scrcpy 3.3.1 seems to use single socket), then video socket
+        socket_candidates = [main_socket, video_socket]
         
         # Use forward tunnel for programmatic access (simpler)
         self._tunnel_type = 'forward'
@@ -303,18 +303,20 @@ class ScrcpySocketDemux:
             
             # First, let's see what data is available
             try:
-                # Try to peek at available data
-                available_data = await asyncio.wait_for(self.reader.read(16), timeout=1.0)
+                # Try to peek at available data with longer timeout for scrcpy 3.3.1
+                logger.debug("Waiting for initial data from scrcpy socket...")
+                available_data = await asyncio.wait_for(self.reader.read(64), timeout=3.0)
                 if available_data:
                     logger.debug(f"Raw data received ({len(available_data)} bytes): {available_data.hex()}")
+                    logger.debug(f"Raw data as text (first 32 chars): {available_data[:32]}")
                     # Put it back in buffer
                     self._initial_buffer = available_data + self._initial_buffer
                 else:
                     logger.debug("No data available from socket")
                     raise Exception("Socket closed or no data available")
             except asyncio.TimeoutError:
-                logger.debug("Timeout waiting for initial data")
-                raise Exception("No data received from scrcpy socket - may be wrong socket type")
+                logger.debug("Timeout waiting for initial data - socket may be for control, not video")
+                raise Exception("No data received from scrcpy socket - may be control socket or wrong socket type")
             
             meta_len_data = await self._read_exact_with_buffer(4, timeout=5.0)
             if not meta_len_data or len(meta_len_data) != 4:
