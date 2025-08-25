@@ -108,23 +108,31 @@ class GPUAndroidStreamer:
         if not server_pushed:
             raise RuntimeError("Could not find or push scrcpy-server")
         
-        # Start server with proper arguments
+        # Start server with correct argument format (space-separated values)
         server_cmd = [
             "adb", device_arg, "shell",
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
             "2.1",  # version
-            f"scid={scid:08x}",
-            "log_level=info",
-            f"max_size={self.max_size}",
-            f"bit_rate={self.bit_rate.replace('M', '000000')}",
-            f"max_fps={self.max_fps}",
-            "tunnel_forward=false",
-            "send_frame_meta=false",
-            "control=false",
-            "audio=false",
-            "video=true",
-            f"video_codec={1 if self.video_codec == 'h265' else 0}"
+            f"{scid:08x}",  # scid without key=value format
+            "info",  # log_level
+            str(self.max_size),  # max_size
+            self.bit_rate.replace('M', '000000'),  # bit_rate
+            str(self.max_fps),  # max_fps
+            "-1",  # lock_video_orientation
+            "false",  # tunnel_forward
+            "-",  # crop
+            "false",  # send_frame_meta
+            "false",  # control
+            "0",  # display_id
+            "false",  # show_touches
+            "true",  # stay_awake
+            f"{1 if self.video_codec == 'h265' else 0}",  # video_codec
+            "0",  # video_encoder
+            "false",  # audio
+            "0",  # audio_codec
+            "0",  # audio_encoder
+            "false"  # camera
         ]
         
         # Remove empty args
@@ -144,19 +152,36 @@ class GPUAndroidStreamer:
     def connect_video_socket(self, port: int) -> socket.socket:
         """Connect to scrcpy video socket."""
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect(("localhost", port))
+        sock.settimeout(10)  # 10 second timeout
         
-        # Read dummy byte and device metadata
-        dummy = sock.recv(1)
-        if not dummy:
-            raise RuntimeError("Failed to receive dummy byte")
-        
-        # Read device name length and name
-        name_length = struct.unpack(">I", sock.recv(4))[0]
-        device_name = sock.recv(name_length).decode("utf-8")
-        print(f"Connected to device: {device_name}")
-        
-        return sock
+        try:
+            sock.connect(("localhost", port))
+            print(f"Connected to video socket on port {port}")
+            
+            # For reverse tunnel, device sends dummy byte first
+            dummy = sock.recv(1)
+            if not dummy:
+                raise RuntimeError("Failed to receive dummy byte")
+            print(f"Received dummy byte: {dummy.hex()}")
+            
+            # Read device name length and name
+            name_length_data = sock.recv(4)
+            if len(name_length_data) != 4:
+                raise RuntimeError("Failed to receive device name length")
+            
+            name_length = struct.unpack(">I", name_length_data)[0]
+            print(f"Device name length: {name_length}")
+            
+            if name_length > 0:
+                device_name = sock.recv(name_length).decode("utf-8")
+                print(f"Connected to device: {device_name}")
+            
+            sock.settimeout(None)  # Remove timeout for streaming
+            return sock
+            
+        except Exception as e:
+            sock.close()
+            raise RuntimeError(f"Failed to connect to video socket: {e}")
     
     def read_frame_header(self, sock: socket.socket) -> Tuple[bool, bool, int, int]:
         """Read scrcpy frame header."""
