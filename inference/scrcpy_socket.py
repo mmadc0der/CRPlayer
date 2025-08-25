@@ -139,16 +139,6 @@ class ScrcpySocketDemux:
                     timeout=5.0
                 )
                 
-                # Validate connection is actually working
-                if not await self._validate_connection():
-                    await self.disconnect()
-                    if attempt < max_retries - 1:
-                        logger.warning(f"Connection validation failed, retrying in 2s...")
-                        await asyncio.sleep(2)
-                        continue
-                    else:
-                        return False
-                
                 # Read and validate device metadata with timeout
                 await asyncio.wait_for(self._read_device_metadata(), timeout=3.0)
                 
