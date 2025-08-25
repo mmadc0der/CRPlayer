@@ -67,43 +67,73 @@ class GPUAndroidStreamer:
         # Callbacks
         self.frame_callback: Optional[Callable] = None
         
-    def setup_adb_tunnel(self) -> int:
+    def setup_adb_tunnel(self) -> tuple:
         """Setup ADB tunnel for scrcpy connection."""
         import random
         port = random.randint(27183, 27283)
+        scid = random.randint(1, 2**31 - 1)  # 31-bit random number
         
         device_arg = f"-s {self.device_id}" if self.device_id else ""
-        cmd = f"adb {device_arg} reverse tcp:{port} localabstract:scrcpy"
+        # Use reverse tunnel - device connects to computer
+        cmd = f"adb {device_arg} reverse localabstract:scrcpy_{scid:08x} tcp:{port}"
         
         result = subprocess.run(cmd.split(), capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"Failed to setup ADB tunnel: {result.stderr}")
         
-        return port
+        return port, scid
     
-    def start_scrcpy_server(self) -> subprocess.Popen:
-        """Start scrcpy server with optimal settings for GPU acceleration."""
+    def start_scrcpy_server(self, scid: int) -> subprocess.Popen:
+        """Start scrcpy server manually for direct socket access."""
         device_arg = f"-s {self.device_id}" if self.device_id else ""
         
-        cmd = [
-            "scrcpy",
-            "--video-codec", self.video_codec,
-            "--max-fps", str(self.max_fps),
-            "--max-size", str(self.max_size),
-            "--video-bit-rate", self.bit_rate,
-            "--no-audio",
-            "--no-control",
-            "--raw-video-stream",
-            "--print-fps"
+        # Push scrcpy server to device
+        server_locations = [
+            "/usr/share/scrcpy/scrcpy-server",
+            "/usr/local/share/scrcpy/scrcpy-server", 
+            "/opt/scrcpy/scrcpy-server"
         ]
         
-        if device_arg:
-            cmd.extend(device_arg.split())
+        server_pushed = False
+        for location in server_locations:
+            try:
+                push_cmd = f"adb {device_arg} push {location} /data/local/tmp/scrcpy-server.jar"
+                result = subprocess.run(push_cmd.split(), capture_output=True, text=True, timeout=10)
+                if result.returncode == 0:
+                    server_pushed = True
+                    break
+            except:
+                continue
         
-        print(f"Starting scrcpy: {' '.join(cmd)}")
+        if not server_pushed:
+            raise RuntimeError("Could not find or push scrcpy-server")
+        
+        # Start server with proper arguments
+        server_cmd = [
+            "adb", device_arg, "shell",
+            f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
+            "app_process", "/", "com.genymobile.scrcpy.Server",
+            "2.1",  # version
+            f"scid={scid:08x}",
+            "log_level=info",
+            f"max_size={self.max_size}",
+            f"bit_rate={self.bit_rate.replace('M', '000000')}",
+            f"max_fps={self.max_fps}",
+            "tunnel_forward=false",
+            "send_frame_meta=false",
+            "control=false",
+            "audio=false",
+            "video=true",
+            f"video_codec={1 if self.video_codec == 'h265' else 0}"
+        ]
+        
+        # Remove empty args
+        server_cmd = [arg for arg in server_cmd if arg.strip()]
+        
+        print(f"Starting scrcpy server: {' '.join(server_cmd)}")
         
         process = subprocess.Popen(
-            cmd,
+            server_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
@@ -193,12 +223,12 @@ class GPUAndroidStreamer:
             decoder = self.setup_gpu_decoder()
             
             # Setup ADB tunnel and connect
-            port = self.setup_adb_tunnel()
+            port, scid = self.setup_adb_tunnel()
             time.sleep(1)  # Wait for tunnel
             
             # Start scrcpy server
-            self.scrcpy_process = self.start_scrcpy_server()
-            time.sleep(2)  # Wait for server startup
+            self.scrcpy_process = self.start_scrcpy_server(scid)
+            time.sleep(3)  # Wait for server startup
             
             # Connect to video socket
             self.video_socket = self.connect_video_socket(port)
