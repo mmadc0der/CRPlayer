@@ -145,7 +145,7 @@ class GPUAndroidStreamer:
             "app_process", "/", "com.genymobile.scrcpy.Server",
             "3.3.1",  # version
             f"scid={scid:08x}",
-            "log_level=info",
+            "log_level=debug",
             f"max_size={self.max_size}",
             f"video_bit_rate={self.bit_rate.replace('M', '000000')}",  # correct parameter name
             f"max_fps={self.max_fps}",
