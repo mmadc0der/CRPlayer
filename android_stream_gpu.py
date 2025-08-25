@@ -327,23 +327,42 @@ class GPUAndroidStreamer:
             sock.connect(("localhost", port))
             print(f"Connected to video socket on port {port}")
             
-            # For reverse tunnel, device sends dummy byte first
-            dummy = sock.recv(1)
-            if not dummy:
-                raise RuntimeError("Failed to receive dummy byte")
-            print(f"Received dummy byte: {dummy.hex()}")
+            # For forward tunnel, check if we need to send dummy byte first
+            print("[DEBUG] Attempting to receive dummy byte...")
+            sock.settimeout(5)  # 5 second timeout for handshake
+            
+            try:
+                dummy = sock.recv(1)
+                if not dummy:
+                    print("[DEBUG] No dummy byte received, trying to send one...")
+                    # For forward tunnel, we might need to send dummy byte first
+                    sock.send(b'\x00')
+                    dummy = sock.recv(1)
+                    if not dummy:
+                        raise RuntimeError("Failed to receive dummy byte after sending")
+                print(f"[DEBUG] Received dummy byte: {dummy.hex()}")
+            except socket.timeout:
+                print("[DEBUG] Timeout receiving dummy byte, trying to send one...")
+                sock.send(b'\x00')
+                dummy = sock.recv(1)
+                if not dummy:
+                    raise RuntimeError("Failed to receive dummy byte after timeout")
+                print(f"[DEBUG] Received dummy byte after send: {dummy.hex()}")
             
             # Read device name length and name
+            print("[DEBUG] Reading device name length...")
             name_length_data = sock.recv(4)
             if len(name_length_data) != 4:
                 raise RuntimeError("Failed to receive device name length")
             
             name_length = struct.unpack(">I", name_length_data)[0]
-            print(f"Device name length: {name_length}")
+            print(f"[DEBUG] Device name length: {name_length}")
             
             if name_length > 0:
                 device_name = sock.recv(name_length).decode("utf-8")
                 print(f"Connected to device: {device_name}")
+            else:
+                print("Connected to device: (no name)")
             
             sock.settimeout(None)  # Remove timeout for streaming
             return sock
