@@ -131,9 +131,18 @@ class ScrcpySocketDemux:
     async def _read_device_metadata(self):
         """Read initial scrcpy protocol data"""
         try:
-            # Read dummy byte (if forward tunnel)
-            dummy = await self._read_exact(1)
-            logger.debug(f"Received dummy byte: {dummy.hex() if dummy else 'none'}")
+            # According to scrcpy protocol, the first socket opened gets:
+            # 1. Dummy byte (if forward tunnel)
+            # 2. Device metadata
+            # 3. Video codec metadata (if this is video socket)
+            
+            # Try to read dummy byte (may not exist in reverse tunnel)
+            try:
+                dummy = await asyncio.wait_for(self.reader.read(1), timeout=1.0)
+                if dummy:
+                    logger.debug(f"Received dummy byte: {dummy.hex()}")
+            except asyncio.TimeoutError:
+                logger.debug("No dummy byte received (reverse tunnel)")
             
             # Read device metadata length (4 bytes)
             meta_len_data = await self._read_exact(4)
@@ -150,17 +159,24 @@ class ScrcpySocketDemux:
                     device_name = metadata.decode('utf-8', errors='ignore')
                     logger.info(f"Connected to device: {device_name}")
             
-            # Read video codec metadata (12 bytes)
-            codec_data = await self._read_exact(12)
-            if not codec_data:
-                raise Exception("Failed to read video codec metadata")
-            
-            codec_id, width, height = struct.unpack('>III', codec_data)
-            codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
-            codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
-            
-            logger.info(f"Video codec: {codec_name}, resolution: {width}x{height}")
-            self._stats['codec_info'] = f"{codec_name} {width}x{height}"
+            # Try to read video codec metadata (12 bytes)
+            # This will only succeed if this is the video socket
+            try:
+                codec_data = await asyncio.wait_for(self._read_exact(12), timeout=2.0)
+                if codec_data and len(codec_data) == 12:
+                    codec_id, width, height = struct.unpack('>III', codec_data)
+                    codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
+                    codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
+                    
+                    logger.info(f"✅ Video socket - Codec: {codec_name}, resolution: {width}x{height}")
+                    self._stats['codec_info'] = f"{codec_name} {width}x{height}"
+                    return  # Success - this is video socket
+                else:
+                    raise Exception("Invalid codec data")
+                    
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning(f"❌ Not video socket or no codec data: {e}")
+                raise Exception("This appears to be control socket, not video socket")
             
         except Exception as e:
             raise Exception(f"Failed to read initial protocol data: {e}")
