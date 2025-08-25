@@ -30,6 +30,7 @@ class ScrcpyHeadlessManager:
             # Build scrcpy command for headless operation
             cmd = [
                 'scrcpy',
+                '--no-window',
                 '--no-audio',     # No audio
                 '--no-control',   # No input control
                 '--max-fps=60',
