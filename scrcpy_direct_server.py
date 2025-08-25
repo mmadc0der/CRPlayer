@@ -190,22 +190,47 @@ class DirectScrcpyServer:
             except Exception as e:
                 logger.warning(f"Could not read server log: {e}")
             
-            # Check if server process is running
-            ps_result = self.device.shell("ps | grep scrcpy", timeout=5)
-            if "scrcpy" in ps_result:
-                logger.info("Scrcpy server process is running")
+            # Check if server process is running with multiple methods
+            logger.info("Checking if server process is running...")
+            
+            # Method 1: Check for scrcpy processes
+            ps_scrcpy = self.device.shell("ps | grep scrcpy", timeout=5)
+            logger.info(f"ps | grep scrcpy: {ps_scrcpy}")
+            
+            # Method 2: Check for app_process with our jar
+            ps_app = self.device.shell("ps | grep app_process", timeout=5)
+            logger.info(f"ps | grep app_process: {ps_app}")
+            
+            # Method 3: Check for any process using our jar file
+            ps_jar = self.device.shell("ps | grep scrcpy-server.jar", timeout=5)
+            logger.info(f"ps | grep scrcpy-server.jar: {ps_jar}")
+            
+            # Method 4: Test if we can execute the command directly (without nohup)
+            logger.info("Testing direct command execution (will timeout, but shows if command works)...")
+            try:
+                direct_test = self.device.shell(f"timeout 3 {command}", timeout=5)
+                logger.info(f"Direct command (3s timeout): {direct_test}")
+            except Exception as e:
+                logger.info(f"Direct command test exception (expected): {e}")
+            
+            # Method 5: Check if nohup is available and working
+            nohup_test = self.device.shell("which nohup", timeout=5)
+            logger.info(f"nohup availability: {nohup_test}")
+            
+            # Method 6: Test a simple nohup command
+            simple_nohup = self.device.shell("nohup echo 'test' > /data/local/tmp/nohup_test.log 2>&1 &", timeout=5)
+            logger.info(f"Simple nohup test result: {simple_nohup}")
+            
+            await asyncio.sleep(1)
+            nohup_log = self.device.shell("cat /data/local/tmp/nohup_test.log", timeout=5)
+            logger.info(f"Simple nohup log: {nohup_log}")
+            
+            if "scrcpy" in ps_scrcpy or "app_process" in ps_app or "scrcpy-server.jar" in ps_jar:
+                logger.info("Server process found!")
                 return True
             else:
-                logger.warning("Scrcpy server process not found in ps output")
-                # Try alternative approach - check for java process
-                logger.info(f"Java process output: \n{self.device.shell('ps', timeout=5)}")
-                java_result = self.device.shell("ps | grep java", timeout=5)
-                if "com.genymobile.scrcpy.Server" in java_result:
-                    logger.info("Found scrcpy server java process")
-                    return True
-                else:
-                    logger.error("Scrcpy server process not found")
-                    return False
+                logger.error("Server process not found with any method")
+                return False
             
         except Exception as e:
             logger.error(f"Failed to start server process: {e}")
