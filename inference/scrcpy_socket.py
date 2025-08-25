@@ -45,25 +45,60 @@ class ScrcpySocketDemux:
         }
         
     async def _setup_adb_forward(self):
-        """Setup ADB port forward to scrcpy socket"""
-        # Get existing ADB forwards - look for scrcpy_<SCID> pattern
+        """Setup ADB port forward to scrcpy socket with correct SCID"""
+        # First, check running scrcpy processes to get the actual SCID
+        scid = await self._get_scrcpy_scid()
+        if not scid:
+            raise Exception("No running scrcpy process found")
+        
+        # The correct socket name uses the SCID
+        correct_socket = f"localabstract:scrcpy_{scid}"
+        logger.info(f"Looking for scrcpy socket: {correct_socket}")
+        
+        # Check if we already have a forward for the correct socket
         result = subprocess.run(['adb', 'forward', '--list'], 
                               capture_output=True, text=True, check=True)
         
-        # Find existing scrcpy forward (could be scrcpy or scrcpy_<SCID>)
-        # ADB forward format: "device_id tcp:port localabstract:socket_name"
         for line in result.stdout.strip().split('\n'):
-            if 'localabstract:scrcpy' in line and line.strip():
+            if correct_socket in line and line.strip():
                 parts = line.split()
-                if len(parts) >= 3:  # device_id tcp:port localabstract:socket_name
-                    port_part = parts[1]  # tcp:port
-                    socket_name = parts[2]  # localabstract:socket_name
+                if len(parts) >= 3:
+                    port_part = parts[1]
                     if port_part.startswith('tcp:'):
                         self.adb_port = int(port_part.split(':')[1])
-                        logger.info(f"Found existing scrcpy forward: {socket_name} -> port {self.adb_port}")
+                        logger.info(f"Found existing forward: {correct_socket} -> port {self.adb_port}")
                         return
         
-        raise Exception("No scrcpy forward found - make sure scrcpy is running")
+        # Create new forward for the correct socket
+        self.adb_port = 27184  # Use different port to avoid conflicts
+        logger.info(f"Creating forward: tcp:{self.adb_port} -> {correct_socket}")
+        
+        result = subprocess.run([
+            'adb', 'forward', f'tcp:{self.adb_port}', correct_socket
+        ], capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            raise Exception(f"Failed to create ADB forward: {result.stderr}")
+        
+        logger.info(f"Created forward: {correct_socket} -> port {self.adb_port}")
+    
+    async def _get_scrcpy_scid(self) -> Optional[str]:
+        """Extract SCID from running scrcpy process"""
+        try:
+            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            for line in result.stdout.split('\n'):
+                if 'scrcpy-server.jar' in line and 'scid=' in line:
+                    # Extract scid=XXXXXXXX from command line
+                    parts = line.split()
+                    for part in parts:
+                        if part.startswith('scid='):
+                            scid = part.split('=')[1]
+                            logger.info(f"Found scrcpy SCID: {scid}")
+                            return scid
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get SCID: {e}")
+            return None
 
     async def connect(self) -> bool:
         """Connect to scrcpy video socket"""
