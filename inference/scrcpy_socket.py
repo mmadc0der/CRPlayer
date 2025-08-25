@@ -136,9 +136,10 @@ class ScrcpySocketDemux:
             raise Exception("No running scrcpy process found")
         
         # Try different socket naming schemes
+        # For standalone server mode, use main socket first
         socket_candidates = [
-            f"localabstract:scrcpy_{scid}",           # Main socket
-            f"localabstract:scrcpy_{scid}_video",     # Video-specific socket
+            f"localabstract:scrcpy_{scid}",           # Main socket (standalone server)
+            f"localabstract:scrcpy_{scid}_video",     # Video-specific socket (multi-socket mode)
             f"localabstract:scrcpy_{scid}_0",         # Numbered socket variant
         ]
         

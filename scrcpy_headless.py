@@ -22,25 +22,41 @@ class ScrcpyHeadlessManager:
         self.scid = None  # Will be detected from running process
         
     async def start(self) -> bool:
-        """Start headless scrcpy instance"""
+        """Start headless scrcpy instance using standalone server mode"""
         try:
             # Kill any existing scrcpy processes
             await self._cleanup_existing()
             
-            # Build scrcpy command for headless operation
+            # Generate random SCID for this session
+            import random
+            self.scid = format(random.randint(0, 0x7FFFFFFF), '08x')
+            
+            # Use standalone server mode for proper protocol support
+            # This ensures device metadata and frame headers are sent correctly
             cmd = [
-                'scrcpy',
-                '--no-audio',     # No audio
-                '--no-control',   # No input control
-                '--max-fps=60',
-                '--max-size=1600', 
-                '--video-bit-rate=20M'
+                'adb', 'shell',
+                'CLASSPATH=/data/local/tmp/scrcpy-server.jar',
+                'app_process', '/', 'com.genymobile.scrcpy.Server', '3.3.1',
+                f'scid={self.scid}',
+                'log_level=info',
+                'tunnel_forward=true',
+                'audio=false',
+                'control=false',
+                'cleanup=false',
+                'send_device_meta=true',    # Enable device metadata
+                'send_frame_meta=true',     # Enable frame headers
+                'send_codec_meta=true',     # Enable codec metadata
+                'max_size=1600',
+                'video_bit_rate=20000000',
+                'max_fps=60'
             ]
             
             if self.device_id:
-                cmd.extend(['-s', self.device_id])
+                # Insert device selection before shell command
+                cmd.insert(1, '-s')
+                cmd.insert(2, self.device_id)
             
-            logger.info(f"Starting headless scrcpy: {' '.join(cmd)}")
+            logger.info(f"Starting headless scrcpy server: {' '.join(cmd)}")
             
             # Start process
             self.process = subprocess.Popen(
@@ -55,15 +71,11 @@ class ScrcpyHeadlessManager:
             
             # Check if process is still running
             if self.process.poll() is None:
-                logger.info("Headless scrcpy started successfully")
-                
-                # Detect the SCID from the running process
-                await self._detect_scid()
-                
+                logger.info(f"Headless scrcpy server started successfully with SCID: {self.scid}")
                 return True
             else:
                 stdout, stderr = self.process.communicate()
-                logger.error(f"Scrcpy failed to start: {stderr.decode()}")
+                logger.error(f"Scrcpy server failed to start: {stderr.decode()}")
                 return False
                 
         except Exception as e:
@@ -111,40 +123,6 @@ class ScrcpyHeadlessManager:
         except Exception as e:
             logger.warning(f"Error cleaning up existing scrcpy: {e}")
     
-    async def _detect_scid(self):
-        """Detect SCID from running scrcpy process"""
-        try:
-            # Try Windows tasklist first
-            if os.name == 'nt':
-                result = subprocess.run(['wmic', 'process', 'get', 'commandline'], 
-                                      capture_output=True, text=True)
-            else:
-                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
-                
-            for line in result.stdout.split('\n'):
-                if 'scrcpy-server.jar' in line and 'scid=' in line:
-                    parts = line.split()
-                    for part in parts:
-                        if part.startswith('scid='):
-                            scid_value = part.split('=')[1]
-                            # Validate SCID is valid hex format (8 characters)
-                            try:
-                                # SCID can be hex string or decimal - handle both
-                                if len(scid_value) == 8 and all(c in '0123456789abcdefABCDEF' for c in scid_value):
-                                    # Already in hex format
-                                    self.scid = scid_value.lower()
-                                else:
-                                    # Try as decimal and convert to hex
-                                    scid_int = int(scid_value)
-                                    self.scid = format(scid_int, '08x')
-                                logger.info(f"Detected SCID: {self.scid} -> socket: {self.get_socket_name()}")
-                                return
-                            except ValueError:
-                                logger.warning(f"Invalid SCID format: {scid_value}")
-                                continue
-            logger.warning("Could not detect SCID from process")
-        except Exception as e:
-            logger.error(f"Error detecting SCID: {e}")
     
     def get_socket_name(self) -> str:
         """Get the socket name for this headless instance (scrcpy 2.0+ format)"""
