@@ -108,13 +108,13 @@ class GPUAndroidStreamer:
         if not server_pushed:
             raise RuntimeError("Could not find or push scrcpy-server")
         
-        # Start server with correct argument format (space-separated values)
+        # Start server with scrcpy 3.3.1 compatible arguments
         server_cmd = [
             "adb", device_arg, "shell",
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
-            "2.1",  # version
-            f"{scid:08x}",  # scid without key=value format
+            "3.3.1",  # version - match your scrcpy version
+            f"{scid:08x}",  # scid
             "info",  # log_level
             str(self.max_size),  # max_size
             self.bit_rate.replace('M', '000000'),  # bit_rate
@@ -132,7 +132,10 @@ class GPUAndroidStreamer:
             "false",  # audio
             "0",  # audio_codec
             "0",  # audio_encoder
-            "false"  # camera
+            "false",  # camera
+            "false",  # video_playback
+            "false",  # audio_playback
+            "0"  # video_source
         ]
         
         # Remove empty args
@@ -146,6 +149,15 @@ class GPUAndroidStreamer:
             stderr=subprocess.PIPE,
             text=True
         )
+        
+        # Wait a moment and check if server started successfully
+        time.sleep(1)
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            print(f"Server failed to start:")
+            print(f"STDOUT: {stdout}")
+            print(f"STDERR: {stderr}")
+            raise RuntimeError(f"Server process exited with code {process.returncode}")
         
         return process
     
