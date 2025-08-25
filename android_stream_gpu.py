@@ -125,7 +125,7 @@ class GPUAndroidStreamer:
             "display_id=0",
             "show_touches=false",
             "stay_awake=true",
-            f"video_codec={1 if self.video_codec == 'h265' else 0}",
+            "video_codec=h265",
             "audio=false"
         ]
         
