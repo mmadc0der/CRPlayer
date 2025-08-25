@@ -141,24 +141,25 @@ class DirectScrcpyServer:
         try:
             # Server command - back to app_process with proper parameter format
             # Based on py-scrcpy-client working implementation
+            scrcpy_version = "2.4"
             command = (
-                "CLASSPATH=/data/local/tmp/scrcpy-server.jar "
-                "app_process / com.genymobile.scrcpy.Server "
-                "2.4 "
-                "log_level=info "
-                "max_size=1600 "
-                "max_fps=60 "
-                "video_bit_rate=20000000 "
-                "video_encoder=OMX.google.h264.encoder "
-                "video_codec=h264 "
-                "tunnel_forward=true "
-                "send_frame_meta=false "
-                "control=true "
-                "audio=false "
-                "show_touches=false "
-                "stay_awake=false "
-                "power_off_on_close=false "
-                "clipboard_autosync=false"
+                f"export CLASSPATH=/data/local/tmp/scrcpy-server.jar && "
+                f"app_process / com.genymobile.scrcpy.Server "
+                f"{scrcpy_version} "
+                f"log_level=info "
+                f"max_size=1600 "
+                f"max_fps=60 "
+                f"video_bit_rate=20000000 "
+                f"video_encoder=OMX.google.h264.encoder "
+                f"video_codec=h264 "
+                f"tunnel_forward=true "
+                f"send_frame_meta=false "
+                f"control=true "
+                f"audio=false "
+                f"show_touches=false "
+                f"stay_awake=false "
+                f"power_off_on_close=false "
+                f"clipboard_autosync=false"
             )
             
             logger.info("Starting scrcpy server process in background...")
