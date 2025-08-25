@@ -28,39 +28,35 @@ class DirectScrcpyServer:
         self.resolution: Optional[Tuple[int, int]] = None
         
     async def start(self) -> bool:
-        """Deploy server and establish connections"""
+        """Start the direct scrcpy server"""
         try:
             # Connect to device
             if not await self._connect_device():
                 return False
             
-            # Deploy server
+            # Deploy server jar
             if not await self._deploy_server():
                 return False
             
-            # With tunnel_forward=true, we need to establish socket connections FIRST
-            # then start the server process
-            if not await self._setup_sockets():
-                return False
-            
-            # Start server process (it will connect to our established sockets)
+            # Start server process first (it will create the socket)
             if not await self._start_server():
                 return False
             
-            # Complete the socket handshake
+            # Setup port forwarding after server creates socket
+            if not await self._setup_sockets():
+                return False
+            
+            # Complete socket setup
             if not await self._complete_socket_setup():
                 return False
             
-            logger.info(f"Direct scrcpy server started successfully")
-            logger.info(f"Device: {self.device_name}")
-            logger.info(f"Resolution: {self.resolution}")
-            
+            logger.info("✓ Direct scrcpy server started successfully")
             return True
             
         except Exception as e:
             logger.error(f"Failed to start direct scrcpy server: {e}")
-            await self.stop()
             return False
+            
     
     async def stop(self):
         """Stop server and cleanup connections"""
@@ -118,18 +114,17 @@ class DirectScrcpyServer:
                 logger.error(f"Local scrcpy-server.jar not found at {local_jar_path}")
                 return False
             
-            logger.info(f"Pushing {local_jar_path} to device...")
+            # Push the jar file to device
+            self.device.push(local_jar_path, device_jar_path)
             
-            # Push jar to device
-            self.device.sync.push(local_jar_path, device_jar_path)
-            
-            # Verify deployment
-            result = self.device.shell(f"ls -la {device_jar_path}", timeout=5)
-            if "scrcpy-server.jar" not in result:
-                logger.error("Failed to deploy scrcpy-server.jar to device")
+            # Verify the file was actually deployed
+            result = self.device.shell("ls -la /data/local/tmp/scrcpy-server.jar", timeout=5)
+            if "scrcpy-server.jar" in result:
+                logger.info(f"JAR file deployed successfully: {result}")
+            else:
+                logger.error(f"JAR file deployment failed: {result}")
                 return False
             
-            logger.info("scrcpy-server.jar deployed successfully")
             return True
             
         except Exception as e:
@@ -259,20 +254,19 @@ class DirectScrcpyServer:
         try:
             logger.info("Setting up ADB port forwarding...")
             
-            # Set up port forwarding for video socket
-            video_port = 27183  # Default scrcpy video port
-            control_port = 27184  # Default scrcpy control port
+            # Clear any existing forwards first
+            try:
+                self.device.forward_remove(f"tcp:{self.video_port}")
+                self.device.forward_remove(f"tcp:{self.control_port}")
+            except:
+                pass  # Ignore if forwards don't exist
             
-            # Forward local ports to device abstract sockets
-            self.device.forward(f"tcp:{video_port}", "localabstract:scrcpy")
-            logger.info(f"Video port forwarding: tcp:{video_port} -> localabstract:scrcpy")
+            # Forward video and control ports to localabstract:scrcpy
+            self.device.forward(f"tcp:{self.video_port}", "localabstract:scrcpy")
+            logger.info(f"Video port forwarding: tcp:{self.video_port} -> localabstract:scrcpy")
             
-            self.device.forward(f"tcp:{control_port}", "localabstract:scrcpy") 
-            logger.info(f"Control port forwarding: tcp:{control_port} -> localabstract:scrcpy")
-            
-            # Store ports for later use
-            self.video_port = video_port
-            self.control_port = control_port
+            self.device.forward(f"tcp:{self.control_port}", "localabstract:scrcpy")
+            logger.info(f"Control port forwarding: tcp:{self.control_port} -> localabstract:scrcpy")
             
             return True
             
