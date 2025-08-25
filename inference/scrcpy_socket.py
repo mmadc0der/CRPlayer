@@ -9,6 +9,7 @@ import socket
 import subprocess
 import time
 import logging
+import os
 from typing import Optional, AsyncIterator, NamedTuple, Dict, Any
 from dataclasses import dataclass
 
@@ -61,11 +62,15 @@ class ScrcpySocketDemux:
         self.adb_port = 27184
         
         # Check existing forwards first
+        logger.debug("Checking existing ADB forwards...")
         result = subprocess.run(['adb', 'forward', '--list'], 
                               capture_output=True, text=True, check=True)
         
+        logger.debug(f"ADB forward list output: {result.stdout}")
+        
         for line in result.stdout.strip().split('\n'):
             if correct_socket in line and line.strip():
+                logger.debug(f"Found matching forward line: {line}")
                 parts = line.split()
                 if len(parts) >= 3:
                     port_part = parts[1]
@@ -80,6 +85,10 @@ class ScrcpySocketDemux:
             'adb', 'forward', f'tcp:{self.adb_port}', correct_socket
         ], capture_output=True, text=True)
         
+        logger.debug(f"ADB forward command result: returncode={result.returncode}")
+        logger.debug(f"ADB forward stdout: {result.stdout}")
+        logger.debug(f"ADB forward stderr: {result.stderr}")
+        
         if result.returncode == 0:
             logger.info(f"[OK] Forward tunnel established: tcp:{self.adb_port} -> {correct_socket}")
             return
@@ -89,35 +98,55 @@ class ScrcpySocketDemux:
     async def _get_scrcpy_scid(self) -> Optional[str]:
         """Extract SCID from running scrcpy process"""
         try:
+            logger.debug("Searching for running scrcpy processes...")
             # Try Windows and Unix process listing
             if os.name == 'nt':
+                logger.debug("Using Windows wmic to list processes")
                 result = subprocess.run(['wmic', 'process', 'get', 'commandline'], 
                                       capture_output=True, text=True)
             else:
+                logger.debug("Using Unix ps to list processes")
                 result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            
+            logger.debug(f"Process listing result: {len(result.stdout)} characters")
+            
+            scrcpy_lines = []
+            for line in result.stdout.split('\n'):
+                if 'scrcpy' in line.lower():
+                    scrcpy_lines.append(line.strip())
+                    
+            logger.debug(f"Found {len(scrcpy_lines)} scrcpy-related process lines")
+            for i, line in enumerate(scrcpy_lines):
+                logger.debug(f"  Line {i+1}: {line[:100]}..." if len(line) > 100 else f"  Line {i+1}: {line}")
                 
             for line in result.stdout.split('\n'):
                 if 'scrcpy-server.jar' in line and 'scid=' in line:
+                    logger.debug(f"Found scrcpy-server line: {line}")
                     # Extract scid=XXXXXXXX from command line
                     parts = line.split()
                     for part in parts:
                         if part.startswith('scid='):
                             scid_value = part.split('=')[1]
+                            logger.debug(f"Raw SCID value: {scid_value}")
                             # Validate SCID is valid hex format (8 characters)
                             try:
                                 # SCID can be hex string or decimal - handle both
                                 if len(scid_value) == 8 and all(c in '0123456789abcdefABCDEF' for c in scid_value):
                                     # Already in hex format
                                     scid = scid_value.lower()
+                                    logger.debug(f"SCID is already in hex format: {scid}")
                                 else:
                                     # Try as decimal and convert to hex
                                     scid_int = int(scid_value)
                                     scid = format(scid_int, '08x')
+                                    logger.debug(f"Converted decimal SCID {scid_int} to hex: {scid}")
                                 logger.info(f"Found scrcpy SCID: {scid}")
                                 return scid
                             except ValueError:
                                 logger.warning(f"Invalid SCID format: {scid_value}")
                                 continue
+            
+            logger.warning("No scrcpy-server.jar process found with scid= parameter")
             return None
         except Exception as e:
             logger.error(f"Failed to get SCID: {e}")
@@ -134,10 +163,15 @@ class ScrcpySocketDemux:
                 
                 # Connect to video socket with timeout (forward tunnel)
                 logger.info(f"Connecting to localhost:{self.adb_port}...")
-                self.reader, self.writer = await asyncio.wait_for(
-                    asyncio.open_connection('localhost', self.adb_port),
-                    timeout=5.0
-                )
+                try:
+                    self.reader, self.writer = await asyncio.wait_for(
+                        asyncio.open_connection('localhost', self.adb_port),
+                        timeout=5.0
+                    )
+                    logger.debug(f"TCP connection established to localhost:{self.adb_port}")
+                except Exception as conn_error:
+                    logger.error(f"TCP connection failed: {conn_error}")
+                    raise
                 
                 # Read and validate device metadata with timeout
                 await asyncio.wait_for(self._read_device_metadata(), timeout=3.0)

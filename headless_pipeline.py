@@ -210,6 +210,6 @@ async def test_headless_pipeline():
         await pipeline.stop()
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, 
+    logging.basicConfig(level=logging.DEBUG, 
                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     asyncio.run(test_headless_pipeline())
