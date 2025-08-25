@@ -146,7 +146,7 @@ class DirectScrcpyServer:
                 "video_bit_rate=20000000 "
                 "video_encoder=OMX.google.h264.encoder "
                 "video_codec=h264 "
-                "tunnel_forward=false "
+                "tunnel_forward=true "
                 "send_frame_meta=false "
                 "control=true "
                 "audio=false "
