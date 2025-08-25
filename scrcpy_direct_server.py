@@ -169,18 +169,41 @@ class DirectScrcpyServer:
             
             logger.info("Starting scrcpy server process in background...")
             
-            # Start server in background immediately - it will wait for our connection
-            logger.info("Starting server in background (it will wait for connection)...")
-            # Try without nohup since it seems to be failing
-            background_command = f"sh -c '{command}' > /data/local/tmp/scrcpy.log 2>&1 &"
-            result = self.device.shell(background_command, timeout=5)
-            logger.info(f"Background command result: {result}")
+            # Start server using ADB shell stream (persistent connection)
+            logger.info("Starting server using persistent ADB shell connection...")
             
-            # Also try a direct background execution
-            logger.info("Trying alternative background execution...")
-            alt_command = f"({command}) > /data/local/tmp/scrcpy_alt.log 2>&1 &"
-            alt_result = self.device.shell(alt_command, timeout=5)
-            logger.info(f"Alternative command result: {alt_result}")
+            # Create a script file on device to run the server
+            script_content = f"""#!/system/bin/sh
+export CLASSPATH=/data/local/tmp/scrcpy-server.jar
+exec app_process / com.genymobile.scrcpy.Server {scrcpy_version} log_level=info max_size=1600 max_fps=60 video_bit_rate=20000000 video_encoder=OMX.google.h264.encoder video_codec=h264 tunnel_forward=true send_frame_meta=false control=true audio=false show_touches=false stay_awake=false power_off_on_close=false clipboard_autosync=false
+"""
+            
+            # Write script to device
+            self.device.shell(f"echo '{script_content}' > /data/local/tmp/start_scrcpy.sh", timeout=5)
+            self.device.shell("chmod +x /data/local/tmp/start_scrcpy.sh", timeout=5)
+            
+            # Start server using the script in a non-blocking way
+            logger.info("Executing server script...")
+            try:
+                # Use shell stream for non-blocking execution
+                import threading
+                
+                def run_server():
+                    try:
+                        result = self.device.shell("/data/local/tmp/start_scrcpy.sh > /data/local/tmp/scrcpy.log 2>&1", timeout=30)
+                        logger.info(f"Server execution completed: {result}")
+                    except Exception as e:
+                        logger.info(f"Server execution (expected timeout): {e}")
+                
+                # Start server in separate thread
+                server_thread = threading.Thread(target=run_server, daemon=True)
+                server_thread.start()
+                
+                logger.info("Server thread started, giving it time to initialize...")
+                
+            except Exception as e:
+                logger.error(f"Failed to start server thread: {e}")
+                return False
             
             # Give server a moment to start
             await asyncio.sleep(2)
