@@ -351,6 +351,9 @@ class GPUAndroidStreamer:
     
     def read_frame_header(self, sock: socket.socket) -> Tuple[bool, bool, int, int]:
         """Read scrcpy frame header."""
+        if not sock:
+            raise RuntimeError("Socket is None")
+        
         header_data = sock.recv(12)
         if len(header_data) != 12:
             raise RuntimeError("Failed to read frame header")
@@ -421,6 +424,11 @@ class GPUAndroidStreamer:
             
             while self.is_streaming:
                 try:
+                    # Validate socket connection
+                    if not self.video_socket:
+                        print("❌ Video socket is None, stopping stream")
+                        break
+                    
                     # Read frame header
                     config_packet, key_frame, pts, packet_size = self.read_frame_header(self.video_socket)
                     
@@ -428,8 +436,12 @@ class GPUAndroidStreamer:
                     frame_data = b""
                     remaining = packet_size
                     while remaining > 0:
+                        if not self.video_socket:
+                            print("❌ Socket disconnected during frame read")
+                            break
                         chunk = self.video_socket.recv(min(remaining, 8192))
                         if not chunk:
+                            print("❌ No data received, connection lost")
                             break
                         frame_data += chunk
                         remaining -= len(chunk)
