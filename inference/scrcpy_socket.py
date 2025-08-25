@@ -139,6 +139,16 @@ class ScrcpySocketDemux:
                     timeout=5.0
                 )
                 
+                # Validate connection is actually working
+                if not await self._validate_connection():
+                    await self.disconnect()
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Connection validation failed, retrying in 2s...")
+                        await asyncio.sleep(2)
+                        continue
+                    else:
+                        return False
+                
                 # Read and validate device metadata with timeout
                 await asyncio.wait_for(self._read_device_metadata(), timeout=3.0)
                 
@@ -194,6 +204,21 @@ class ScrcpySocketDemux:
             raise
     
     
+    async def _validate_connection(self) -> bool:
+        """Validate that the socket connection is working"""
+        try:
+            if self.writer.is_closing():
+                logger.debug("Writer is closing")
+                return False
+                
+            # Skip validation for forward tunnels - just check if connection is alive
+            # The real validation happens during metadata reading
+            logger.debug("Skipping validation for forward tunnel - will validate during metadata read")
+            return True
+                
+        except Exception as e:
+            logger.debug(f"Connection validation failed: {e}")
+            return False
     
     async def _read_device_metadata(self):
         """Read initial scrcpy protocol data with improved error handling"""
