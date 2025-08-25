@@ -36,6 +36,7 @@ class ScrcpySocketDemux:
         self.reader: Optional[asyncio.StreamReader] = None
         self.writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
+        self._initial_buffer = b''
         self._stats = {
             'frames_received': 0,
             'bytes_received': 0,
@@ -102,21 +103,35 @@ class ScrcpySocketDemux:
     async def _setup_adb_forward(self):
         """Setup ADB port forwarding for scrcpy video socket"""
         try:
-            # Kill any existing forward
-            subprocess.run([
-                'adb', 'forward', '--remove', f'tcp:{self.adb_port}'
-            ], capture_output=True)
+            # Check if scrcpy is already running and using the port
+            result = subprocess.run([
+                'adb', 'forward', '--list'
+            ], capture_output=True, text=True)
             
-            # Setup new forward
-            cmd = ['adb']
-            if self.device_id:
-                cmd.extend(['-s', self.device_id])
-            cmd.extend([
-                'forward', f'tcp:{self.adb_port}', 'localabstract:scrcpy'
-            ])
+            # Look for existing scrcpy forward
+            existing_forward = None
+            for line in result.stdout.strip().split('\n'):
+                if 'localabstract:scrcpy' in line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        existing_forward = parts[1].split(':')[-1]  # Extract port
+                        break
             
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            logger.info(f"ADB forward setup: {result.stdout.strip()}")
+            if existing_forward:
+                self.adb_port = int(existing_forward)
+                logger.info(f"Using existing scrcpy forward on port: {self.adb_port}")
+            else:
+                # Setup new forward - but scrcpy should already be running
+                logger.warning("No existing scrcpy forward found - make sure scrcpy is running")
+                cmd = ['adb']
+                if self.device_id:
+                    cmd.extend(['-s', self.device_id])
+                cmd.extend([
+                    'forward', f'tcp:{self.adb_port}', 'localabstract:scrcpy'
+                ])
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                logger.info(f"ADB forward setup: {result.stdout.strip()}")
             
         except subprocess.CalledProcessError as e:
             raise ScrcpyProtocolError(f"ADB forward failed: {e.stderr}")
@@ -124,62 +139,72 @@ class ScrcpySocketDemux:
     async def _read_device_metadata(self):
         """Read initial device metadata from scrcpy socket"""
         try:
-            # Read device name length (2 bytes)
-            name_len_data = await self.reader.readexactly(2)
-            name_len = struct.unpack('>H', name_len_data)[0]
+            # Scrcpy v3+ protocol: first read is the video stream header
+            # Try to read first few bytes to detect stream format
+            initial_data = await asyncio.wait_for(self.reader.read(16), timeout=2.0)
             
-            # Read device name
-            if name_len > 0:
-                device_name = await self.reader.readexactly(name_len)
-                logger.info(f"Connected to device: {device_name.decode('utf-8')}")
+            if not initial_data:
+                raise ScrcpyProtocolError("No data received from scrcpy socket")
             
-            # Read initial resolution (8 bytes)
-            resolution_data = await self.reader.readexactly(8)
-            width, height = struct.unpack('>II', resolution_data)
-            logger.info(f"Device resolution: {width}x{height}")
+            logger.info(f"Received initial data: {len(initial_data)} bytes")
+            logger.debug(f"Initial bytes: {initial_data.hex()}")
             
+            # Put the data back for frame reading (create a buffer)
+            self._initial_buffer = initial_data
+            
+            # For now, skip metadata parsing and go straight to frame reading
+            logger.info("Connected to scrcpy video stream")
+            
+        except asyncio.TimeoutError:
+            raise ScrcpyProtocolError("Timeout waiting for initial data from scrcpy")
         except Exception as e:
-            raise ScrcpyProtocolError(f"Failed to read device metadata: {e}")
+            raise ScrcpyProtocolError(f"Failed to read initial data: {e}")
     
     async def _read_next_frame(self) -> Optional[NALUnit]:
         """Read next video frame from scrcpy socket"""
         try:
-            # Read frame header (12 bytes)
-            # Format: PTS (8 bytes) + frame_size (4 bytes)
-            header_data = await self.reader.readexactly(12)
-            pts, frame_size = struct.unpack('>QI', header_data)
-            
-            if frame_size == 0:
-                logger.warning("Received frame with zero size")
-                return None
+            # Use initial buffer if available
+            if self._initial_buffer:
+                data = self._initial_buffer
+                self._initial_buffer = b''
+                logger.info(f"Processing initial buffer: {len(data)} bytes")
                 
-            if frame_size > 10 * 1024 * 1024:  # 10MB sanity check
-                logger.error(f"Frame size too large: {frame_size} bytes")
-                raise ScrcpyProtocolError(f"Invalid frame size: {frame_size}")
+                # Try to find frame boundaries in initial data
+                nal_data = self._extract_nal_from_raw(data)
+                if nal_data:
+                    is_keyframe = self._is_keyframe(nal_data)
+                    return NALUnit(
+                        data=nal_data,
+                        pts=0,  # Unknown PTS for initial data
+                        size=len(nal_data),
+                        timestamp=time.time(),
+                        is_keyframe=is_keyframe
+                    )
             
-            # Read frame data
-            frame_data = await self.reader.readexactly(frame_size)
+            # Try to read raw data and find NAL units
+            data = await asyncio.wait_for(self.reader.read(8192), timeout=0.1)
+            if not data:
+                return None
             
-            # Convert to Annex-B format
-            nal_data = self._to_annexb(frame_data)
+            # Extract NAL units from raw data
+            nal_data = self._extract_nal_from_raw(data)
+            if nal_data:
+                is_keyframe = self._is_keyframe(nal_data)
+                return NALUnit(
+                    data=nal_data,
+                    pts=int(time.time() * 1000000),  # Generate PTS from timestamp
+                    size=len(nal_data),
+                    timestamp=time.time(),
+                    is_keyframe=is_keyframe
+                )
             
-            # Check if keyframe
-            is_keyframe = self._is_keyframe(nal_data)
+            return None
             
-            return NALUnit(
-                data=nal_data,
-                pts=pts,
-                size=len(nal_data),
-                timestamp=time.time(),
-                is_keyframe=is_keyframe
-            )
-            
-        except asyncio.IncompleteReadError:
-            logger.warning("Incomplete read from scrcpy socket")
+        except asyncio.TimeoutError:
             return None
         except Exception as e:
             logger.error(f"Error reading frame: {e}")
-            raise
+            return None
     
     def _to_annexb(self, frame_data: bytes) -> bytes:
         """Convert scrcpy frame data to Annex-B format with start codes"""
@@ -212,6 +237,49 @@ class ScrcpySocketDemux:
             offset += nal_length
         
         return bytes(annexb_data)
+    
+    def _extract_nal_from_raw(self, data: bytes) -> Optional[bytes]:
+        """Extract NAL units from raw scrcpy stream data"""
+        if not data:
+            return None
+        
+        # Look for NAL unit start codes in the data
+        start_codes = [b'\x00\x00\x00\x01', b'\x00\x00\x01']
+        
+        for start_code in start_codes:
+            start_idx = data.find(start_code)
+            if start_idx != -1:
+                # Found a start code, try to find the next one
+                search_start = start_idx + len(start_code)
+                next_idx = -1
+                
+                for next_start_code in start_codes:
+                    pos = data.find(next_start_code, search_start)
+                    if pos != -1:
+                        if next_idx == -1 or pos < next_idx:
+                            next_idx = pos
+                
+                if next_idx != -1:
+                    # Extract complete NAL unit
+                    return data[start_idx:next_idx]
+                else:
+                    # Take rest of data if no next start code found
+                    return data[start_idx:]
+        
+        # If no start codes found, check if this might be length-prefixed
+        if len(data) >= 4:
+            try:
+                # Try to parse as length-prefixed NAL
+                nal_length = struct.unpack('>I', data[:4])[0]
+                if 4 + nal_length <= len(data) and nal_length > 0:
+                    # Convert to Annex-B
+                    nal_data = b'\x00\x00\x00\x01' + data[4:4+nal_length]
+                    return nal_data
+            except:
+                pass
+        
+        # Return None if no valid NAL unit found
+        return None
     
     def _is_keyframe(self, nal_data: bytes) -> bool:
         """Check if NAL unit contains a keyframe (IDR)"""
