@@ -145,12 +145,23 @@ class ScrcpySocketDemux:
                 logger.debug("No dummy byte received (reverse tunnel)")
             
             # Read device metadata length (4 bytes)
+            logger.debug("Attempting to read 4-byte metadata length...")
             meta_len_data = await self._read_exact(4)
             if not meta_len_data:
+                # Try to read any available data to debug
+                logger.debug("No metadata length received, checking for any data...")
+                try:
+                    any_data = await asyncio.wait_for(self.reader.read(100), timeout=1.0)
+                    if any_data:
+                        logger.debug(f"Received unexpected data: {len(any_data)} bytes: {any_data.hex()}")
+                    else:
+                        logger.debug("No data available at all")
+                except asyncio.TimeoutError:
+                    logger.debug("Timeout - no data available")
                 raise Exception("Failed to read metadata length")
             
             meta_len = struct.unpack('>I', meta_len_data)[0]
-            logger.debug(f"Device metadata length: {meta_len}")
+            logger.debug(f"Device metadata length: {meta_len} (hex: {meta_len_data.hex()})")
             
             # Read device metadata
             if meta_len > 0:
@@ -168,14 +179,14 @@ class ScrcpySocketDemux:
                     codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
                     codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
                     
-                    logger.info(f"✅ Video socket - Codec: {codec_name}, resolution: {width}x{height}")
+                    logger.info(f"[OK] Video socket - Codec: {codec_name}, resolution: {width}x{height}")
                     self._stats['codec_info'] = f"{codec_name} {width}x{height}"
                     return  # Success - this is video socket
                 else:
                     raise Exception("Invalid codec data")
                     
             except (asyncio.TimeoutError, Exception) as e:
-                logger.warning(f"❌ Not video socket or no codec data: {e}")
+                logger.warning(f"[FAIL] Not video socket or no codec data: {e}")
                 raise Exception("This appears to be control socket, not video socket")
             
         except Exception as e:
