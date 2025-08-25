@@ -232,26 +232,35 @@ class ScrcpySocketDemux:
             if self._initial_buffer:
                 logger.debug(f"Using buffered data: {len(self._initial_buffer)} bytes")
             
-            # Handle dummy byte for forward tunnel
+            # Try to read dummy byte for forward tunnel (may not always be present)
             dummy_byte = None
             if self._initial_buffer:
-                dummy_byte = self._initial_buffer[:1]
-                self._initial_buffer = self._initial_buffer[1:]
+                # Check if we have buffered data that might be dummy byte
+                if len(self._initial_buffer) > 0:
+                    first_byte = self._initial_buffer[:1]
+                    # If it looks like a dummy byte (usually 0x00), consume it
+                    if first_byte == b'\x00':
+                        dummy_byte = first_byte
+                        self._initial_buffer = self._initial_buffer[1:]
+                        logger.debug(f"[OK] Forward tunnel dummy byte from buffer: {dummy_byte.hex()}")
             else:
                 try:
-                    dummy_byte = await asyncio.wait_for(self.reader.read(1), timeout=2.0)
+                    # Try to read a byte with short timeout
+                    potential_byte = await asyncio.wait_for(self.reader.read(1), timeout=0.5)
+                    if potential_byte == b'\x00':
+                        dummy_byte = potential_byte
+                        logger.debug(f"[OK] Forward tunnel dummy byte: {dummy_byte.hex()}")
+                    else:
+                        # Not a dummy byte, put it back in buffer for metadata reading
+                        self._initial_buffer = potential_byte + self._initial_buffer
+                        logger.debug("No dummy byte found, proceeding to metadata")
                 except asyncio.TimeoutError:
-                    raise Exception("Expected dummy byte in forward tunnel but none received")
-                    
-            if dummy_byte:
-                logger.debug(f"[OK] Forward tunnel dummy byte: {dummy_byte.hex()}")
-            else:
-                raise Exception("Forward tunnel dummy byte is empty")
+                    logger.debug("No dummy byte received, proceeding to metadata")
             
             # Read device metadata length (4 bytes)
             logger.debug("Reading device metadata length...")
-            meta_len_data = await self._read_exact_with_buffer(4, timeout=3.0)
-            if not meta_len_data:
+            meta_len_data = await self._read_exact_with_buffer(4, timeout=5.0)
+            if not meta_len_data or len(meta_len_data) != 4:
                 raise Exception("Failed to read metadata length - connection may be to wrong socket type")
             
             meta_len = struct.unpack('>I', meta_len_data)[0]
@@ -261,19 +270,20 @@ class ScrcpySocketDemux:
             if meta_len > 1024 or meta_len < 0:
                 raise Exception(f"Invalid metadata length: {meta_len}")
             
-            # Read device metadata
-            device_name = "Unknown"
-            if meta_len > 0:
-                metadata = await self._read_exact_with_buffer(meta_len)
-                if metadata:
-                    device_name = metadata.decode('utf-8', errors='ignore')
-                    logger.info(f"Connected to device: {device_name}")
+            # Read device name
+            logger.debug(f"Reading device name ({meta_len} bytes)...")
+            device_name_data = await self._read_exact_with_buffer(meta_len, timeout=5.0)
+            if not device_name_data or len(device_name_data) != meta_len:
+                raise Exception("Failed to read device name")
+            
+            device_name = device_name_data.decode('utf-8', errors='ignore').rstrip('\x00')
+            logger.debug(f"Device name: {device_name}")
             
             # Try to read video codec metadata (12 bytes)
             # This will only succeed if this is the video socket
             try:
                 codec_data = await asyncio.wait_for(
-                    self._read_exact_with_buffer(12), timeout=3.0
+                    self._read_exact_with_buffer(12), timeout=5.0
                 )
                 if codec_data and len(codec_data) == 12:
                     codec_id, width, height = struct.unpack('>III', codec_data)
