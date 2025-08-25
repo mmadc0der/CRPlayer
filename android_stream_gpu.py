@@ -141,19 +141,68 @@ class GPUAndroidStreamer:
             text=True
         )
         
-        # Wait a moment and check if server started successfully
-        time.sleep(1)
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            print(f"Server failed to start:")
-            print(f"STDOUT: {stdout}")
-            print(f"STDERR: {stderr}")
-            raise RuntimeError(f"Server process exited with code {process.returncode}")
-        
+        # Don't kill server early - let it run and monitor continuously
         return process
     
+    def wait_for_server_ready(self, port: int, max_attempts: int = 30) -> bool:
+        """Wait for server to be ready and listening on port."""
+        for attempt in range(max_attempts):
+            try:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                result = sock.connect_ex(("localhost", port))
+                sock.close()
+                
+                if result == 0:
+                    print(f"Server ready on port {port} after {attempt + 1} attempts")
+                    return True
+                    
+            except Exception as e:
+                pass
+            
+            print(f"Attempt {attempt + 1}/{max_attempts}: Server not ready on port {port}")
+            time.sleep(1)
+        
+        return False
+    
+    def monitor_server_output(self):
+        """Monitor server stdout/stderr in background thread."""
+        if not self.scrcpy_process:
+            return
+        
+        def read_output():
+            while self.is_streaming and self.scrcpy_process and self.scrcpy_process.poll() is None:
+                try:
+                    # Check for stderr output
+                    if self.scrcpy_process.stderr:
+                        line = self.scrcpy_process.stderr.readline()
+                        if line:
+                            print(f"[SERVER STDERR] {line.strip()}")
+                    
+                    # Check for stdout output
+                    if self.scrcpy_process.stdout:
+                        line = self.scrcpy_process.stdout.readline()
+                        if line:
+                            print(f"[SERVER STDOUT] {line.strip()}")
+                            
+                except Exception as e:
+                    print(f"Error reading server output: {e}")
+                    break
+                
+                time.sleep(0.1)
+        
+        monitor_thread = threading.Thread(target=read_output, daemon=True)
+        monitor_thread.start()
+    
     def connect_video_socket(self, port: int) -> socket.socket:
-        """Connect to scrcpy video socket."""
+        """Connect to scrcpy video socket with server monitoring."""
+        # Wait for server to be ready
+        if not self.wait_for_server_ready(port):
+            raise RuntimeError(f"Server not ready on port {port} after waiting")
+        
+        # Start monitoring server output
+        self.monitor_server_output()
+        
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(10)  # 10 second timeout
         
@@ -256,9 +305,9 @@ class GPUAndroidStreamer:
             
             # Start scrcpy server
             self.scrcpy_process = self.start_scrcpy_server(scid)
-            time.sleep(3)  # Wait for server startup
+            print(f"Server process started with PID: {self.scrcpy_process.pid}")
             
-            # Connect to video socket
+            # Connect to video socket (includes server readiness check)
             self.video_socket = self.connect_video_socket(port)
             
             # Read codec metadata
