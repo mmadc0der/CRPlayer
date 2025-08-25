@@ -134,21 +134,33 @@ class DirectScrcpyServer:
     async def _start_server(self) -> bool:
         """Start scrcpy server process on device"""
         try:
-            # Server command based on py-scrcpy-client
+            # Server command - back to app_process with proper parameter format
+            # Based on py-scrcpy-client working implementation
             command = (
                 "CLASSPATH=/data/local/tmp/scrcpy-server.jar "
                 "app_process / com.genymobile.scrcpy.Server "
-                "2.4 log_level=info max_size=1600 max_fps=60 "
-                "video_bit_rate=20000000 video_encoder=OMX.google.h264.encoder "
-                "video_codec=h264 tunnel_forward=true send_frame_meta=false "
-                "control=true audio=false show_touches=false stay_awake=false "
-                "power_off_on_close=false clipboard_autosync=false"
+                "2.4 "
+                "log_level=info "
+                "max_size=1600 "
+                "max_fps=60 "
+                "video_bit_rate=20000000 "
+                "video_encoder=OMX.google.h264.encoder "
+                "video_codec=h264 "
+                "tunnel_forward=false "
+                "send_frame_meta=false "
+                "control=true "
+                "audio=false "
+                "show_touches=false "
+                "stay_awake=false "
+                "power_off_on_close=false "
+                "clipboard_autosync=false"
             )
             
             logger.info("Starting scrcpy server process in background...")
             
             # Start server process in background using nohup to prevent blocking
-            background_command = f"nohup {command} > /dev/null 2>&1 &"
+            # Need to use sh -c to properly handle environment variables with nohup
+            background_command = f"nohup sh -c '{command}' > /dev/null 2>&1 &"
             result = self.device.shell(background_command, timeout=5)
             logger.info(f"Server start command result: {result}")
             
