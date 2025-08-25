@@ -11,54 +11,85 @@ import sys
 def test_raw_socket_connection():
     """Test raw socket connection to scrcpy"""
     
-    # Get scrcpy port
+    # Get all ADB forwards
     result = subprocess.run(['adb', 'forward', '--list'], capture_output=True, text=True)
-    scrcpy_port = None
+    
+    # Try to find video socket - scrcpy might use different naming
+    video_ports = []
+    control_ports = []
     
     for line in result.stdout.strip().split('\n'):
         if 'localabstract:scrcpy' in line:
             parts = line.split()
             if len(parts) >= 2:
-                scrcpy_port = int(parts[1].split(':')[-1])
-                break
+                port = int(parts[1].split(':')[-1])
+                if 'video' in line:
+                    video_ports.append(port)
+                else:
+                    control_ports.append(port)
     
-    if not scrcpy_port:
-        print("❌ No scrcpy forward found")
-        print("Make sure scrcpy is running with video enabled")
-        return False
+    # Test control socket first (to confirm it's control-only)
+    if control_ports:
+        print(f"🎮 Testing control socket on port {control_ports[0]}...")
+        if test_single_port(control_ports[0], "control"):
+            print("✅ Control socket has data (unexpected!)")
+        else:
+            print("❌ Control socket has no video data (expected)")
     
-    print(f"✅ Found scrcpy forward on port: {scrcpy_port}")
+    # Look for video socket - scrcpy 3.x might use different approach
+    print(f"\n🎥 Looking for video socket...")
     
-    # Test socket connection
+    # Try common video socket patterns
+    video_socket_names = [
+        'localabstract:scrcpy_video',
+        'localabstract:scrcpy-video', 
+        'localabstract:scrcpy_stream',
+        'localfilesystem:/tmp/scrcpy_video'
+    ]
+    
+    for socket_name in video_socket_names:
+        print(f"🔍 Trying to create forward for {socket_name}...")
+        try:
+            # Try to create forward for video socket
+            port = 27185  # Use different port
+            result = subprocess.run([
+                'adb', 'forward', f'tcp:{port}', socket_name
+            ], capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                print(f"✅ Created forward for {socket_name} on port {port}")
+                if test_single_port(port, "video"):
+                    return True
+                # Clean up
+                subprocess.run(['adb', 'forward', '--remove', f'tcp:{port}'], capture_output=True)
+            else:
+                print(f"❌ Failed to forward {socket_name}: {result.stderr.strip()}")
+        except Exception as e:
+            print(f"❌ Error testing {socket_name}: {e}")
+    
+    print("❌ No video socket found with standard names")
+    return False
+
+def test_single_port(port, socket_type):
+    """Test a single port for data"""
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(5.0)
         
-        print(f"🔌 Connecting to localhost:{scrcpy_port}...")
-        sock.connect(('localhost', scrcpy_port))
-        print("✅ Socket connected successfully")
+        sock.connect(('localhost', port))
+        sock.settimeout(2.0)
         
-        # Try to read some data
-        sock.settimeout(3.0)
-        print("📡 Waiting for data...")
-        
-        try:
-            data = sock.recv(1024)
-            if data:
-                print(f"✅ Received {len(data)} bytes!")
-                print(f"📊 First 32 bytes: {data[:32].hex()}")
-                print(f"📊 Raw data preview: {data[:64]}")
-                return True
-            else:
-                print("❌ No data received (empty read)")
-                return False
-                
-        except socket.timeout:
-            print("❌ Timeout waiting for data")
+        data = sock.recv(1024)
+        if data:
+            print(f"✅ {socket_type} socket port {port}: received {len(data)} bytes!")
+            print(f"📊 First 32 bytes: {data[:32].hex()}")
+            return True
+        else:
+            print(f"❌ {socket_type} socket port {port}: no data")
             return False
             
     except Exception as e:
-        print(f"❌ Socket error: {e}")
+        print(f"❌ {socket_type} socket port {port}: {e}")
         return False
     finally:
         sock.close()
@@ -78,14 +109,23 @@ def check_scrcpy_status():
     else:
         print("❌ No scrcpy processes found")
     
-    # Check ADB forwards
+    # Check ALL ADB forwards (not just scrcpy)
     result = subprocess.run(['adb', 'forward', '--list'], capture_output=True, text=True)
-    print(f"\n📋 ADB forwards:")
+    print(f"\n📋 ALL ADB forwards:")
     if result.stdout.strip():
         for line in result.stdout.strip().split('\n'):
             print(f"  {line}")
+            # Look for video socket patterns
+            if 'scrcpy' in line and 'video' in line:
+                print("    ^ This might be the video socket!")
     else:
         print("  None")
+    
+    # Check device-side sockets
+    print(f"\n📱 Checking device sockets...")
+    result = subprocess.run(['adb', 'shell', 'ls', '/data/local/tmp/'], capture_output=True, text=True)
+    if 'scrcpy' in result.stdout:
+        print("✅ scrcpy server files found on device")
     
     # Check listening ports
     result = subprocess.run(['netstat', '-tlpn'], capture_output=True, text=True)
@@ -97,6 +137,19 @@ def check_scrcpy_status():
             print(f"  {port}")
     else:
         print("\n❌ No scrcpy ports listening")
+    
+    # Try to find video socket
+    print(f"\n🎥 Looking for video socket...")
+    # scrcpy typically uses scrcpy_video for video stream
+    result = subprocess.run(['adb', 'shell', 'netstat', '-l'], capture_output=True, text=True)
+    if result.returncode == 0:
+        video_sockets = [line for line in result.stdout.split('\n') if 'scrcpy' in line]
+        if video_sockets:
+            print("📱 Device-side scrcpy sockets:")
+            for sock in video_sockets:
+                print(f"  {sock}")
+        else:
+            print("❌ No scrcpy sockets found on device")
 
 def main():
     print("🔍 Testing scrcpy socket connection...")
