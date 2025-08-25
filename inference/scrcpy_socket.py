@@ -50,19 +50,25 @@ class ScrcpySocketDemux:
             # Setup ADB port forward
             await self._setup_adb_forward()
             
-            # Connect to video socket
-            self.reader, self.writer = await asyncio.open_connection(
-                'localhost', self.adb_port
+            # Connect to video socket with timeout
+            self.reader, self.writer = await asyncio.wait_for(
+                asyncio.open_connection('localhost', self.adb_port),
+                timeout=5.0
             )
             
-            # Read and validate device metadata
-            await self._read_device_metadata()
+            # Read and validate device metadata with timeout
+            await asyncio.wait_for(self._read_device_metadata(), timeout=3.0)
             
             self._connected = True
             self._stats['start_time'] = time.time()
             logger.info(f"Connected to scrcpy video socket on port {self.adb_port}")
             return True
             
+        except asyncio.TimeoutError:
+            logger.error("Timeout connecting to scrcpy - make sure scrcpy is running WITH video enabled")
+            logger.error("Use: scrcpy --no-audio --max-fps=60 --max-size=1600 --video-bit-rate=20M")
+            await self.disconnect()
+            return False
         except Exception as e:
             logger.error(f"Failed to connect to scrcpy socket: {e}")
             await self.disconnect()
@@ -119,19 +125,32 @@ class ScrcpySocketDemux:
             
             if existing_forward:
                 self.adb_port = int(existing_forward)
-                logger.info(f"Using existing scrcpy forward on port: {self.adb_port}")
+                logger.info(f"Found scrcpy forward on port: {self.adb_port}")
             else:
-                # Setup new forward - but scrcpy should already be running
-                logger.warning("No existing scrcpy forward found - make sure scrcpy is running")
-                cmd = ['adb']
-                if self.device_id:
-                    cmd.extend(['-s', self.device_id])
-                cmd.extend([
-                    'forward', f'tcp:{self.adb_port}', 'localabstract:scrcpy'
-                ])
+                # Clean up any stale forwards first
+                logger.info("Cleaning up stale ADB forwards...")
+                subprocess.run([
+                    'adb', 'forward', '--remove-all'
+                ], capture_output=True)
                 
-                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-                logger.info(f"ADB forward setup: {result.stdout.strip()}")
+                # Find available port starting from 27183
+                for port in range(27183, 27200):
+                    try:
+                        cmd = ['adb']
+                        if self.device_id:
+                            cmd.extend(['-s', self.device_id])
+                        cmd.extend([
+                            'forward', f'tcp:{port}', 'localabstract:scrcpy'
+                        ])
+                        
+                        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                        self.adb_port = port
+                        logger.info(f"Created new scrcpy forward on port: {self.adb_port}")
+                        break
+                    except subprocess.CalledProcessError:
+                        continue
+                else:
+                    raise ScrcpyProtocolError("No available ports for ADB forward")
             
         except subprocess.CalledProcessError as e:
             raise ScrcpyProtocolError(f"ADB forward failed: {e.stderr}")
