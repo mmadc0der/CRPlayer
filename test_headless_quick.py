@@ -37,9 +37,9 @@ async def test_headless():
         await asyncio.sleep(5)
         
         # Override SCID detection
-        demux._get_scrcpy_scid = lambda: asyncio.create_task(
-            asyncio.coroutine(lambda: manager.scid)()
-        )
+        async def get_scid():
+            return manager.scid
+        demux._get_scrcpy_scid = get_scid
         
         # Try connection
         print("Attempting socket connection...")
