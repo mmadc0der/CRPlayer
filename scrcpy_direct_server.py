@@ -163,20 +163,14 @@ class DirectScrcpyServer:
             
             logger.info("Starting scrcpy server process in background...")
             
-            # Test the command directly first to see if it works
-            logger.info(f"Testing server command: {command}")
-            test_result = self.device.shell(f"sh -c '{command}' 2>&1", timeout=10)
-            logger.info(f"Direct command test result:\n{test_result}")
+            # Start server in background immediately - it will wait for our connection
+            logger.info("Starting server in background (it will wait for connection)...")
+            background_command = f"nohup sh -c '{command}' > /data/local/tmp/scrcpy.log 2>&1 &"
+            result = self.device.shell(background_command, timeout=5)
+            logger.info(f"Background command result: {result}")
             
-            # If direct test works, try background execution
-            if "ERROR" not in test_result and "Exception" not in test_result:
-                logger.info("Direct command succeeded, trying background execution...")
-                background_command = f"nohup sh -c '{command}' > /data/local/tmp/scrcpy.log 2>&1 &"
-                result = self.device.shell(background_command, timeout=5)
-                logger.info(f"Background command result: {result}")
-            else:
-                logger.error("Direct command failed, not attempting background execution")
-                return False
+            # Give server a moment to start
+            await asyncio.sleep(2)
             
             # Wait for server to initialize
             logger.info("Waiting for server to initialize...")
