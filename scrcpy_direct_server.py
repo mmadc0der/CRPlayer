@@ -158,15 +158,29 @@ class DirectScrcpyServer:
             
             logger.info("Starting scrcpy server process in background...")
             
-            # Start server process in background using nohup to prevent blocking
-            # Need to use sh -c to properly handle environment variables with nohup
-            background_command = f"nohup sh -c '{command}' > /dev/null 2>&1 &"
+            # Start server process in background and capture stderr for debugging
+            # Redirect stderr to a file so we can read the actual errors
+            background_command = f"nohup sh -c '{command}' > /data/local/tmp/scrcpy.log 2>&1 &"
             result = self.device.shell(background_command, timeout=5)
             logger.info(f"Server start command result: {result}")
             
             # Wait for server to initialize
             logger.info("Waiting for server to initialize...")
-            await asyncio.sleep(5)
+            await asyncio.sleep(3)
+            
+            # Read the log file to see what happened
+            try:
+                log_output = self.device.shell("cat /data/local/tmp/scrcpy.log", timeout=5)
+                if log_output.strip():
+                    logger.info(f"Server log output:\n{log_output}")
+                else:
+                    logger.info("No log output yet, waiting longer...")
+                    await asyncio.sleep(2)
+                    log_output = self.device.shell("cat /data/local/tmp/scrcpy.log", timeout=5)
+                    if log_output.strip():
+                        logger.info(f"Server log output (after delay):\n{log_output}")
+            except Exception as e:
+                logger.warning(f"Could not read server log: {e}")
             
             # Check if server process is running
             ps_result = self.device.shell("ps | grep scrcpy", timeout=5)
