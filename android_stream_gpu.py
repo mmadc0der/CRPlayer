@@ -90,7 +90,7 @@ class GPUAndroidStreamer:
         # Push scrcpy server to device
         server_locations = [
             "/usr/share/scrcpy/scrcpy-server",
-            "/usr/local/share/scrcpy/scrcpy-server", 
+            "/usr/local/bin/scrcpy-server", 
             "/opt/scrcpy/scrcpy-server"
         ]
         
