@@ -67,19 +67,28 @@ class GPUAndroidStreamer:
         # Callbacks
         self.frame_callback: Optional[Callable] = None
         
-    def setup_adb_tunnel(self) -> tuple:
-        """Setup ADB tunnel for scrcpy connection."""
-        import random
-        port = random.randint(27183, 27283)
-        scid = random.randint(1, 2**31 - 1)  # 31-bit random number
+    def setup_adb_tunnel(self) -> Tuple[int, int]:
+        """Setup ADB reverse tunnel for scrcpy connection."""
+        # Generate random port and session ID
+        port = random.randint(27000, 28000)
+        scid = random.randint(0x10000000, 0xFFFFFFFF)
         
-        device_arg = f"-s {self.device_id}" if self.device_id else ""
-        # Use reverse tunnel - device connects to computer
-        cmd = f"adb {device_arg} reverse localabstract:scrcpy_{scid:08x} tcp:{port}"
+        # Setup reverse tunnel
+        tunnel_cmd = ["adb", "reverse", f"tcp:{port}", f"tcp:{port}"]
+        print(f"Setting up ADB tunnel: {' '.join(tunnel_cmd)}")
+        result = subprocess.run(tunnel_cmd, capture_output=True, text=True)
         
-        result = subprocess.run(cmd.split(), capture_output=True, text=True)
         if result.returncode != 0:
+            print(f"ADB tunnel failed - STDOUT: {result.stdout}")
+            print(f"ADB tunnel failed - STDERR: {result.stderr}")
             raise RuntimeError(f"Failed to setup ADB tunnel: {result.stderr}")
+        
+        print(f" ADB tunnel setup: localhost:{port} -> device:{port}")
+        
+        # Verify tunnel is active
+        list_cmd = ["adb", "reverse", "--list"]
+        list_result = subprocess.run(list_cmd, capture_output=True, text=True)
+        print(f"Active tunnels: {list_result.stdout.strip()}")
         
         return port, scid
     
@@ -141,7 +150,15 @@ class GPUAndroidStreamer:
             text=True
         )
         
-        # Don't kill server early - let it run and monitor continuously
+        # Check if server process actually started
+        time.sleep(0.5)
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            print(f"Server failed to start:")
+            print(f"STDOUT: {stdout}")
+            print(f"STDERR: {stderr}")
+            raise RuntimeError(f"Server process exited with code {process.returncode}")
+        
         return process
     
     def wait_for_server_ready(self, port: int, max_attempts: int = 30) -> bool:
@@ -165,39 +182,81 @@ class GPUAndroidStreamer:
         
         return False
     
+    def check_server_status(self):
+        """Check actual server process status and output."""
+        if not self.scrcpy_process:
+            print("No server process found")
+            return
+        
+        poll_result = self.scrcpy_process.poll()
+        print(f"Server process status: {'Running' if poll_result is None else f'Exited with code {poll_result}'}")
+        
+        if poll_result is not None:
+            # Process has exited, get output
+            try:
+                stdout, stderr = self.scrcpy_process.communicate(timeout=1)
+                if stdout:
+                    print(f"[SERVER STDOUT] {stdout}")
+                if stderr:
+                    print(f"[SERVER STDERR] {stderr}")
+            except subprocess.TimeoutExpired:
+                print("Timeout reading server output")
+    
     def monitor_server_output(self):
         """Monitor server stdout/stderr in background thread."""
         if not self.scrcpy_process:
             return
         
         def read_output():
-            while self.is_streaming and self.scrcpy_process and self.scrcpy_process.poll() is None:
+            print("Starting server output monitoring...")
+            while self.is_streaming and self.scrcpy_process:
                 try:
-                    # Check for stderr output
-                    if self.scrcpy_process.stderr:
-                        line = self.scrcpy_process.stderr.readline()
-                        if line:
-                            print(f"[SERVER STDERR] {line.strip()}")
+                    poll_result = self.scrcpy_process.poll()
+                    if poll_result is not None:
+                        print(f"Server process exited with code: {poll_result}")
+                        # Get remaining output
+                        try:
+                            stdout, stderr = self.scrcpy_process.communicate(timeout=1)
+                            if stdout:
+                                print(f"[SERVER STDOUT] {stdout}")
+                            if stderr:
+                                print(f"[SERVER STDERR] {stderr}")
+                        except subprocess.TimeoutExpired:
+                            pass
+                        break
                     
-                    # Check for stdout output
-                    if self.scrcpy_process.stdout:
-                        line = self.scrcpy_process.stdout.readline()
-                        if line:
-                            print(f"[SERVER STDOUT] {line.strip()}")
-                            
+                    # Try to read output non-blocking
+                    import select
+                    import sys
+                    
+                    if sys.platform != 'win32':
+                        # Unix-like systems
+                        ready, _, _ = select.select([self.scrcpy_process.stdout, self.scrcpy_process.stderr], [], [], 0.1)
+                        for stream in ready:
+                            line = stream.readline()
+                            if line:
+                                stream_name = "STDOUT" if stream == self.scrcpy_process.stdout else "STDERR"
+                                print(f"[SERVER {stream_name}] {line.strip()}")
+                    else:
+                        # Windows - use polling approach
+                        time.sleep(0.5)
+                        
                 except Exception as e:
-                    print(f"Error reading server output: {e}")
+                    print(f"Error monitoring server: {e}")
                     break
-                
-                time.sleep(0.1)
         
         monitor_thread = threading.Thread(target=read_output, daemon=True)
         monitor_thread.start()
     
     def connect_video_socket(self, port: int) -> socket.socket:
         """Connect to scrcpy video socket with server monitoring."""
+        # Check server status before waiting
+        self.check_server_status()
+        
         # Wait for server to be ready
         if not self.wait_for_server_ready(port):
+            print("Server readiness check failed, checking status again...")
+            self.check_server_status()
             raise RuntimeError(f"Server not ready on port {port} after waiting")
         
         # Start monitoring server output
@@ -306,17 +365,6 @@ class GPUAndroidStreamer:
             # Start scrcpy server
             self.scrcpy_process = self.start_scrcpy_server(scid)
             print(f"Server process started with PID: {self.scrcpy_process.pid}")
-            
-            # Check server process status immediately
-            time.sleep(0.5)
-            if self.scrcpy_process.poll() is not None:
-                stdout, stderr = self.scrcpy_process.communicate()
-                print(f" Server process exited early with code: {self.scrcpy_process.returncode}")
-                print(f"STDOUT: {stdout}")
-                print(f"STDERR: {stderr}")
-                raise RuntimeError(f"Server process failed to start")
-            
-            print(f" Server process running, checking port availability...")
             
             # Connect to video socket (includes server readiness check)
             self.video_socket = self.connect_video_socket(port)
