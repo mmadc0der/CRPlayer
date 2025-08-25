@@ -305,43 +305,23 @@ class ScrcpySocketDemux:
             # Read device metadata length (4 bytes)
             logger.debug("Reading device metadata length...")
             
-            # First, let's see what data is available
+            # Wait for initial data - in headless mode (--no-audio --no-control), 
+            # the video socket is the FIRST socket and receives device metadata
+            logger.debug("Waiting for device metadata (video socket is first in headless mode)...")
+            
+            # Give scrcpy more time to send metadata in headless mode
             try:
-                # Try to peek at available data with longer timeout for scrcpy 3.3.1
-                logger.debug("Waiting for initial data from scrcpy socket...")
-                available_data = await asyncio.wait_for(self.reader.read(64), timeout=3.0)
+                available_data = await asyncio.wait_for(self.reader.read(64), timeout=5.0)
                 if available_data:
                     logger.debug(f"Raw data received ({len(available_data)} bytes): {available_data.hex()}")
-                    logger.debug(f"Raw data as text (first 32 chars): {available_data[:32]}")
-                    # Put it back in buffer
+                    # Put it back in buffer for proper parsing
                     self._initial_buffer = available_data + self._initial_buffer
-                    
-                    # Check if this looks like a video frame header instead of metadata
-                    if len(available_data) >= 12:
-                        # Try to parse as video frame header (12 bytes: 8-byte PTS + 4-byte size)
-                        try:
-                            pts_with_flags = struct.unpack('>Q', available_data[:8])[0]
-                            packet_size = struct.unpack('>I', available_data[8:12])[0]
-                            
-                            # Check if this looks like a valid frame header
-                            if packet_size > 0 and packet_size < 1024*1024:  # Reasonable frame size
-                                logger.info("Detected headless scrcpy mode - skipping metadata, going directly to video frames")
-                                # Set some default stats for headless mode
-                                self._stats['codec_info'] = "H264 (headless mode)"
-                                self._stats['device_name'] = "Headless Device"
-                                return  # Skip metadata parsing, go directly to frame reading
-                        except:
-                            pass  # Not a frame header, continue with metadata parsing
                 else:
                     logger.debug("No data available from socket")
                     raise Exception("Socket closed or no data available")
             except asyncio.TimeoutError:
-                logger.debug("Timeout waiting for initial data - may be headless scrcpy with delayed start")
-                # For headless mode, try to continue without metadata
-                logger.info("Assuming headless scrcpy mode - skipping metadata validation")
-                self._stats['codec_info'] = "H264 (headless mode - no metadata)"
-                self._stats['device_name'] = "Headless Device"
-                return
+                logger.error("Timeout waiting for device metadata - scrcpy may not be ready")
+                raise Exception("No device metadata received - scrcpy may not be fully started")
             
             meta_len_data = await self._read_exact_with_buffer(4, timeout=5.0)
             if not meta_len_data or len(meta_len_data) != 4:
