@@ -1,215 +1,199 @@
 #!/usr/bin/env python3
 """
-Complete Headless Scrcpy Pipeline - Integrated solution for zero-copy video streaming
+Scrcpy Headless Manager - Start scrcpy without display for exclusive video access
 """
 
 import asyncio
+import subprocess
 import logging
 import time
+import signal
+import os
 from typing import Optional
-from scrcpy_headless import ScrcpyHeadlessManager
-from inference.scrcpy_socket import ScrcpySocketDemux
-from inference.nal_distributor import (
-    NALDistributor, 
-    create_rl_consumer, 
-    create_monitor_consumer, 
-    create_replay_consumer
-)
 
 logger = logging.getLogger(__name__)
 
-class HeadlessScrcpyPipeline:
-    """Complete pipeline with headless scrcpy and zero-copy distribution"""
+class ScrcpyHeadlessManager:
+    """Manage headless scrcpy instance for exclusive video streaming"""
     
     def __init__(self, device_id: Optional[str] = None):
         self.device_id = device_id
+        self.process: Optional[subprocess.Popen] = None
+        self.scid = None  # Will be detected from running process
         
-        # Core components
-        self.scrcpy_manager = ScrcpyHeadlessManager(device_id)
-        self.socket_demux = ScrcpySocketDemux()
-        self.distributor = NALDistributor()
-        
-        # Pipeline state
-        self._running = False
-        self._stream_task: Optional[asyncio.Task] = None
-        self._stats_task: Optional[asyncio.Task] = None
-        
-        # Override SCID detection to use detected SCID from headless manager
-        self.socket_demux._get_scrcpy_scid = self._get_detected_scid
-        
-    async def _get_detected_scid(self) -> str:
-        """Return the detected SCID from headless manager"""
-        return self.scrcpy_manager.scid
-    
     async def start(self) -> bool:
-        """Start the complete headless pipeline"""
-        if self._running:
-            logger.warning("Pipeline already running")
-            return True
-        
+        """Start headless scrcpy instance"""
         try:
-            # Start headless scrcpy
-            logger.info("Starting headless scrcpy...")
-            if not await self.scrcpy_manager.start():
-                logger.error("Failed to start headless scrcpy")
+            # Kill any existing scrcpy processes
+            await self._cleanup_existing()
+            
+            # Build scrcpy command for headless operation
+            cmd = [
+                'scrcpy',
+                '--no-audio',     # No audio
+                '--no-control',   # No input control
+                '--max-fps=60',
+                '--max-size=1600', 
+                '--video-bit-rate=20M'
+            ]
+            
+            if self.device_id:
+                cmd.extend(['-s', self.device_id])
+            
+            logger.info(f"Starting headless scrcpy: {' '.join(cmd)}")
+            
+            # Start process
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid if os.name != 'nt' else None
+            )
+            
+            # Wait for startup
+            await asyncio.sleep(3)
+            
+            # Check if process is still running
+            if self.process.poll() is None:
+                logger.info("Headless scrcpy started successfully")
+                
+                # Detect the SCID from the running process
+                await self._detect_scid()
+                
+                return True
+            else:
+                stdout, stderr = self.process.communicate()
+                logger.error(f"Scrcpy failed to start: {stderr.decode()}")
                 return False
-            
-            # Wait for scrcpy to be ready
-            await asyncio.sleep(2)
-            
-            # Connect socket demux
-            logger.info("Connecting to scrcpy socket...")
-            if not await self.socket_demux.connect():
-                logger.error("Failed to connect to scrcpy socket")
-                await self.scrcpy_manager.stop()
-                return False
-            
-            # Start distributor
-            self.distributor.start()
-            
-            # Start pipeline tasks
-            self._running = True
-            self._stream_task = asyncio.create_task(self._stream_loop())
-            self._stats_task = asyncio.create_task(self._stats_loop())
-            
-            logger.info("Headless scrcpy pipeline started successfully")
-            return True
-            
+                
         except Exception as e:
-            logger.error(f"Failed to start pipeline: {e}")
-            await self.stop()
+            logger.error(f"Failed to start headless scrcpy: {e}")
             return False
     
     async def stop(self):
-        """Stop the complete pipeline"""
-        if not self._running:
-            return
-        
-        logger.info("Stopping headless scrcpy pipeline...")
-        self._running = False
-        
-        # Cancel tasks
-        if self._stream_task:
-            self._stream_task.cancel()
+        """Stop headless scrcpy instance"""
+        if self.process:
             try:
-                await self._stream_task
-            except asyncio.CancelledError:
-                pass
-        
-        if self._stats_task:
-            self._stats_task.cancel()
-            try:
-                await self._stats_task
-            except asyncio.CancelledError:
-                pass
-        
-        # Stop components
-        self.distributor.stop()
-        await self.socket_demux.disconnect()
-        await self.scrcpy_manager.stop()
-        
-        logger.info("Headless scrcpy pipeline stopped")
-    
-    async def _stream_loop(self):
-        """Main streaming loop"""
-        try:
-            logger.info("Starting video stream processing...")
+                if os.name == 'nt':
+                    self.process.terminate()
+                else:
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                
+                # Wait for graceful shutdown
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    if os.name == 'nt':
+                        self.process.kill()
+                    else:
+                        os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
+                
+                logger.info("Headless scrcpy stopped")
+                
+            except Exception as e:
+                logger.error(f"Error stopping scrcpy: {e}")
             
-            async for nal_unit in self.socket_demux.stream_nal_units():
-                if not self._running:
-                    break
-                
-                # Distribute NAL unit to consumers
-                await self.distributor.distribute_nal_unit(nal_unit)
-                
-        except asyncio.CancelledError:
-            logger.info("Stream loop cancelled")
-        except Exception as e:
-            logger.error(f"Error in stream loop: {e}")
-            raise
+            self.process = None
     
-    async def _stats_loop(self):
-        """Statistics reporting loop"""
+    async def _cleanup_existing(self):
+        """Kill existing scrcpy processes"""
         try:
-            while self._running:
-                await asyncio.sleep(5)  # Report every 5 seconds
-                
-                # Get stats from components
-                socket_stats = self.socket_demux.get_stats()
-                distributor_stats = self.distributor.get_stats()
-                
-                logger.info(f"Pipeline Stats - "
-                           f"Frames: {socket_stats.get('frames_received', 0)}, "
-                           f"FPS: {socket_stats.get('fps', 0):.1f}, "
-                           f"Bitrate: {socket_stats.get('bitrate_kbps', 0):.0f} kbps, "
-                           f"Consumers: {len(distributor_stats.get('consumers', {}))}")
-                
-        except asyncio.CancelledError:
-            logger.info("Stats loop cancelled")
+            if os.name == 'nt':
+                subprocess.run(['taskkill', '/f', '/im', 'scrcpy.exe'], 
+                             capture_output=True, check=False)
+            else:
+                subprocess.run(['pkill', '-f', 'scrcpy'], 
+                             capture_output=True, check=False)
+            
+            # Wait for cleanup
+            await asyncio.sleep(2)
+            
         except Exception as e:
-            logger.error(f"Error in stats loop: {e}")
+            logger.warning(f"Error cleaning up existing scrcpy: {e}")
     
-    # Consumer management methods
-    async def add_rl_consumer(self, name: str = "rl_training"):
-        """Add RL training consumer"""
-        consumer = create_rl_consumer(name)
-        await self.distributor.add_consumer(consumer)
-        logger.info(f"Added RL consumer: {name}")
-        return consumer
+    async def _detect_scid(self):
+        """Detect SCID from running scrcpy process"""
+        try:
+            # Try Windows tasklist first
+            if os.name == 'nt':
+                result = subprocess.run(['wmic', 'process', 'get', 'commandline'], 
+                                      capture_output=True, text=True)
+            else:
+                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+                
+            for line in result.stdout.split('\n'):
+                if 'scrcpy-server.jar' in line and 'scid=' in line:
+                    parts = line.split()
+                    for part in parts:
+                        if part.startswith('scid='):
+                            scid_value = part.split('=')[1]
+                            # Validate SCID is valid hex format (8 characters)
+                            try:
+                                # SCID can be hex string or decimal - handle both
+                                if len(scid_value) == 8 and all(c in '0123456789abcdefABCDEF' for c in scid_value):
+                                    # Already in hex format
+                                    self.scid = scid_value.lower()
+                                else:
+                                    # Try as decimal and convert to hex
+                                    scid_int = int(scid_value)
+                                    self.scid = format(scid_int, '08x')
+                                logger.info(f"Detected SCID: {self.scid} -> socket: {self.get_socket_name()}")
+                                return
+                            except ValueError:
+                                logger.warning(f"Invalid SCID format: {scid_value}")
+                                continue
+            logger.warning("Could not detect SCID from process")
+        except Exception as e:
+            logger.error(f"Error detecting SCID: {e}")
     
-    async def add_monitor_consumer(self, name: str = "monitor"):
-        """Add monitoring consumer"""
-        consumer = create_monitor_consumer(name)
-        await self.distributor.add_consumer(consumer)
-        logger.info(f"Added monitor consumer: {name}")
-        return consumer
+    def get_socket_name(self) -> str:
+        """Get the socket name for this headless instance (scrcpy 2.0+ format)"""
+        if self.scid:
+            # SCID is already in hex format
+            return f"localabstract:scrcpy_{self.scid}"
+        else:
+            return "localabstract:scrcpy"
     
-    async def add_replay_consumer(self, name: str = "replay"):
-        """Add replay consumer"""
-        consumer = create_replay_consumer(name)
-        await self.distributor.add_consumer(consumer)
-        logger.info(f"Added replay consumer: {name}")
-        return consumer
-    
-    def get_stats(self):
-        """Get comprehensive pipeline statistics"""
-        return {
-            'scrcpy_running': self.scrcpy_manager.is_running(),
-            'socket_connected': self.socket_demux._connected,
-            'distributor_running': self.distributor._running,
-            'socket_stats': self.socket_demux.get_stats(),
-            'distributor_stats': self.distributor.get_stats()
-        }
+    def is_running(self) -> bool:
+        """Check if headless scrcpy is running"""
+        return self.process is not None and self.process.poll() is None
 
-# Test the complete pipeline
-async def test_headless_pipeline():
-    """Test the complete headless pipeline"""
-    pipeline = HeadlessScrcpyPipeline()
+# Test the headless manager
+async def test_headless():
+    manager = ScrcpyHeadlessManager()
     
     try:
-        # Start pipeline
-        if await pipeline.start():
-            logger.info("Pipeline started successfully!")
+        if await manager.start():
+            logger.info("Headless scrcpy is running")
             
-            # Add consumers
-            await pipeline.add_monitor_consumer("test_monitor")
-            await pipeline.add_rl_consumer("test_rl")
+            # Test connection
+            from inference.scrcpy_socket import ScrcpySocketDemux
+            demux = ScrcpySocketDemux()
             
-            # Run for 30 seconds
-            logger.info("Running pipeline for 30 seconds...")
-            await asyncio.sleep(30)
+            # Override the SCID detection to use our fixed SCID
+            demux._get_scrcpy_scid = lambda: asyncio.create_task(
+                asyncio.coroutine(lambda: manager.scid)()
+            )
             
-            # Print final stats
-            stats = pipeline.get_stats()
-            logger.info(f"Final stats: {stats}")
-            
-        else:
-            logger.error("Failed to start pipeline")
-    
+            if await demux.connect():
+                logger.info("Successfully connected to headless scrcpy!")
+                
+                # Read a few frames
+                frame_count = 0
+                async for nal_unit in demux.stream_nal_units():
+                    frame_count += 1
+                    logger.info(f"Frame {frame_count}: {len(nal_unit.data)} bytes, "
+                               f"keyframe={nal_unit.is_keyframe}")
+                    if frame_count >= 5:
+                        break
+                
+                await demux.disconnect()
+            else:
+                logger.error("Failed to connect to headless scrcpy")
+        
     finally:
-        await pipeline.stop()
+        await manager.stop()
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, 
-                       format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    asyncio.run(test_headless_pipeline())
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(test_headless())
