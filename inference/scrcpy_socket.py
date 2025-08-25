@@ -146,19 +146,25 @@ class ScrcpySocketDemux:
             
             # Read device metadata length (4 bytes)
             logger.debug("Attempting to read 4-byte metadata length...")
-            meta_len_data = await self._read_exact(4)
+            meta_len_data = await self._read_exact(4, timeout=2.0)
             if not meta_len_data:
-                # Try to read any available data to debug
+                # Try to read any available data to debug what's actually coming
                 logger.debug("No metadata length received, checking for any data...")
                 try:
                     any_data = await asyncio.wait_for(self.reader.read(100), timeout=1.0)
                     if any_data:
                         logger.debug(f"Received unexpected data: {len(any_data)} bytes: {any_data.hex()}")
+                        logger.debug(f"First 20 bytes as text: {any_data[:20]}")
                     else:
                         logger.debug("No data available at all")
                 except asyncio.TimeoutError:
                     logger.debug("Timeout - no data available")
-                raise Exception("Failed to read metadata length")
+                
+                # Check if socket is still connected
+                if self.reader.at_eof():
+                    raise Exception("Socket closed by remote end")
+                else:
+                    raise Exception("Timeout reading metadata length - socket connected but no data")
             
             meta_len = struct.unpack('>I', meta_len_data)[0]
             logger.debug(f"Device metadata length: {meta_len} (hex: {meta_len_data.hex()})")
@@ -240,17 +246,22 @@ class ScrcpySocketDemux:
             logger.error(f"Error reading frame: {e}")
             return None
     
-    async def _read_exact(self, size: int) -> Optional[bytes]:
+    async def _read_exact(self, size: int, timeout: float = 5.0) -> Optional[bytes]:
         """Read exact number of bytes from socket"""
         data = b''
         while len(data) < size:
-            chunk = await asyncio.wait_for(
-                self.reader.read(size - len(data)), 
-                timeout=5.0
-            )
-            if not chunk:
+            try:
+                chunk = await asyncio.wait_for(
+                    self.reader.read(size - len(data)), 
+                    timeout=timeout
+                )
+                if not chunk:
+                    logger.debug(f"Socket closed while reading {size} bytes (got {len(data)} so far)")
+                    return None
+                data += chunk
+            except asyncio.TimeoutError:
+                logger.debug(f"Timeout reading {size} bytes (got {len(data)} so far, timeout={timeout}s)")
                 return None
-            data += chunk
         return data
     
     def get_stats(self) -> Dict[str, Any]:
