@@ -164,50 +164,65 @@ class ScrcpySocketDemux:
             raise ScrcpyProtocolError(f"Failed to read initial data: {e}")
     
     async def _read_next_frame(self) -> Optional[NALUnit]:
-        """Read next video frame from scrcpy socket"""
+        """Read next video frame from scrcpy socket with proper protocol"""
         try:
-            # Use initial buffer if available
-            if self._initial_buffer:
-                data = self._initial_buffer
-                self._initial_buffer = b''
-                logger.info(f"Processing initial buffer: {len(data)} bytes")
-                
-                # Try to find frame boundaries in initial data
-                nal_data = self._extract_nal_from_raw(data)
-                if nal_data:
-                    is_keyframe = self._is_keyframe(nal_data)
-                    return NALUnit(
-                        data=nal_data,
-                        pts=0,  # Unknown PTS for initial data
-                        size=len(nal_data),
-                        timestamp=time.time(),
-                        is_keyframe=is_keyframe
-                    )
-            
-            # Try to read raw data and find NAL units
-            data = await asyncio.wait_for(self.reader.read(8192), timeout=0.1)
-            if not data:
+            # Read 12-byte frame header
+            header_data = await self._read_exact(12)
+            if not header_data:
                 return None
             
-            # Extract NAL units from raw data
-            nal_data = self._extract_nal_from_raw(data)
-            if nal_data:
-                is_keyframe = self._is_keyframe(nal_data)
-                return NALUnit(
-                    data=nal_data,
-                    pts=int(time.time() * 1000000),  # Generate PTS from timestamp
-                    size=len(nal_data),
-                    timestamp=time.time(),
-                    is_keyframe=is_keyframe
-                )
+            # Parse frame header according to scrcpy protocol
+            # Bytes 0-7: PTS with flags in MSBs
+            # Bytes 8-11: packet size
+            pts_with_flags = struct.unpack('>Q', header_data[:8])[0]
+            packet_size = struct.unpack('>I', header_data[8:12])[0]
             
-            return None
+            # Extract flags from PTS
+            config_packet = bool(pts_with_flags & (1 << 63))
+            key_frame = bool(pts_with_flags & (1 << 62))
+            pts = pts_with_flags & ((1 << 62) - 1)  # Clear flag bits
+            
+            # Read packet data
+            packet_data = await self._read_exact(packet_size)
+            if not packet_data:
+                logger.warning(f"Failed to read packet data ({packet_size} bytes)")
+                return None
+            
+            self.stats.bytes_received += len(header_data) + len(packet_data)
+            self.stats.frames_received += 1
+            
+            if key_frame:
+                self.stats.keyframes_received += 1
+            
+            # Create NAL unit
+            nal_unit = NALUnit(
+                data=packet_data,
+                timestamp=pts / 1000000.0,  # Convert to seconds
+                is_keyframe=key_frame,
+                frame_type="IDR" if key_frame else "P"
+            )
+            
+            logger.debug(f"Frame: size={packet_size}, pts={pts}, keyframe={key_frame}, config={config_packet}")
+            return nal_unit
             
         except asyncio.TimeoutError:
             return None
         except Exception as e:
             logger.error(f"Error reading frame: {e}")
             return None
+    
+    async def _read_exact(self, size: int) -> Optional[bytes]:
+        """Read exact number of bytes from socket"""
+        data = b''
+        while len(data) < size:
+            chunk = await asyncio.wait_for(
+                self.reader.read(size - len(data)), 
+                timeout=5.0
+            )
+            if not chunk:
+                return None
+            data += chunk
+        return data
     
     def _to_annexb(self, frame_data: bytes) -> bytes:
         """Convert scrcpy frame data to Annex-B format with start codes"""
