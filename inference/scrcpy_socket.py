@@ -51,14 +51,17 @@ class ScrcpySocketDemux:
                               capture_output=True, text=True, check=True)
         
         # Find existing scrcpy forward (could be scrcpy or scrcpy_<SCID>)
+        # ADB forward format: "device_id tcp:port localabstract:socket_name"
         for line in result.stdout.strip().split('\n'):
-            if 'localabstract:scrcpy' in line:
+            if 'localabstract:scrcpy' in line and line.strip():
                 parts = line.split()
-                if len(parts) >= 2:  # tcp:port localabstract:socket_name
-                    self.adb_port = int(parts[0].split(':')[-1])
-                    socket_name = parts[1]
-                    logger.info(f"Found existing scrcpy forward: {socket_name} -> port {self.adb_port}")
-                    return
+                if len(parts) >= 3:  # device_id tcp:port localabstract:socket_name
+                    port_part = parts[1]  # tcp:port
+                    socket_name = parts[2]  # localabstract:socket_name
+                    if port_part.startswith('tcp:'):
+                        self.adb_port = int(port_part.split(':')[1])
+                        logger.info(f"Found existing scrcpy forward: {socket_name} -> port {self.adb_port}")
+                        return
         
         raise Exception("No scrcpy forward found - make sure scrcpy is running")
 
