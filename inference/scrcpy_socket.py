@@ -71,7 +71,7 @@ class ScrcpySocketDemux:
                     port_part = parts[1]
                     if port_part.startswith('tcp:'):
                         self.adb_port = int(port_part.split(':')[1])
-                        logger.info(f"✓ Found existing forward: tcp:{self.adb_port} -> {correct_socket}")
+                        logger.info(f"[OK] Found existing forward: tcp:{self.adb_port} -> {correct_socket}")
                         return
         
         # Create new forward tunnel
@@ -80,10 +80,11 @@ class ScrcpySocketDemux:
             'adb', 'forward', f'tcp:{self.adb_port}', correct_socket
         ], capture_output=True, text=True)
         
-        if result.returncode != 0:
-            raise Exception(f"Failed to create forward tunnel: {result.stderr}")
+        if result.returncode == 0:
+            logger.info(f"[OK] Forward tunnel established: tcp:{self.adb_port} -> {correct_socket}")
+            return
         
-        logger.info(f"✓ Forward tunnel established: tcp:{self.adb_port} -> {correct_socket}")
+        raise Exception(f"Failed to create forward tunnel: {result.stderr}")
     
     async def _get_scrcpy_scid(self) -> Optional[str]:
         """Extract SCID from running scrcpy process"""
@@ -207,25 +208,13 @@ class ScrcpySocketDemux:
         """Validate that the socket connection is working"""
         try:
             if self.writer.is_closing():
+                logger.debug("Writer is closing")
                 return False
                 
-            # For forward tunnels, we need to wait a bit for data
-            timeout = 2.0
-            
-            try:
-                # Try to peek at data
-                data = await asyncio.wait_for(self.reader.read(1), timeout=timeout)
-                if data:
-                    # Put the byte back
-                    self._initial_buffer = data + self._initial_buffer
-                    logger.debug(f"Connection validated - received data: {data.hex()}")
-                    return True
-                else:
-                    logger.debug("Connection closed during validation")
-                    return False
-            except asyncio.TimeoutError:
-                logger.debug("Forward tunnel validation timeout - connection may still be valid")
-                return True
+            # Skip validation for forward tunnels - just check if connection is alive
+            # The real validation happens during metadata reading
+            logger.debug("Skipping validation for forward tunnel - will validate during metadata read")
+            return True
                 
         except Exception as e:
             logger.debug(f"Connection validation failed: {e}")
@@ -255,7 +244,7 @@ class ScrcpySocketDemux:
                     raise Exception("Expected dummy byte in forward tunnel but none received")
                     
             if dummy_byte:
-                logger.debug(f"✓ Forward tunnel dummy byte: {dummy_byte.hex()}")
+                logger.debug(f"[OK] Forward tunnel dummy byte: {dummy_byte.hex()}")
             else:
                 raise Exception("Forward tunnel dummy byte is empty")
             
@@ -291,7 +280,7 @@ class ScrcpySocketDemux:
                     codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
                     codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
                     
-                    logger.info(f"✓ Video socket confirmed - {codec_name} {width}x{height} ({self._tunnel_type} tunnel)")
+                    logger.info(f"[OK] Video socket confirmed - {codec_name} {width}x{height} ({self._tunnel_type} tunnel)")
                     self._stats['codec_info'] = f"{codec_name} {width}x{height}"
                     self._stats['device_name'] = device_name
                     return  # Success - this is video socket
@@ -299,7 +288,7 @@ class ScrcpySocketDemux:
                     raise Exception("Invalid codec data received")
                     
             except (asyncio.TimeoutError, Exception) as e:
-                logger.error(f"✗ Video codec validation failed: {e}")
+                logger.error(f"[FAIL] Video codec validation failed: {e}")
                 raise Exception("Connected to non-video socket or incompatible scrcpy version")
             
         except Exception as e:
