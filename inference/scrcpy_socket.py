@@ -37,6 +37,7 @@ class ScrcpySocketDemux:
         self.writer: Optional[asyncio.StreamWriter] = None
         self._connected = False
         self._initial_buffer = b''
+        self._tunnel_type = 'reverse'  # Track tunnel type for protocol handling
         self._stats = {
             'frames_received': 0,
             'bytes_received': 0,
@@ -44,19 +45,38 @@ class ScrcpySocketDemux:
             'start_time': 0.0
         }
         
-    async def _setup_adb_forward(self):
-        """Setup ADB port forward to scrcpy socket with correct SCID"""
+    async def _setup_adb_tunnel(self):
+        """Setup ADB tunnel to scrcpy socket - try reverse first, fallback to forward"""
         # First, check running scrcpy processes to get the actual SCID
         scid = await self._get_scrcpy_scid()
         if not scid:
             raise Exception("No running scrcpy process found")
         
         # The correct socket name uses the SCID in 8-character hex format (scrcpy 2.0+)
-        # SCID is already in hex format
         correct_socket = f"localabstract:scrcpy_{scid}"
         logger.info(f"Looking for scrcpy socket: {correct_socket} (SCID: {scid})")
         
-        # Check if we already have a forward for the correct socket
+        # Try reverse tunnel first (scrcpy default)
+        self.adb_port = 27183  # Standard scrcpy port
+        self._tunnel_type = 'reverse'
+        
+        logger.info(f"Trying reverse tunnel: {correct_socket} -> tcp:{self.adb_port}")
+        result = subprocess.run([
+            'adb', 'reverse', f'tcp:{self.adb_port}', correct_socket
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            logger.info(f"✓ Reverse tunnel established: {correct_socket} -> tcp:{self.adb_port}")
+            return
+        
+        logger.warning(f"Reverse tunnel failed: {result.stderr}")
+        logger.info("Falling back to forward tunnel...")
+        
+        # Fallback to forward tunnel
+        self._tunnel_type = 'forward'
+        self.adb_port = 27184
+        
+        # Check existing forwards first
         result = subprocess.run(['adb', 'forward', '--list'], 
                               capture_output=True, text=True, check=True)
         
@@ -67,21 +87,19 @@ class ScrcpySocketDemux:
                     port_part = parts[1]
                     if port_part.startswith('tcp:'):
                         self.adb_port = int(port_part.split(':')[1])
-                        logger.info(f"Found existing forward: {correct_socket} -> port {self.adb_port}")
+                        logger.info(f"✓ Found existing forward: tcp:{self.adb_port} -> {correct_socket}")
                         return
         
-        # Create new forward for the correct socket
-        self.adb_port = 27184  # Use different port to avoid conflicts
-        logger.info(f"Creating forward: tcp:{self.adb_port} -> {correct_socket}")
-        
+        # Create new forward tunnel
+        logger.info(f"Creating forward tunnel: tcp:{self.adb_port} -> {correct_socket}")
         result = subprocess.run([
             'adb', 'forward', f'tcp:{self.adb_port}', correct_socket
         ], capture_output=True, text=True)
         
         if result.returncode != 0:
-            raise Exception(f"Failed to create ADB forward: {result.stderr}")
+            raise Exception(f"Failed to create forward tunnel: {result.stderr}")
         
-        logger.info(f"Created forward: {correct_socket} -> port {self.adb_port}")
+        logger.info(f"✓ Forward tunnel established: tcp:{self.adb_port} -> {correct_socket}")
     
     async def _get_scrcpy_scid(self) -> Optional[str]:
         """Extract SCID from running scrcpy process"""
@@ -126,8 +144,8 @@ class ScrcpySocketDemux:
             try:
                 logger.info(f"Connection attempt {attempt + 1}/{max_retries}")
                 
-                # Setup ADB port forward
-                await self._setup_adb_forward()
+                # Setup ADB tunnel (reverse or forward)
+                await self._setup_adb_tunnel()
                 
                 # Connect to video socket with timeout
                 self.reader, self.writer = await asyncio.wait_for(
@@ -203,25 +221,31 @@ class ScrcpySocketDemux:
     async def _validate_connection(self) -> bool:
         """Validate that the socket connection is working"""
         try:
-            # Test if we can write to the socket (for control sockets)
-            # and if data is available for reading (for video sockets)
             if self.writer.is_closing():
                 return False
                 
-            # Check if any data is immediately available
+            # For reverse tunnels, data should be immediately available
+            # For forward tunnels, we need to wait a bit
+            timeout = 0.1 if self._tunnel_type == 'reverse' else 2.0
+            
             try:
-                # Peek at data without consuming it
-                data = await asyncio.wait_for(self.reader.read(1), timeout=0.1)
+                # Try to peek at data
+                data = await asyncio.wait_for(self.reader.read(1), timeout=timeout)
                 if data:
-                    # Put the byte back by creating new buffer
+                    # Put the byte back
                     self._initial_buffer = data + self._initial_buffer
+                    logger.debug(f"Connection validated - received data: {data.hex()}")
                     return True
                 else:
-                    # Socket closed
+                    logger.debug("Connection closed during validation")
                     return False
             except asyncio.TimeoutError:
-                # No immediate data, but socket might be valid
-                return True
+                if self._tunnel_type == 'reverse':
+                    logger.debug("Reverse tunnel validation timeout - likely wrong socket")
+                    return False
+                else:
+                    logger.debug("Forward tunnel validation timeout - connection may still be valid")
+                    return True
                 
         except Exception as e:
             logger.debug(f"Connection validation failed: {e}")
@@ -239,21 +263,25 @@ class ScrcpySocketDemux:
             if self._initial_buffer:
                 logger.debug(f"Using buffered data: {len(self._initial_buffer)} bytes")
             
-            # Try to read dummy byte (may not exist in reverse tunnel)
+            # Handle dummy byte based on tunnel type
             dummy_byte = None
-            if self._initial_buffer:
-                dummy_byte = self._initial_buffer[:1]
-                self._initial_buffer = self._initial_buffer[1:]
+            if self._tunnel_type == 'forward':
+                # Forward tunnel: expect dummy byte
+                if self._initial_buffer:
+                    dummy_byte = self._initial_buffer[:1]
+                    self._initial_buffer = self._initial_buffer[1:]
+                else:
+                    try:
+                        dummy_byte = await asyncio.wait_for(self.reader.read(1), timeout=2.0)
+                    except asyncio.TimeoutError:
+                        raise Exception("Expected dummy byte in forward tunnel but none received")
+                        
+                if dummy_byte:
+                    logger.debug(f"✓ Forward tunnel dummy byte: {dummy_byte.hex()}")
+                else:
+                    raise Exception("Forward tunnel dummy byte is empty")
             else:
-                try:
-                    dummy_byte = await asyncio.wait_for(self.reader.read(1), timeout=1.0)
-                except asyncio.TimeoutError:
-                    pass
-                    
-            if dummy_byte:
-                logger.debug(f"Received dummy byte: {dummy_byte.hex()}")
-            else:
-                logger.debug("No dummy byte received (likely reverse tunnel)")
+                logger.debug("✓ Reverse tunnel - no dummy byte expected")
             
             # Read device metadata length (4 bytes)
             logger.debug("Reading device metadata length...")
@@ -287,7 +315,7 @@ class ScrcpySocketDemux:
                     codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
                     codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
                     
-                    logger.info(f"✓ Video socket confirmed - {codec_name} {width}x{height}")
+                    logger.info(f"✓ Video socket confirmed - {codec_name} {width}x{height} ({self._tunnel_type} tunnel)")
                     self._stats['codec_info'] = f"{codec_name} {width}x{height}"
                     self._stats['device_name'] = device_name
                     return  # Success - this is video socket
