@@ -209,7 +209,7 @@ class DirectScrcpyServer:
             # Method 4: Test if we can execute the command directly (without nohup)
             logger.info("Testing direct command execution (will timeout, but shows if command works)...")
             try:
-                direct_test = self.device.shell(f"timeout 3 {command}", timeout=5)
+                direct_test = self.device.shell(f"timeout 3 sh -c '{command}'", timeout=5)
                 logger.info(f"Direct command (3s timeout): {direct_test}")
             except Exception as e:
                 logger.info(f"Direct command test exception (expected): {e}")
