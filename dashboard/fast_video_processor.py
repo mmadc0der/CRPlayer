@@ -44,6 +44,11 @@ class FastVideoProcessor:
         self._max_restarts = 10
         self._buffer_timer = None
         
+        # Connection recovery
+        self._connection_lost = False
+        self._last_data_time = time.time()
+        self._connection_callback: Optional[callable] = None
+        
         # Statistics
         self.frames_processed = 0
         self.frames_dropped = 0
@@ -99,6 +104,14 @@ class FastVideoProcessor:
             return
             
         try:
+            # Update connection status
+            self._last_data_time = time.time()
+            if self._connection_lost:
+                self._connection_lost = False
+                print(f"[FastVideoProcessor] Connection restored - data flowing again")
+                if self._connection_callback:
+                    self._connection_callback('restored')
+            
             with self._buffer_lock:
                 self._mkv_buffer.extend(data)
                 
@@ -112,7 +125,7 @@ class FastVideoProcessor:
                 # Only feed data to FFmpeg if we have a valid header
                 if self._has_valid_header and self._ffmpeg_process and self._ffmpeg_process.stdin:
                     # Feed buffered data in reasonable chunks to maintain stream integrity
-                    chunk_size = min(8192, len(self._mkv_buffer))  # 1KB chunks
+                    chunk_size = min(8192, len(self._mkv_buffer))  # 8KB chunks
                     if chunk_size > 0:
                         chunk = bytes(self._mkv_buffer[:chunk_size])
                         self._ffmpeg_process.stdin.write(chunk)
@@ -124,6 +137,7 @@ class FastVideoProcessor:
         except (BrokenPipeError, OSError) as e:
             print(f"[FastVideoProcessor] FFmpeg stdin error: {e}")
             self._has_valid_header = False  # Reset header flag on error
+            self._signal_connection_loss()
             
     def get_frame(self, timeout: float = 0.1) -> Optional[dict]:
         """Get next processed frame if available."""
@@ -172,7 +186,7 @@ class FastVideoProcessor:
             self._ffmpeg_process = None
             
     def _read_frames(self) -> None:
-        """Read frames from FFmpeg stdout."""
+        """Read frames from FFmpeg stdout with connection monitoring."""
         frame_count_since_restart = 0
         last_restart_time = time.time()
         last_frame_time = time.time()  # Initialize properly
@@ -183,16 +197,23 @@ class FastVideoProcessor:
                 continue
                 
             try:
+                # Check for connection loss based on data flow
+                current_time = time.time()
+                time_since_data = current_time - self._last_data_time
+                
+                if time_since_data > 15.0 and not self._connection_lost:
+                    self._connection_lost = True
+                    print(f"[FastVideoProcessor] Connection lost - no data for {time_since_data:.1f}s")
+                    self._signal_connection_loss()
+                
                 # Read frame from FFmpeg stdout
                 frame_data = self._read_ffmpeg_frame(self._ffmpeg_process)
                 
                 if frame_data:
-                    current_time = time.time()
                     frame_count_since_restart += 1
                     last_frame_time = current_time  # Update local frame time
                     
                     # Process frames immediately without throttling for lowest latency
-                    # Remove artificial frame rate limiting to process all available frames
                     if True:  # Process every frame immediately
                         print(f"[FastVideoProcessor] Frame extracted, base64 length: {len(frame_data)}")
                         
@@ -225,15 +246,15 @@ class FastVideoProcessor:
                             print(f"[FastVideoProcessor] Frame dropped - queue full")
                 else:
                     # No frame available - check if FFmpeg might be stuck
-                    current_time = time.time()
                     time_since_last_frame = current_time - last_frame_time
                     time_since_restart = current_time - last_restart_time
                     
-                    # Restart if no frames for 5 seconds after initial startup period
-                    # Give FFmpeg time to analyze the irregular MKV stream
-                    if (time_since_last_frame > 10.0 and time_since_restart > 45.0):
-                        print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed, {time_since_restart:.1f}s since restart)")
-                        print(f"[FastVideoProcessor] Buffer state: {len(self._mkv_buffer)} bytes, valid_header: {self._has_valid_header}")
+                    # More aggressive restart logic for connection drops
+                    restart_threshold = 10.0 if self._connection_lost else 15.0
+                    
+                    if (time_since_last_frame > restart_threshold and time_since_restart > 30.0):
+                        print(f"[FastVideoProcessor] FFmpeg appears stuck (no frames for {time_since_last_frame:.1f}s, {frame_count_since_restart} frames processed)")
+                        print(f"[FastVideoProcessor] Buffer state: {len(self._mkv_buffer)} bytes, valid_header: {self._has_valid_header}, connection_lost: {self._connection_lost}")
                         self._restart_ffmpeg()
                         frame_count_since_restart = 0
                         last_restart_time = current_time
@@ -383,14 +404,29 @@ class FastVideoProcessor:
         self._find_mkv_element_in_buffer()
             
             
+    def set_connection_callback(self, callback: callable) -> None:
+        """Set callback for connection status changes."""
+        self._connection_callback = callback
+    
+    def _signal_connection_loss(self) -> None:
+        """Signal that connection has been lost."""
+        if self._connection_callback:
+            self._connection_callback('lost')
+    
     def get_stats(self) -> dict:
         """Get processor statistics."""
+        current_time = time.time()
+        time_since_data = current_time - self._last_data_time
+        
         return {
             'frames_processed': self.frames_processed,
             'frames_dropped': self.frames_dropped,
             'queue_size': self._frame_queue.qsize(),
             'buffer_size': len(self._mkv_buffer),
-            'current_fps': self.current_fps
+            'current_fps': self.current_fps,
+            'connection_lost': self._connection_lost,
+            'time_since_data': time_since_data,
+            'restart_count': self._restart_count
         }
 
 

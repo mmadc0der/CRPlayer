@@ -51,9 +51,10 @@ class ScrcpySocketDemux:
         if not scid:
             raise Exception("No running scrcpy process found")
         
-        # The correct socket name uses the SCID
-        correct_socket = f"localabstract:scrcpy_{scid}"
-        logger.info(f"Looking for scrcpy socket: {correct_socket}")
+        # The correct socket name uses the SCID in 8-character hex format (scrcpy 2.0+)
+        scid_hex = format(int(scid), '08x')
+        correct_socket = f"localabstract:scrcpy_{scid_hex}"
+        logger.info(f"Looking for scrcpy socket: {correct_socket} (SCID: {scid})")
         
         # Check if we already have a forward for the correct socket
         result = subprocess.run(['adb', 'forward', '--list'], 
@@ -85,50 +86,79 @@ class ScrcpySocketDemux:
     async def _get_scrcpy_scid(self) -> Optional[str]:
         """Extract SCID from running scrcpy process"""
         try:
-            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            # Try Windows and Unix process listing
+            if os.name == 'nt':
+                result = subprocess.run(['wmic', 'process', 'get', 'commandline'], 
+                                      capture_output=True, text=True)
+            else:
+                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+                
             for line in result.stdout.split('\n'):
                 if 'scrcpy-server.jar' in line and 'scid=' in line:
                     # Extract scid=XXXXXXXX from command line
                     parts = line.split()
                     for part in parts:
                         if part.startswith('scid='):
-                            scid = part.split('=')[1]
-                            logger.info(f"Found scrcpy SCID: {scid}")
-                            return scid
+                            scid_value = part.split('=')[1]
+                            # Validate SCID is numeric
+                            try:
+                                scid = str(int(scid_value))  # Ensure it's a valid integer
+                                logger.info(f"Found scrcpy SCID: {scid}")
+                                return scid
+                            except ValueError:
+                                logger.warning(f"Invalid SCID format: {scid_value}")
+                                continue
             return None
         except Exception as e:
             logger.error(f"Failed to get SCID: {e}")
             return None
 
-    async def connect(self) -> bool:
-        """Connect to scrcpy video socket"""
-        try:
-            # Setup ADB port forward
-            await self._setup_adb_forward()
-            
-            # Connect to video socket with timeout
-            self.reader, self.writer = await asyncio.wait_for(
-                asyncio.open_connection('localhost', self.adb_port),
-                timeout=5.0
-            )
-            
-            # Read and validate device metadata with timeout
-            await asyncio.wait_for(self._read_device_metadata(), timeout=3.0)
-            
-            self._connected = True
-            self._stats['start_time'] = time.time()
-            logger.info(f"Connected to scrcpy video socket on port {self.adb_port}")
-            return True
-            
-        except asyncio.TimeoutError:
-            logger.error("Timeout connecting to scrcpy - make sure scrcpy is running WITH video enabled")
-            logger.error("Use: scrcpy --no-audio --max-fps=60 --max-size=1600 --video-bit-rate=20M")
-            await self.disconnect()
-            return False
-        except Exception as e:
-            logger.error(f"Failed to connect to scrcpy socket: {e}")
-            await self.disconnect()
-            return False
+    async def connect(self, max_retries: int = 3) -> bool:
+        """Connect to scrcpy video socket with retry logic"""
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Connection attempt {attempt + 1}/{max_retries}")
+                
+                # Setup ADB port forward
+                await self._setup_adb_forward()
+                
+                # Connect to video socket with timeout
+                self.reader, self.writer = await asyncio.wait_for(
+                    asyncio.open_connection('localhost', self.adb_port),
+                    timeout=5.0
+                )
+                
+                # Validate connection is actually working
+                if not await self._validate_connection():
+                    await self.disconnect()
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Connection validation failed, retrying in 2s...")
+                        await asyncio.sleep(2)
+                        continue
+                    else:
+                        return False
+                
+                # Read and validate device metadata with timeout
+                await asyncio.wait_for(self._read_device_metadata(), timeout=3.0)
+                
+                self._connected = True
+                self._stats['start_time'] = time.time()
+                logger.info(f"Successfully connected to scrcpy video socket on port {self.adb_port}")
+                return True
+                
+            except asyncio.TimeoutError:
+                logger.error(f"Timeout on attempt {attempt + 1} - scrcpy may not be running or video disabled")
+                if attempt == max_retries - 1:
+                    logger.error("Use: scrcpy --no-audio --max-fps=60 --max-size=1600 --video-bit-rate=20M")
+                await self.disconnect()
+            except Exception as e:
+                logger.error(f"Connection attempt {attempt + 1} failed: {e}")
+                await self.disconnect()
+                
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2)  # Wait before retry
+                
+        return False
     
     async def disconnect(self):
         """Close socket connection"""
@@ -163,50 +193,78 @@ class ScrcpySocketDemux:
             raise
     
     
+    async def _validate_connection(self) -> bool:
+        """Validate that the socket connection is working"""
+        try:
+            # Test if we can write to the socket (for control sockets)
+            # and if data is available for reading (for video sockets)
+            if self.writer.is_closing():
+                return False
+                
+            # Check if any data is immediately available
+            try:
+                # Peek at data without consuming it
+                data = await asyncio.wait_for(self.reader.read(1), timeout=0.1)
+                if data:
+                    # Put the byte back by creating new buffer
+                    self._initial_buffer = data + self._initial_buffer
+                    return True
+                else:
+                    # Socket closed
+                    return False
+            except asyncio.TimeoutError:
+                # No immediate data, but socket might be valid
+                return True
+                
+        except Exception as e:
+            logger.debug(f"Connection validation failed: {e}")
+            return False
+    
     async def _read_device_metadata(self):
-        """Read initial scrcpy protocol data"""
+        """Read initial scrcpy protocol data with improved error handling"""
         try:
             # According to scrcpy protocol, the first socket opened gets:
-            # 1. Dummy byte (if forward tunnel)
+            # 1. Dummy byte (if forward tunnel) 
             # 2. Device metadata
             # 3. Video codec metadata (if this is video socket)
             
+            # Use any buffered data first
+            if self._initial_buffer:
+                logger.debug(f"Using buffered data: {len(self._initial_buffer)} bytes")
+            
             # Try to read dummy byte (may not exist in reverse tunnel)
-            try:
-                dummy = await asyncio.wait_for(self.reader.read(1), timeout=1.0)
-                if dummy:
-                    logger.debug(f"Received dummy byte: {dummy.hex()}")
-            except asyncio.TimeoutError:
-                logger.debug("No dummy byte received (reverse tunnel)")
+            dummy_byte = None
+            if self._initial_buffer:
+                dummy_byte = self._initial_buffer[:1]
+                self._initial_buffer = self._initial_buffer[1:]
+            else:
+                try:
+                    dummy_byte = await asyncio.wait_for(self.reader.read(1), timeout=1.0)
+                except asyncio.TimeoutError:
+                    pass
+                    
+            if dummy_byte:
+                logger.debug(f"Received dummy byte: {dummy_byte.hex()}")
+            else:
+                logger.debug("No dummy byte received (likely reverse tunnel)")
             
             # Read device metadata length (4 bytes)
-            logger.debug("Attempting to read 4-byte metadata length...")
-            meta_len_data = await self._read_exact(4, timeout=2.0)
+            logger.debug("Reading device metadata length...")
+            meta_len_data = await self._read_exact_with_buffer(4, timeout=3.0)
             if not meta_len_data:
-                # Try to read any available data to debug what's actually coming
-                logger.debug("No metadata length received, checking for any data...")
-                try:
-                    any_data = await asyncio.wait_for(self.reader.read(100), timeout=1.0)
-                    if any_data:
-                        logger.debug(f"Received unexpected data: {len(any_data)} bytes: {any_data.hex()}")
-                        logger.debug(f"First 20 bytes as text: {any_data[:20]}")
-                    else:
-                        logger.debug("No data available at all")
-                except asyncio.TimeoutError:
-                    logger.debug("Timeout - no data available")
-                
-                # Check if socket is still connected
-                if self.reader.at_eof():
-                    raise Exception("Socket closed by remote end")
-                else:
-                    raise Exception("Timeout reading metadata length - socket connected but no data")
+                raise Exception("Failed to read metadata length - connection may be to wrong socket type")
             
             meta_len = struct.unpack('>I', meta_len_data)[0]
-            logger.debug(f"Device metadata length: {meta_len} (hex: {meta_len_data.hex()})")
+            logger.debug(f"Device metadata length: {meta_len}")
+            
+            # Validate metadata length is reasonable
+            if meta_len > 1024 or meta_len < 0:
+                raise Exception(f"Invalid metadata length: {meta_len}")
             
             # Read device metadata
+            device_name = "Unknown"
             if meta_len > 0:
-                metadata = await self._read_exact(meta_len)
+                metadata = await self._read_exact_with_buffer(meta_len)
                 if metadata:
                     device_name = metadata.decode('utf-8', errors='ignore')
                     logger.info(f"Connected to device: {device_name}")
@@ -214,24 +272,27 @@ class ScrcpySocketDemux:
             # Try to read video codec metadata (12 bytes)
             # This will only succeed if this is the video socket
             try:
-                codec_data = await asyncio.wait_for(self._read_exact(12), timeout=2.0)
+                codec_data = await asyncio.wait_for(
+                    self._read_exact_with_buffer(12), timeout=3.0
+                )
                 if codec_data and len(codec_data) == 12:
                     codec_id, width, height = struct.unpack('>III', codec_data)
                     codec_names = {0: 'H264', 1: 'H265', 2: 'AV1'}
                     codec_name = codec_names.get(codec_id, f'Unknown({codec_id})')
                     
-                    logger.info(f"[OK] Video socket - Codec: {codec_name}, resolution: {width}x{height}")
+                    logger.info(f"✓ Video socket confirmed - {codec_name} {width}x{height}")
                     self._stats['codec_info'] = f"{codec_name} {width}x{height}"
+                    self._stats['device_name'] = device_name
                     return  # Success - this is video socket
                 else:
-                    raise Exception("Invalid codec data")
+                    raise Exception("Invalid codec data received")
                     
             except (asyncio.TimeoutError, Exception) as e:
-                logger.warning(f"[FAIL] Not video socket or no codec data: {e}")
-                raise Exception("This appears to be control socket, not video socket")
+                logger.error(f"✗ Video codec validation failed: {e}")
+                raise Exception("Connected to non-video socket or incompatible scrcpy version")
             
         except Exception as e:
-            raise Exception(f"Failed to read initial protocol data: {e}")
+            raise Exception(f"Protocol validation failed: {e}")
     
     async def _read_next_frame(self) -> Optional[NALUnit]:
         """Read next video frame from scrcpy socket with proper protocol"""
@@ -281,9 +342,17 @@ class ScrcpySocketDemux:
             logger.error(f"Error reading frame: {e}")
             return None
     
-    async def _read_exact(self, size: int, timeout: float = 5.0) -> Optional[bytes]:
-        """Read exact number of bytes from socket"""
+    async def _read_exact_with_buffer(self, size: int, timeout: float = 5.0) -> Optional[bytes]:
+        """Read exact number of bytes from socket, using internal buffer first"""
         data = b''
+        
+        # Use buffered data first
+        if self._initial_buffer:
+            buffer_use = min(size, len(self._initial_buffer))
+            data = self._initial_buffer[:buffer_use]
+            self._initial_buffer = self._initial_buffer[buffer_use:]
+        
+        # Read remaining data from socket
         while len(data) < size:
             try:
                 chunk = await asyncio.wait_for(
@@ -298,6 +367,10 @@ class ScrcpySocketDemux:
                 logger.debug(f"Timeout reading {size} bytes (got {len(data)} so far, timeout={timeout}s)")
                 return None
         return data
+    
+    async def _read_exact(self, size: int, timeout: float = 5.0) -> Optional[bytes]:
+        """Read exact number of bytes from socket (legacy method)"""
+        return await self._read_exact_with_buffer(size, timeout)
     
     def get_stats(self) -> Dict[str, Any]:
         """Get current streaming statistics"""

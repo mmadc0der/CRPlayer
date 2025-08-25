@@ -30,7 +30,6 @@ class ScrcpyHeadlessManager:
             # Build scrcpy command for headless operation
             cmd = [
                 'scrcpy',
-                '--no-window',
                 '--no-audio',     # No audio
                 '--no-control',   # No input control
                 '--max-fps=60',
@@ -115,23 +114,37 @@ class ScrcpyHeadlessManager:
     async def _detect_scid(self):
         """Detect SCID from running scrcpy process"""
         try:
-            result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+            # Try Windows tasklist first
+            if os.name == 'nt':
+                result = subprocess.run(['wmic', 'process', 'get', 'commandline'], 
+                                      capture_output=True, text=True)
+            else:
+                result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+                
             for line in result.stdout.split('\n'):
                 if 'scrcpy-server.jar' in line and 'scid=' in line:
                     parts = line.split()
                     for part in parts:
                         if part.startswith('scid='):
-                            self.scid = part.split('=')[1]
-                            logger.info(f"Detected SCID: {self.scid}")
-                            return
+                            scid_value = part.split('=')[1]
+                            # Validate SCID is numeric
+                            try:
+                                self.scid = str(int(scid_value))  # Ensure it's a valid integer
+                                logger.info(f"Detected SCID: {self.scid} -> socket: {self.get_socket_name()}")
+                                return
+                            except ValueError:
+                                logger.warning(f"Invalid SCID format: {scid_value}")
+                                continue
             logger.warning("Could not detect SCID from process")
         except Exception as e:
             logger.error(f"Error detecting SCID: {e}")
     
     def get_socket_name(self) -> str:
-        """Get the socket name for this headless instance"""
+        """Get the socket name for this headless instance (scrcpy 2.0+ format)"""
         if self.scid:
-            return f"localabstract:scrcpy_{self.scid}"
+            # Convert SCID to 8-character hex string as per scrcpy protocol
+            scid_hex = format(int(self.scid), '08x')
+            return f"localabstract:scrcpy_{scid_hex}"
         else:
             return "localabstract:scrcpy"
     
