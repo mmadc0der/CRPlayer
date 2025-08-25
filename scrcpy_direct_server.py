@@ -171,7 +171,7 @@ class DirectScrcpyServer:
             
             # Wait for server to initialize
             logger.info("Waiting for server to initialize...")
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
             
             # Read the log file to see what happened
             try:
@@ -180,7 +180,7 @@ class DirectScrcpyServer:
                     logger.info(f"Server log output:\n{log_output}")
                 else:
                     logger.info("No log output yet, waiting longer...")
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(10)
                     log_output = self.device.shell("cat /data/local/tmp/scrcpy.log", timeout=5)
                     if log_output.strip():
                         logger.info(f"Server log output (after delay):\n{log_output}")
