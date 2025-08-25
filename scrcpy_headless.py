@@ -32,7 +32,7 @@ class ScrcpyHeadlessManager:
             cmd = [
                 'scrcpy',
                 '--no-audio',           # Disable audio
-                '--no-display',         # Don't show display window (headless)
+                '--no-playback',        # Don't show display window (headless)
                 '--max-fps=60',
                 '--max-size=1600', 
                 '--video-bit-rate=20M'
