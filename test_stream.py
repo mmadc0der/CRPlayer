@@ -156,7 +156,7 @@ def test_basic_functionality():
     """Test basic streaming functionality."""
     print("=== Basic Functionality Test ===")
     
-    streamer = GPUAndroidStreamer(max_fps=30, max_size=1280)
+    streamer = GPUAndroidStreamer(max_fps=30, max_size=800)
     
     frame_received = False
     
