@@ -83,10 +83,15 @@ class StreamingTester:
             monitor_thread = threading.Thread(target=self._monitor_system, daemon=True)
             monitor_thread.start()
             
-            # Run test
-            test_start = time.time()
             while time.time() - test_start < self.test_duration:
-                time.sleep(1)
+                # Consume frames from buffer to prevent stalling
+                frame_data = streamer.get_latest_frame()
+                if frame_data:
+                    tensor, pts, timestamp = frame_data
+                    # Process frame for RL (just consume it for now)
+                    pass
+                
+                time.sleep(0.001)
                 stats = streamer.get_fps_stats()
                 print(f"Stream stats: {stats}")
             

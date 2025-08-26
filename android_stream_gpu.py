@@ -378,7 +378,19 @@ class GPUAndroidStreamer:
             # Check NAL unit type for debugging
             if len(packet_data) >= 5:
                 nal_type = packet_data[4] & 0x1F
-                print(f"[DEBUG] NAL unit type: {nal_type} ({'SPS' if nal_type == 7 else 'PPS' if nal_type == 8 else 'IDR' if nal_type == 5 else 'P-frame' if nal_type == 1 else 'Other'})")
+                # Skip SPS/PPS parameter sets - they don't produce frames
+                if nal_type == 7:  # SPS
+                    print(f"[DEBUG] Processing SPS parameter set")
+                    packet = av.Packet(packet_data)
+                    decoder.decode(packet)  # Feed to decoder but don't expect frames
+                    return None
+                elif nal_type == 8:  # PPS
+                    print(f"[DEBUG] Processing PPS parameter set")
+                    packet = av.Packet(packet_data)
+                    decoder.decode(packet)  # Feed to decoder but don't expect frames
+                    return None
+                else:
+                    print(f"[DEBUG] NAL unit type: {nal_type} ({'IDR' if nal_type == 5 else 'P-frame' if nal_type == 1 else 'Other'})")
             
             packet = av.Packet(packet_data)
             frames = decoder.decode(packet)
@@ -400,11 +412,17 @@ class GPUAndroidStreamer:
                 
                 return tensor
             
-            if frame_count == 0:
-                print(f"[DEBUG] No frames decoded from {len(packet_data)} byte packet")
+            if frame_count == 0 and len(packet_data) >= 5:
+                nal_type = packet_data[4] & 0x1F
+                if nal_type not in [7, 8]:  # Only log for non-parameter sets
+                    print(f"[DEBUG] No frames decoded from {len(packet_data)} byte packet (NAL type: {nal_type})")
                 
         except Exception as e:
-            print(f"[DEBUG] Decode error: {e} (packet size: {len(packet_data)})")
+            # Don't log errors for SPS/PPS as they're expected
+            if len(packet_data) >= 5:
+                nal_type = packet_data[4] & 0x1F
+                if nal_type not in [7, 8]:
+                    print(f"[DEBUG] Decode error: {e} (packet size: {len(packet_data)})")
             return None
         
         return None
@@ -522,12 +540,20 @@ class GPUAndroidStreamer:
                             try:
                                 self.frame_queue.put((tensor, pts, current_time), block=False)
                             except queue.Full:
-                                # Remove oldest frame if buffer full
+                                # Remove multiple oldest frames if buffer full to prevent stalling
+                                frames_removed = 0
+                                while frames_removed < 3:  # Remove up to 3 old frames
+                                    try:
+                                        self.frame_queue.get_nowait()
+                                        frames_removed += 1
+                                    except queue.Empty:
+                                        break
                                 try:
-                                    self.frame_queue.get_nowait()
                                     self.frame_queue.put((tensor, pts, current_time), block=False)
-                                except queue.Empty:
-                                    pass
+                                    if frames_removed > 0:
+                                        print(f"[DEBUG] Dropped {frames_removed} old frames to prevent stalling")
+                                except queue.Full:
+                                    print(f"[DEBUG] Frame queue still full after dropping {frames_removed} frames")
                             
                             # Call frame callback if set
                             if self.frame_callback:
