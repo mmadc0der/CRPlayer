@@ -127,6 +127,7 @@ class GPUAndroidStreamer:
         server_pushed = False
         for location in server_locations:
             try:
+                print(f"Pushing scrcpy server to device: {location} with args: {device_arg}")
                 push_cmd = f"adb {device_arg} push {location} /data/local/tmp/scrcpy-server.jar"
                 result = subprocess.run(push_cmd.split(), capture_output=True, text=True, timeout=10)
                 if result.returncode == 0:
