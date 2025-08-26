@@ -312,10 +312,10 @@ class GPUAndroidStreamer:
                 
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 
-                # Configure socket for unbuffered, low-latency streaming
+                # Configure socket for high-throughput streaming
                 sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # Disable Nagle
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)  # Set receive buffer
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)  # Set send buffer
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1048576)  # 1MB receive buffer
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1048576)  # 1MB send buffer
                 sock.settimeout(2.0)  # Short timeout for connection
                 
                 sock.connect(("localhost", port))
@@ -354,26 +354,38 @@ class GPUAndroidStreamer:
         return config_packet, key_frame, pts, packet_size
     
     def setup_gpu_decoder(self) -> av.CodecContext:
-        """Setup GPU-accelerated H265 decoder."""
+        """Setup GPU-accelerated H264 decoder."""
+        codec_name = "h264"  # Force H264 since we're using raw_stream with h264
+        
         if self.use_gpu and torch.cuda.is_available():
             try:
-                # Try NVDEC hardware acceleration
-                codec = av.CodecContext.create("hevc", "r")
+                # Try NVDEC hardware acceleration for H264
+                codec = av.CodecContext.create(codec_name, "r")
                 codec.options = {"hwaccel": "cuda", "hwaccel_device": "0"}
+                print(f"[DEBUG] Created GPU H264 decoder with NVDEC")
                 return codec
-            except:
-                print("GPU decoding not available, falling back to CPU")
+            except Exception as e:
+                print(f"[DEBUG] GPU decoding failed: {e}, falling back to CPU")
         
         # Fallback to CPU decoding
-        return av.CodecContext.create("hevc" if self.video_codec == "h265" else "h264", "r")
+        codec = av.CodecContext.create(codec_name, "r")
+        print(f"[DEBUG] Created CPU H264 decoder")
+        return codec
     
     def decode_frame_gpu(self, packet_data: bytes, decoder: av.CodecContext) -> Optional[torch.Tensor]:
         """Decode frame using GPU acceleration and return PyTorch tensor."""
         try:
+            # Check NAL unit type for debugging
+            if len(packet_data) >= 5:
+                nal_type = packet_data[4] & 0x1F
+                print(f"[DEBUG] NAL unit type: {nal_type} ({'SPS' if nal_type == 7 else 'PPS' if nal_type == 8 else 'IDR' if nal_type == 5 else 'P-frame' if nal_type == 1 else 'Other'})")
+            
             packet = av.Packet(packet_data)
             frames = decoder.decode(packet)
             
+            frame_count = 0
             for frame in frames:
+                frame_count += 1
                 # Convert to numpy array
                 img_array = frame.to_ndarray(format='rgb24')
                 
@@ -387,9 +399,12 @@ class GPUAndroidStreamer:
                 tensor = tensor.permute(2, 0, 1)
                 
                 return tensor
+            
+            if frame_count == 0:
+                print(f"[DEBUG] No frames decoded from {len(packet_data)} byte packet")
                 
         except Exception as e:
-            print(f"Decode error: {e}")
+            print(f"[DEBUG] Decode error: {e} (packet size: {len(packet_data)})")
             return None
         
         return None
@@ -463,7 +478,11 @@ class GPUAndroidStreamer:
                             break
                     
                     if start_pos == -1:
-                        break  # No complete NAL unit yet
+                        # No start code found, clear buffer if too large
+                        if len(self._h264_buffer) > 1048576:  # 1MB limit
+                            print(f"[DEBUG] Clearing large buffer without start code: {len(self._h264_buffer)} bytes")
+                            self._h264_buffer = b""
+                        break
                     
                     # Find end of this NAL unit (start of next one)
                     end_pos = len(self._h264_buffer)
@@ -473,20 +492,24 @@ class GPUAndroidStreamer:
                             end_pos = i
                             break
                     
-                    if end_pos == len(self._h264_buffer) and len(self._h264_buffer) < 1048576:  # 1MB limit
+                    if end_pos == len(self._h264_buffer) and len(self._h264_buffer) < 2097152:  # 2MB limit
                         break  # Wait for more data
                     
                     # Extract NAL unit
                     frame_data = self._h264_buffer[start_pos:end_pos]
+                    print(f"[DEBUG] Found NAL unit: {len(frame_data)} bytes, type: 0x{frame_data[4]:02x}")
                     self._h264_buffer = self._h264_buffer[end_pos:]
                     
-                    if len(frame_data) < 10:
-                        continue  # Skip too small frames
+                    if len(frame_data) < 5:
+                        print(f"[DEBUG] Skipping small NAL unit: {len(frame_data)} bytes")
+                        continue
                     
                     # Decode frame
                     try:
+                        print(f"[DEBUG] Attempting to decode NAL unit of {len(frame_data)} bytes")
                         tensor = self.decode_frame_gpu(frame_data, decoder)
                         if tensor is not None:
+                            print(f"[DEBUG] Successfully decoded frame: {tensor.shape}")
                             # Update statistics
                             self.frame_count += 1
                             current_time = time.time()
