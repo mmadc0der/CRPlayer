@@ -157,6 +157,8 @@ class GPUAndroidStreamer:
             "stay_awake=true",
             "log_level=verbose"
         ]
+
+        server_cmd = [arg for arg in server_cmd if arg != ""]
         
         print(f"Starting scrcpy server: {' '.join(server_cmd)}")
         
