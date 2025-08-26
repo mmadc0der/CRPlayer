@@ -302,37 +302,39 @@ class GPUAndroidStreamer:
         monitor_thread.start()
     
     def connect_video_socket(self, port: int) -> socket.socket:
-        """Connect to scrcpy video socket with server monitoring."""
-        # Check server status before waiting
-        self.check_server_status()
+        """Connect to scrcpy video socket with server readiness check."""
+        max_attempts = 30
         
-        # Wait for server to be ready
-        if not self.wait_for_server_ready(port):
-            print("Server readiness check failed, checking status again...")
-            self.check_server_status()
-            raise RuntimeError(f"Server not ready on port {port} after waiting")
-        
-        # Start monitoring server output
-        self.monitor_server_output()
-        
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        
-        # Set TCP_NODELAY to disable Nagle algorithm for low latency
-        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        sock.settimeout(10)  # 10 second timeout
-        
-        try:
-            sock.connect(("localhost", port))
-            print(f"Connected to video socket on port {port} with TCP_NODELAY")
-            
-            # For raw_stream=true, no handshake needed - direct H264 stream
-            print("[DEBUG] Raw stream mode - no handshake, expecting direct H264")
-            sock.settimeout(None)  # Remove timeout for streaming - continuous read
-            return sock
-            
-        except Exception as e:
-            sock.close()
-            raise RuntimeError(f"Failed to connect to video socket: {e}")
+        for attempt in range(max_attempts):
+            try:
+                if self.scrcpy_process and self.scrcpy_process.poll() is not None:
+                    raise RuntimeError(f"Server process exited with code: {self.scrcpy_process.returncode}")
+                
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                
+                # Configure socket for unbuffered, low-latency streaming
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # Disable Nagle
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)  # Set receive buffer
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)  # Set send buffer
+                sock.settimeout(2.0)  # Short timeout for connection
+                
+                sock.connect(("localhost", port))
+                print(f"Connected to video socket on port {port} with optimized settings")
+                
+                # For raw_stream=true, no handshake needed - direct H264 stream
+                print("[DEBUG] Raw stream mode - no handshake, expecting direct H264")
+                
+                # Set non-blocking mode for streaming to prevent hanging
+                sock.setblocking(False)
+                return sock
+                    
+            except Exception as e:
+                if 'sock' in locals():
+                    sock.close()
+                print(f"[DEBUG] Connection attempt {attempt + 1} failed: {e}")
+                if attempt == max_attempts - 1:
+                    raise RuntimeError(f"Failed to connect after {max_attempts} attempts: {e}")
+                time.sleep(0.1)
     
     def read_frame_header(self, sock: socket.socket) -> Tuple[bool, bool, int, int]:
         """Read scrcpy frame header."""
@@ -425,17 +427,23 @@ class GPUAndroidStreamer:
             
             while self.is_streaming:
                 try:
-                    chunk = self.video_socket.recv(65536)  # Larger buffer for better throughput
+                    # Non-blocking receive with proper error handling
+                    chunk = self.video_socket.recv(65536)
                     if not chunk:
-                        print("[DEBUG] No data in chunk, waiting...")
-                        time.sleep(0.1)  # Very short sleep
-                        continue
+                        print("[DEBUG] Connection closed by server")
+                        break
                     print(f"[DEBUG] Received {len(chunk)} bytes")
-                except socket.timeout:
-                    print("[DEBUG] Socket timeout, continuing...")
-                    continue
+                    
+                except socket.error as e:
+                    if e.errno == 10035 or e.errno == 11:  # WSAEWOULDBLOCK or EAGAIN
+                        # No data available right now, wait briefly
+                        time.sleep(0.001)
+                        continue
+                    else:
+                        print(f"[ERROR] Socket error: {e}")
+                        break
                 except Exception as e:
-                    print(f"[ERROR] Socket error: {e}")
+                    print(f"[ERROR] Unexpected error: {e}")
                     break
                 
                 # Accumulate H264 data and find NAL units
