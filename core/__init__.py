@@ -5,6 +5,6 @@ Contains the main pipeline management system and core streaming logic
 for coordinating data flow between components.
 """
 
-from .stream_pipeline import PipelineManager
+from .stream_pipeline import SharedStreamBuffer, StreamProducer
 
-__all__ = ['PipelineManager']
+__all__ = ['SharedStreamBuffer', 'StreamProducer']
