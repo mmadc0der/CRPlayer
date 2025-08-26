@@ -64,9 +64,9 @@ class StreamingTester:
         # Create streamer with optimal settings for RTX 3060
         streamer = GPUAndroidStreamer(
             max_fps=60,
-            max_size=1920,
-            video_codec="h265",
-            bit_rate="12M",  # Higher bitrate for RTX 3060
+            max_size=800,
+            video_codec="h264",
+            bit_rate="80M",  # Higher bitrate for RTX 3060
             use_gpu=True,
             buffer_size=10   # Smaller buffer for lower latency
         )
