@@ -53,17 +53,18 @@ def discover_sessions():
                             with open(metadata_file, 'r') as f:
                                 metadata = json.load(f)
                             
-                            data_dirs.append({
+                            sessions.append({
                                 'path': str(item),
                                 'session_id': metadata.get('session_id', item.name),
                                 'game_name': metadata.get('game_name', 'unknown'),
                                 'frames_count': len(metadata.get('frames', [])),
                                 'start_time': metadata.get('start_time', 'unknown')
                             })
-                        except:
+                        except Exception as e:
+                            print(f"Error reading metadata from {metadata_file}: {e}")
                             continue
     
-    return jsonify(data_dirs)
+    return jsonify(sessions)
 
 
 @app.route('/api/load_session', methods=['POST'])
