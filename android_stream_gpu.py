@@ -156,7 +156,7 @@ class GPUAndroidStreamer:
             "send_frame_meta=false",
             "show_touches=false",
             "stay_awake=true",
-            "video_codec=h265",
+            "video_codec=h264",
             "cleanup=false",
             "control=false",
             "audio=false"
@@ -327,25 +327,8 @@ class GPUAndroidStreamer:
             sock.connect(("localhost", port))
             print(f"Connected to video socket on port {port}")
             
-            # For tunnel_forward=true, skip dummy byte exchange and go straight to device name
-            print("[DEBUG] Forward tunnel mode - skipping dummy byte exchange")
-            sock.settimeout(10)  # 10 second timeout for handshake
-            
-            # Read device name length and name
-            print("[DEBUG] Reading device name length...")
-            name_length_data = sock.recv(4)
-            if len(name_length_data) != 4:
-                raise RuntimeError("Failed to receive device name length")
-            
-            name_length = struct.unpack(">I", name_length_data)[0]
-            print(f"[DEBUG] Device name length: {name_length}")
-            
-            if name_length > 0:
-                device_name = sock.recv(name_length).decode("utf-8")
-                print(f"Connected to device: {device_name}")
-            else:
-                print("Connected to device: (no name)")
-            
+            # For raw_stream=true, skip all metadata and go directly to H264 stream
+            print("[DEBUG] Raw stream mode - skipping all metadata")
             sock.settimeout(None)  # Remove timeout for streaming
             return sock
             
@@ -431,10 +414,8 @@ class GPUAndroidStreamer:
             # Connect to video socket (includes server readiness check)
             self.video_socket = self.connect_video_socket(local_port)
             
-            # Read codec metadata
-            codec_data = self.video_socket.recv(12)
-            codec_id, width, height = struct.unpack(">III", codec_data)
-            print(f"Video stream: {width}x{height}, codec_id: {codec_id}")
+            # Skip codec metadata for raw stream - go directly to frame data
+            print("[DEBUG] Raw stream - skipping codec metadata")
             
             self.start_time = time.time()
             
