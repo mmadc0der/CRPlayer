@@ -92,6 +92,15 @@ class PipelineManager:
         """Get consumer builder for fluent interface."""
         return ConsumerBuilder(self.registry)
     
+    def run_script(self, script_path: str) -> bool:
+        """Run pipeline from script file."""
+        from pipeline_script import PipelineScript
+        
+        script = PipelineScript(self)
+        if script.load_from_file(script_path):
+            return script.execute()
+        return False
+    
     def run_interactive(self):
         """Run interactive pipeline management."""
         print("=== Streaming Pipeline Manager ===")
@@ -102,6 +111,7 @@ class PipelineManager:
         print("  stop_consumer <id> - Stop specific consumer")
         print("  remove <id> - Remove consumer")
         print("  list - List all consumers")
+        print("  script <file> - Run pipeline script")
         print("  stats - Show buffer statistics")
         print("  stop - Stop pipeline")
         print("  quit - Exit")
@@ -167,6 +177,19 @@ class PipelineManager:
                             print(f"  {consumer['id']} ({consumer['type']}) - {status} - {consumer['frame_count']} frames")
                     else:
                         print("No consumers registered")
+                
+                elif cmd == "script":
+                    if len(command) < 2:
+                        print("Usage: script <file>")
+                        continue
+                    
+                    script_file = command[1]
+                    print(f"Running script: {script_file}")
+                    success = self.run_script(script_file)
+                    if success:
+                        print("Script completed successfully")
+                    else:
+                        print("Script execution failed")
                 
                 elif cmd == "stats":
                     stats = self.buffer.get_stats()
@@ -256,9 +279,21 @@ if __name__ == "__main__":
         elif mode == "interactive":
             manager = PipelineManager()
             manager.run_interactive()
+        elif mode == "script":
+            if len(sys.argv) < 3:
+                print("Usage: python pipeline_demo.py script <script_file>")
+            else:
+                script_file = sys.argv[2]
+                manager = PipelineManager()
+                manager.run_script(script_file)
         else:
-            print("Usage: python pipeline_demo.py [basic|full|interactive]")
+            print("Usage: python pipeline_demo.py [basic|full|interactive|script <file>]")
     else:
-        # Default to interactive mode
+        print("Available modes:")
+        print("  basic - Run basic demo")
+        print("  full - Run full demo")
+        print("  interactive - Interactive mode")
+        print("  script <file> - Run from script file")
+        print("\nDefaulting to interactive mode...")
         manager = PipelineManager()
         manager.run_interactive()
