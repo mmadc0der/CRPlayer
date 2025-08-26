@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Game State Annotation Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a1a;
+            color: #ffffff;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 10px;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #333;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 350px;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .image-panel {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .image-container {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .frame-image {
+            max-width: 100%;
+            max-height: 500px;
+            border-radius: 8px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+
+        .image-info {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .navigation {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .nav-btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        .nav-btn:hover {
+            background: #45a049;
+        }
+
+        .nav-btn:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        .frame-input {
+            padding: 8px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #333;
+            color: white;
+            width: 100px;
+            text-align: center;
+        }
+
+        .annotation-panel {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 20px;
+        }
+
+        .annotation-section {
+            margin-bottom: 25px;
+        }
+
+        .annotation-section h3 {
+            margin-bottom: 15px;
+            color: #4CAF50;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 5px;
+        }
+
+        .radio-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px;
+            border-radius: 4px;
+            transition: background 0.2s;
+        }
+
+        .radio-option:hover {
+            background: #333;
+        }
+
+        .radio-option input[type="radio"] {
+            width: 18px;
+            height: 18px;
+        }
+
+        .notes-textarea {
+            width: 100%;
+            height: 80px;
+            padding: 10px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #333;
+            color: white;
+            resize: vertical;
+            font-family: inherit;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .action-btn {
+            padding: 12px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
+
+        .btn-secondary {
+            background: #2196F3;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #1976D2;
+        }
+
+        .btn-warning {
+            background: #FF9800;
+            color: white;
+        }
+
+        .btn-warning:hover {
+            background: #F57C00;
+        }
+
+        .session-selector {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }
+
+        .session-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .session-item {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .session-item:hover {
+            background: #404040;
+            border-color: #4CAF50;
+        }
+
+        .session-item h4 {
+            color: #4CAF50;
+            margin-bottom: 5px;
+        }
+
+        .session-item p {
+            font-size: 0.9em;
+            color: #ccc;
+            margin: 2px 0;
+        }
+
+        .stats-panel {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-item {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .stat-label {
+            font-size: 0.9em;
+            color: #ccc;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .keyboard-shortcuts {
+            background: #333;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 0.9em;
+        }
+
+        .keyboard-shortcuts h4 {
+            color: #4CAF50;
+            margin-bottom: 10px;
+        }
+
+        .shortcut {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+        }
+
+        .key {
+            background: #555;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+            
+            .navigation {
+                flex-direction: column;
+            }
+            
+            .header h1 {
+                font-size: 1.8em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎮 Game State Annotation Tool</h1>
+            <div id="session-info" class="hidden">
+                <p id="session-name"></p>
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progress-fill"></div>
+                </div>
+                <p id="progress-text">0% complete</p>
+            </div>
+        </div>
+
+        <!-- Session Selector -->
+        <div id="session-selector" class="session-selector">
+            <h3>Select Annotation Session</h3>
+            <button id="refresh-sessions" class="action-btn btn-secondary">🔄 Refresh Sessions</button>
+            <div id="session-list" class="session-list">
+                <!-- Sessions will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Main Annotation Interface -->
+        <div id="annotation-interface" class="hidden">
+            <div class="main-content">
+                <!-- Image Panel -->
+                <div class="image-panel">
+                    <div class="image-container">
+                        <img id="frame-image" class="frame-image" src="" alt="Frame">
+                    </div>
+                    
+                    <div class="image-info">
+                        <p><strong>Frame ID:</strong> <span id="frame-id">-</span></p>
+                        <p><strong>Filename:</strong> <span id="frame-filename">-</span></p>
+                        <p><strong>Timestamp:</strong> <span id="frame-timestamp">-</span></p>
+                    </div>
+
+                    <div class="navigation">
+                        <button id="first-btn" class="nav-btn">⏮️ First</button>
+                        <button id="prev-btn" class="nav-btn">⬅️ Previous</button>
+                        <input type="text" id="frame-input" class="frame-input" placeholder="Frame #">
+                        <button id="next-btn" class="nav-btn">Next ➡️</button>
+                        <button id="last-btn" class="nav-btn">Last ⏭️</button>
+                    </div>
+                </div>
+
+                <!-- Annotation Panel -->
+                <div class="annotation-panel">
+                    <div class="annotation-section">
+                        <h3>Game State</h3>
+                        <div class="radio-group" id="game-state-group">
+                            <label class="radio-option">
+                                <input type="radio" name="game-state" value="menu" checked>
+                                <span>🏠 Menu</span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="game-state" value="loading">
+                                <span>⏳ Loading</span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="game-state" value="battle">
+                                <span>⚔️ Battle</span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="game-state" value="final">
+                                <span>🏆 Final</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="annotation-section">
+                        <h3>Importance Level</h3>
+                        <div class="radio-group" id="importance-group">
+                            <label class="radio-option">
+                                <input type="radio" name="importance" value="0">
+                                <span>🔵 Low (0)</span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="importance" value="1" checked>
+                                <span>🟡 Medium (1)</span>
+                            </label>
+                            <label class="radio-option">
+                                <input type="radio" name="importance" value="2">
+                                <span>🔴 High (2)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="annotation-section">
+                        <h3>Notes</h3>
+                        <textarea id="notes-input" class="notes-textarea" placeholder="Add any additional notes..."></textarea>
+                    </div>
+
+                    <div class="action-buttons">
+                        <button id="save-next-btn" class="action-btn btn-primary">💾 Save & Next</button>
+                        <button id="save-btn" class="action-btn btn-secondary">💾 Save</button>
+                        <button id="skip-btn" class="action-btn btn-warning">⏭️ Skip</button>
+                        <button id="export-btn" class="action-btn btn-secondary">📦 Export Dataset</button>
+                    </div>
+
+                    <div class="keyboard-shortcuts">
+                        <h4>⌨️ Keyboard Shortcuts</h4>
+                        <div class="shortcut">
+                            <span>Navigate frames</span>
+                            <span><span class="key">←</span> <span class="key">→</span></span>
+                        </div>
+                        <div class="shortcut">
+                            <span>Save & Next</span>
+                            <span><span class="key">Space</span></span>
+                        </div>
+                        <div class="shortcut">
+                            <span>Game states</span>
+                            <span><span class="key">1</span>-<span class="key">4</span></span>
+                        </div>
+                        <div class="shortcut">
+                            <span>Importance</span>
+                            <span><span class="key">Q</span> <span class="key">W</span> <span class="key">E</span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics Panel -->
+            <div class="stats-panel">
+                <h3>📊 Progress Statistics</h3>
+                <div class="stats-grid" id="stats-grid">
+                    <!-- Stats will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let currentSession = null;
+        let currentFrameIdx = 0;
+        let totalFrames = 0;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadSessions();
+            setupEventListeners();
+            setupKeyboardShortcuts();
+        });
+
+        // Event listeners
+        function setupEventListeners() {
+            document.getElementById('refresh-sessions').addEventListener('click', loadSessions);
+            document.getElementById('first-btn').addEventListener('click', () => goToFrame(0));
+            document.getElementById('prev-btn').addEventListener('click', () => goToFrame(currentFrameIdx - 1));
+            document.getElementById('next-btn').addEventListener('click', () => goToFrame(currentFrameIdx + 1));
+            document.getElementById('last-btn').addEventListener('click', () => goToFrame(totalFrames - 1));
+            document.getElementById('frame-input').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    const frameNum = parseInt(this.value) - 1;
+                    if (frameNum >= 0 && frameNum < totalFrames) {
+                        goToFrame(frameNum);
+                    }
+                }
+            });
+            
+            document.getElementById('save-btn').addEventListener('click', saveAnnotation);
+            document.getElementById('save-next-btn').addEventListener('click', saveAndNext);
+            document.getElementById('skip-btn').addEventListener('click', () => goToFrame(currentFrameIdx + 1));
+            document.getElementById('export-btn').addEventListener('click', exportDataset);
+        }
+
+        // Keyboard shortcuts
+        function setupKeyboardShortcuts() {
+            document.addEventListener('keydown', function(e) {
+                if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+                
+                switch(e.key) {
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        goToFrame(currentFrameIdx - 1);
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        goToFrame(currentFrameIdx + 1);
+                        break;
+                    case ' ':
+                        e.preventDefault();
+                        saveAndNext();
+                        break;
+                    case '1':
+                        setGameState('menu');
+                        break;
+                    case '2':
+                        setGameState('loading');
+                        break;
+                    case '3':
+                        setGameState('battle');
+                        break;
+                    case '4':
+                        setGameState('final');
+                        break;
+                    case 'q':
+                    case 'Q':
+                        setImportance(0);
+                        break;
+                    case 'w':
+                    case 'W':
+                        setImportance(1);
+                        break;
+                    case 'e':
+                    case 'E':
+                        setImportance(2);
+                        break;
+                }
+            });
+        }
+
+        // API calls
+        async function loadSessions() {
+            try {
+                const response = await fetch('/api/sessions');
+                const sessions = await response.json();
+                
+                const sessionList = document.getElementById('session-list');
+                sessionList.innerHTML = '';
+                
+                sessions.forEach(session => {
+                    const sessionDiv = document.createElement('div');
+                    sessionDiv.className = 'session-item';
+                    sessionDiv.innerHTML = `
+                        <h4>${session.session_id}</h4>
+                        <p><strong>Game:</strong> ${session.game_name}</p>
+                        <p><strong>Frames:</strong> ${session.frames_count}</p>
+                        <p><strong>Started:</strong> ${new Date(session.start_time).toLocaleString()}</p>
+                    `;
+                    sessionDiv.addEventListener('click', () => loadSession(session.path));
+                    sessionList.appendChild(sessionDiv);
+                });
+                
+                if (sessions.length === 0) {
+                    sessionList.innerHTML = '<p>No annotation sessions found. Run data collection first.</p>';
+                }
+            } catch (error) {
+                console.error('Error loading sessions:', error);
+            }
+        }
+
+        async function loadSession(sessionPath) {
+            try {
+                const response = await fetch('/api/load_session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session_path: sessionPath })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    currentSession = sessionPath;
+                    totalFrames = result.frames_count;
+                    currentFrameIdx = 0;
+                    
+                    document.getElementById('session-selector').classList.add('hidden');
+                    document.getElementById('annotation-interface').classList.remove('hidden');
+                    document.getElementById('session-info').classList.remove('hidden');
+                    document.getElementById('session-name').textContent = `Session: ${result.session_id}`;
+                    
+                    loadFrame(0);
+                    updateStats();
+                } else {
+                    alert('Error loading session: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error loading session:', error);
+                alert('Error loading session');
+            }
+        }
+
+        async function loadFrame(frameIdx) {
+            try {
+                const response = await fetch(`/api/frame/${frameIdx}`);
+                const data = await response.json();
+                
+                currentFrameIdx = frameIdx;
+                
+                // Update image
+                document.getElementById('frame-image').src = `/api/image/${frameIdx}`;
+                
+                // Update frame info
+                document.getElementById('frame-id').textContent = data.frame_info.frame_id;
+                document.getElementById('frame-filename').textContent = data.frame_info.filename;
+                document.getElementById('frame-timestamp').textContent = data.frame_info.timestamp.toFixed(3) + 's';
+                
+                // Update annotation fields
+                setGameState(data.annotation.game_state);
+                setImportance(data.annotation.importance);
+                document.getElementById('notes-input').value = data.annotation.notes;
+                
+                // Update navigation
+                document.getElementById('frame-input').value = `${frameIdx + 1}/${totalFrames}`;
+                document.getElementById('prev-btn').disabled = frameIdx === 0;
+                document.getElementById('next-btn').disabled = frameIdx === totalFrames - 1;
+                document.getElementById('first-btn').disabled = frameIdx === 0;
+                document.getElementById('last-btn').disabled = frameIdx === totalFrames - 1;
+                
+                updateProgress(data.annotated_frames, data.total_frames);
+                
+            } catch (error) {
+                console.error('Error loading frame:', error);
+            }
+        }
+
+        async function saveAnnotation() {
+            try {
+                const gameState = document.querySelector('input[name="game-state"]:checked').value;
+                const importance = parseInt(document.querySelector('input[name="importance"]:checked').value);
+                const notes = document.getElementById('notes-input').value;
+                
+                const response = await fetch('/api/annotate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        frame_idx: currentFrameIdx,
+                        game_state: gameState,
+                        importance: importance,
+                        notes: notes
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    updateStats();
+                    return true;
+                } else {
+                    alert('Error saving annotation: ' + result.error);
+                    return false;
+                }
+            } catch (error) {
+                console.error('Error saving annotation:', error);
+                return false;
+            }
+        }
+
+        async function saveAndNext() {
+            if (await saveAnnotation()) {
+                if (currentFrameIdx < totalFrames - 1) {
+                    goToFrame(currentFrameIdx + 1);
+                }
+            }
+        }
+
+        async function exportDataset() {
+            const exportPath = prompt('Enter export directory path:', './exported_dataset');
+            if (!exportPath) return;
+            
+            try {
+                const response = await fetch('/api/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ export_path: exportPath })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    alert(`Successfully exported ${result.exported_count} frames to ${result.export_path}`);
+                } else {
+                    alert('Error exporting dataset: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error exporting dataset:', error);
+                alert('Error exporting dataset');
+            }
+        }
+
+        async function updateStats() {
+            try {
+                const response = await fetch('/api/stats');
+                const stats = await response.json();
+                
+                const statsGrid = document.getElementById('stats-grid');
+                statsGrid.innerHTML = `
+                    <div class="stat-item">
+                        <div class="stat-number">${stats.annotated_frames}</div>
+                        <div class="stat-label">Annotated</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">${stats.total_frames}</div>
+                        <div class="stat-label">Total Frames</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">${stats.progress_percent.toFixed(1)}%</div>
+                        <div class="stat-label">Complete</div>
+                    </div>
+                `;
+                
+                // Add state counts
+                Object.entries(stats.state_counts).forEach(([state, count]) => {
+                    const stateDiv = document.createElement('div');
+                    stateDiv.className = 'stat-item';
+                    stateDiv.innerHTML = `
+                        <div class="stat-number">${count}</div>
+                        <div class="stat-label">${state}</div>
+                    `;
+                    statsGrid.appendChild(stateDiv);
+                });
+                
+                updateProgress(stats.annotated_frames, stats.total_frames);
+                
+            } catch (error) {
+                console.error('Error updating stats:', error);
+            }
+        }
+
+        // Helper functions
+        function goToFrame(frameIdx) {
+            if (frameIdx >= 0 && frameIdx < totalFrames) {
+                loadFrame(frameIdx);
+            }
+        }
+
+        function setGameState(state) {
+            document.querySelector(`input[name="game-state"][value="${state}"]`).checked = true;
+        }
+
+        function setImportance(importance) {
+            document.querySelector(`input[name="importance"][value="${importance}"]`).checked = true;
+        }
+
+        function updateProgress(annotated, total) {
+            const percent = total > 0 ? (annotated / total * 100) : 0;
+            document.getElementById('progress-fill').style.width = percent + '%';
+            document.getElementById('progress-text').textContent = `${percent.toFixed(1)}% complete (${annotated}/${total})`;
+        }
+    </script>
+</body>
+</html>
