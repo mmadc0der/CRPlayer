@@ -154,7 +154,7 @@ class GPUAndroidStreamer:
             "show_touches=false",
             "stay_awake=true",
             "video_codec=h264",
-            "cleanup=false",
+            #"cleanup=false",
             "control=false",
             "audio=false"
         ]
