@@ -352,7 +352,7 @@ class StreamProducer:
         
         self.streamer = GPUAndroidStreamer(
             max_fps=60,
-            max_size=1080,
+            max_size=1600,
             video_codec="h264",
             bit_rate="80M",
             use_gpu=True,

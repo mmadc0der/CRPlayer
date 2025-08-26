@@ -24,7 +24,9 @@ class DataCollectorConsumer(StreamConsumer):
                  game_name: str = "unknown_game",
                  save_format: str = "jpg",
                  quality: int = 85,
-                 sample_rate: int = 1):
+                 sample_rate: int = 1,
+                 sparsity_mode: str = "uniform",
+                 max_frames: Optional[int] = None):
         """
         Initialize data collector consumer.
         
@@ -36,7 +38,9 @@ class DataCollectorConsumer(StreamConsumer):
             game_name: Name of the game being recorded
             save_format: Image format (jpg/png)
             quality: JPEG quality (1-100)
-            sample_rate: Save every Nth frame (1 = all frames)
+            sample_rate: Save every Nth frame (1 = all frames, 10 = every 10th frame)
+            sparsity_mode: Sampling mode ('uniform', 'random', 'adaptive')
+            max_frames: Maximum frames to save (None = unlimited)
         """
         super().__init__(consumer_id, stream_buffer)
         
@@ -44,6 +48,12 @@ class DataCollectorConsumer(StreamConsumer):
         self.save_format = save_format.lower()
         self.quality = quality
         self.sample_rate = sample_rate
+        self.sparsity_mode = sparsity_mode
+        self.max_frames = max_frames
+        
+        # Sparsity tracking
+        self.random_threshold = 1.0 / sample_rate if sparsity_mode == "random" else None
+        self.adaptive_counter = 0
         
         # Session management
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -75,15 +85,21 @@ class DataCollectorConsumer(StreamConsumer):
         
         print(f"[DATA] Data collector initialized: {self.session_id}")
         print(f"[DATA] Output directory: {self.session_dir}")
-        print(f"[DATA] Sample rate: 1/{sample_rate} frames")
+        print(f"[DATA] Sample rate: 1/{sample_rate} frames ({sparsity_mode} mode)")
+        if max_frames:
+            print(f"[DATA] Max frames limit: {max_frames}")
     
     def process_frame(self, frame_data: FrameData) -> bool:
         """Save frame to disk with metadata."""
         try:
             self.frame_count += 1
             
-            # Apply sample rate
-            if self.frame_count % self.sample_rate != 0:
+            # Check max frames limit
+            if self.max_frames and self.saved_count >= self.max_frames:
+                return True
+            
+            # Apply sparsity sampling
+            if not self._should_save_frame():
                 return True
             
             # Convert tensor to numpy
@@ -136,6 +152,39 @@ class DataCollectorConsumer(StreamConsumer):
             print(f"[ERROR] Data collector error: {e}")
             return True  # Continue on error
     
+    def _should_save_frame(self) -> bool:
+        """Determine if current frame should be saved based on sparsity mode."""
+        if self.sparsity_mode == "uniform":
+            # Standard uniform sampling - every Nth frame
+            return self.frame_count % self.sample_rate == 0
+        
+        elif self.sparsity_mode == "random":
+            # Random sampling with probability 1/sample_rate
+            import random
+            return random.random() < self.random_threshold
+        
+        elif self.sparsity_mode == "adaptive":
+            # Adaptive sampling - denser at start, sparser later
+            self.adaptive_counter += 1
+            
+            # Start with higher frequency, then reduce
+            if self.saved_count < 100:
+                # First 100 frames: every frame
+                return True
+            elif self.saved_count < 500:
+                # Next 400 frames: every 2nd frame
+                return self.adaptive_counter % 2 == 0
+            elif self.saved_count < 1000:
+                # Next 500 frames: every 5th frame
+                return self.adaptive_counter % 5 == 0
+            else:
+                # After 1000 frames: use specified sample_rate
+                return self.adaptive_counter % self.sample_rate == 0
+        
+        else:
+            # Default to uniform if unknown mode
+            return self.frame_count % self.sample_rate == 0
+    
     def start(self):
         """Start data collection with timing."""
         self.start_time = time.time()
@@ -165,6 +214,7 @@ class DataCollectorConsumer(StreamConsumer):
         print(f"[DATA] Session: {self.session_id}")
         print(f"[DATA] Frames processed: {self.frame_count}")
         print(f"[DATA] Frames saved: {self.saved_count}")
+        print(f"[DATA] Effective sample rate: 1/{self.frame_count/self.saved_count:.1f}" if self.saved_count > 0 else "[DATA] No frames saved")
         print(f"[DATA] Duration: {elapsed:.1f}s")
         print(f"[DATA] Average FPS: {avg_fps:.1f}")
         print(f"[DATA] Total size: {size_mb:.1f}MB")
