@@ -428,7 +428,7 @@ class GPUAndroidStreamer:
                     chunk = self.video_socket.recv(65536)  # Larger buffer for better throughput
                     if not chunk:
                         print("[DEBUG] No data in chunk, waiting...")
-                        time.sleep(0.001)  # Very short sleep
+                        time.sleep(0.1)  # Very short sleep
                         continue
                     print(f"[DEBUG] Received {len(chunk)} bytes")
                 except socket.timeout:
