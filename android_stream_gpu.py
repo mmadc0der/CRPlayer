@@ -506,7 +506,7 @@ class GPUAndroidStreamer:
                             
                 except Exception as e:
                     print(f"Frame processing error: {e}")
-                    continue
+                    exit(1)
                     
         except Exception as e:
             print(f"Streaming error: {e}")
