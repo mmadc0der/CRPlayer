@@ -87,14 +87,12 @@ class GPUAndroidStreamer:
         except Exception as e:
             print(f"Cleanup warning: {e}")
     
-    def setup_adb_tunnel(self) -> Tuple[int, int]:
+    def setup_adb_tunnel(self) -> Tuple[int]:
         """Setup ADB forward tunnel for scrcpy connection."""
         # Clean up any existing servers first
         self.cleanup_existing_servers()
         
-        # Generate random port and session ID (decimal for scid)
         local_port = random.randint(27000, 28000)
-        scid = random.randint(0x10000000, 0xFFFFFFFF)
         
         # Setup forward tunnel (PC -> device)
         tunnel_cmd = ["adb", "forward", f"tcp:{local_port}", "localabstract:scrcpy"]
@@ -113,9 +111,9 @@ class GPUAndroidStreamer:
         list_result = subprocess.run(list_cmd, capture_output=True, text=True)
         print(f"Active tunnels: {list_result.stdout.strip()}")
         
-        return local_port, scid
+        return local_port
     
-    def start_scrcpy_server(self, scid: int) -> subprocess.Popen:
+    def start_scrcpy_server(self) -> subprocess.Popen:
         """Start scrcpy server manually for direct socket access."""
         device_arg = f"-s {self.device_id}" if self.device_id else ""
         
@@ -146,7 +144,6 @@ class GPUAndroidStreamer:
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
             "3.3.1",  # version
-            #f"scid={scid:08x}",
             "raw_stream=true",
             "log_level=debug",
             f"max_size={self.max_size}",
@@ -404,11 +401,11 @@ class GPUAndroidStreamer:
             decoder = self.setup_gpu_decoder()
             
             # Setup ADB tunnel and connect
-            local_port, scid = self.setup_adb_tunnel()
+            local_port = self.setup_adb_tunnel()
             time.sleep(1)  # Wait for tunnel
             
             # Start scrcpy server
-            self.scrcpy_process = self.start_scrcpy_server(scid)
+            self.scrcpy_process = self.start_scrcpy_server()
             print(f"Server process started with PID: {self.scrcpy_process.pid}")
             
             # Connect to video socket (includes server readiness check)
@@ -427,9 +424,18 @@ class GPUAndroidStreamer:
                         break
                     
                     # Read raw H264 data directly (no scrcpy frame headers)
-                    chunk = self.video_socket.recv(8192)
-                    if not chunk:
-                        print("[ERROR] No data received, connection lost")
+                    try:
+                        chunk = self.video_socket.recv(8192)
+                        if not chunk:
+                            print("[DEBUG] No data in chunk, waiting...")
+                            time.sleep(0.1)
+                            continue
+                        print(f"[DEBUG] Received {len(chunk)} bytes")
+                    except socket.timeout:
+                        print("[DEBUG] Socket timeout, continuing...")
+                        continue
+                    except Exception as e:
+                        print(f"[ERROR] Socket error: {e}")
                         break
                     
                     # Accumulate H264 data
@@ -557,12 +563,6 @@ class GPUAndroidStreamer:
         if self.video_socket:
             self.video_socket.close()
             self.video_socket = None
-            # Start scrcpy server
-            self.scrcpy_process = self.start_scrcpy_server(scid)
-            print(f"Server process started with PID: {self.scrcpy_process.pid}")
-            
-            # Connect to video socket (includes server readiness check)
-            self.video_socket = self.connect_video_socket(port)
         
         if self.scrcpy_process:
             self.scrcpy_process.terminate()
