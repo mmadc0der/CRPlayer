@@ -426,50 +426,74 @@ class GPUAndroidStreamer:
                         print("[ERROR] Video socket is None, stopping stream")
                         break
                     
-                    # Read frame header
-                    config_packet, key_frame, pts, packet_size = self.read_frame_header(self.video_socket)
+                    # Read raw H264 data directly (no scrcpy frame headers)
+                    chunk = self.video_socket.recv(8192)
+                    if not chunk:
+                        print("[ERROR] No data received, connection lost")
+                        break
                     
-                    # Read frame data
-                    frame_data = b""
-                    remaining = packet_size
-                    while remaining > 0:
-                        if not self.video_socket:
-                            print("[ERROR] Socket disconnected during frame read")
-                            break
-                        chunk = self.video_socket.recv(min(remaining, 8192))
-                        if not chunk:
-                            print("[ERROR] No data received, connection lost")
-                            break
-                        frame_data += chunk
-                        remaining -= len(chunk)
+                    # Accumulate H264 data
+                    if not hasattr(self, '_h264_buffer'):
+                        self._h264_buffer = b""
                     
-                    if len(frame_data) != packet_size:
-                        continue
+                    self._h264_buffer += chunk
                     
-                    # Decode frame
-                    tensor = self.decode_frame_gpu(frame_data, decoder)
-                    if tensor is not None:
-                        # Update statistics
-                        self.frame_count += 1
-                        current_time = time.time()
-                        if self.start_time:
-                            fps = self.frame_count / (current_time - self.start_time)
-                            self.fps_history.append(fps)
+                    # Look for H264 NAL unit start codes (0x00000001 or 0x000001)
+                    while len(self._h264_buffer) > 4:
+                        # Find next NAL unit
+                        start_pos = -1
+                        for i in range(len(self._h264_buffer) - 3):
+                            if (self._h264_buffer[i:i+4] == b'\x00\x00\x00\x01' or 
+                                self._h264_buffer[i:i+3] == b'\x00\x00\x01'):
+                                start_pos = i
+                                break
                         
-                        # Add to queue (non-blocking)
-                        try:
-                            self.frame_queue.put((tensor, pts, current_time), block=False)
-                        except queue.Full:
-                            # Remove oldest frame if buffer full
+                        if start_pos == -1:
+                            break  # No complete NAL unit yet
+                        
+                        # Find end of this NAL unit (start of next one)
+                        end_pos = len(self._h264_buffer)
+                        for i in range(start_pos + 4, len(self._h264_buffer) - 3):
+                            if (self._h264_buffer[i:i+4] == b'\x00\x00\x00\x01' or 
+                                self._h264_buffer[i:i+3] == b'\x00\x00\x01'):
+                                end_pos = i
+                                break
+                        
+                        if end_pos == len(self._h264_buffer) and len(self._h264_buffer) < 65536:
+                            break  # Wait for more data
+                        
+                        # Extract NAL unit
+                        frame_data = self._h264_buffer[start_pos:end_pos]
+                        self._h264_buffer = self._h264_buffer[end_pos:]
+                        
+                        if len(frame_data) < 10:
+                            continue  # Skip too small frames
+                        
+                        # Decode frame
+                        tensor = self.decode_frame_gpu(frame_data, decoder)
+                        if tensor is not None:
+                            # Update statistics
+                            self.frame_count += 1
+                            current_time = time.time()
+                            if self.start_time:
+                                fps = self.frame_count / (current_time - self.start_time)
+                                self.fps_history.append(fps)
+                            
+                            # Add to queue (non-blocking) - use frame count as pts for raw stream
+                            pts = self.frame_count
                             try:
-                                self.frame_queue.get_nowait()
                                 self.frame_queue.put((tensor, pts, current_time), block=False)
-                            except queue.Empty:
-                                pass
-                        
-                        # Call frame callback if set
-                        if self.frame_callback:
-                            self.frame_callback(tensor, pts, current_time)
+                            except queue.Full:
+                                # Remove oldest frame if buffer full
+                                try:
+                                    self.frame_queue.get_nowait()
+                                    self.frame_queue.put((tensor, pts, current_time), block=False)
+                                except queue.Empty:
+                                    pass
+                            
+                            # Call frame callback if set
+                            if self.frame_callback:
+                                self.frame_callback(tensor, pts, current_time)
                             
                 except Exception as e:
                     print(f"Frame processing error: {e}")
