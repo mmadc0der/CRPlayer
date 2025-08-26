@@ -116,6 +116,7 @@ class GPUAndroidStreamer:
     def start_scrcpy_server(self) -> subprocess.Popen:
         """Start scrcpy server manually for direct socket access."""
         device_arg = f"-s {self.device_id}" if self.device_id else ""
+        device_arg += " -c "
         
         # Push scrcpy server to device
         server_locations = [
@@ -362,9 +363,6 @@ class GPUAndroidStreamer:
     
     def read_frame_header(self, sock: socket.socket) -> Tuple[bool, bool, int, int]:
         """Read scrcpy frame header."""
-        if not sock:
-            raise RuntimeError("Socket is None")
-        
         header_data = sock.recv(12)
         if len(header_data) != 12:
             raise RuntimeError("Failed to read frame header")
