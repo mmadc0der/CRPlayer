@@ -141,20 +141,23 @@ class GPUAndroidStreamer:
         
         # Start server with working arguments from your analysis
         server_cmd = [
-            "adb", device_arg, "shell",
+            "adb", "shell",
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
             "3.3.1",
             "tunnel_forward=true",
-            "control=false", 
+            "control=false",
             "cleanup=false",
             "raw_stream=true",
             "audio=false",
             f"max_size={self.max_size}",
             f"max_fps={self.max_fps}",
-            f"video_bit_rate={self.bit_rate.replace('M', '000000')}",
-            "video_codec=h264",
+            f"video_bit_rate={self.bit_rate}",
+            f"video_codec={self.video_codec}",
             "stay_awake=true",
+            "power_off_on_close=false",
+            "show_touches=false",
+            "disable_screensaver=true",
             "log_level=verbose"
         ]
 
@@ -459,7 +462,7 @@ class GPUAndroidStreamer:
             self.start_time = time.time()
             
             last_data_time = time.time()
-            data_timeout = 5.0  # 5 second timeout for no data
+            data_timeout = 2.0  # 2 second timeout for faster response
             
             while self.is_streaming:
                 try:
@@ -477,7 +480,9 @@ class GPUAndroidStreamer:
                     if e.errno == 10035 or e.errno == 11:  # WSAEWOULDBLOCK or EAGAIN
                         # No data available right now, check for timeout
                         if time.time() - last_data_time > data_timeout:
-                            print(f"[WARNING] No data received for {data_timeout}s - connection may be stalled")
+                            print(f"[WARNING] No data received for {data_timeout}s - attempting to wake device")
+                            # Try to wake up the device/encoder
+                            self._wake_device()
                             last_data_time = time.time()  # Reset to avoid spam
                         time.sleep(0.001)
                         continue
@@ -621,6 +626,16 @@ class GPUAndroidStreamer:
             "frame_count": self.frame_count,
             "buffer_size": self.frame_queue.qsize()
         }
+    
+    def _wake_device(self):
+        """Send a wake signal to the Android device to prevent sleep."""
+        try:
+            # Send a light touch event to keep the encoder active
+            subprocess.run(["adb", "shell", "input", "keyevent", "KEYCODE_WAKEUP"], 
+                         capture_output=True, timeout=2)
+            print("[DEBUG] Sent wake signal to device")
+        except Exception as e:
+            print(f"[DEBUG] Failed to wake device: {e}")
     
     def cleanup(self):
         """Clean up resources."""
