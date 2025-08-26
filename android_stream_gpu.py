@@ -139,25 +139,23 @@ class GPUAndroidStreamer:
         if not server_pushed:
             raise RuntimeError("Could not find or push scrcpy-server")
         
-        # Start server with scrcpy 3.3.1 minimal valid arguments
+        # Start server with working arguments from your analysis
         server_cmd = [
             "adb", device_arg, "shell",
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
-            "3.3.1",  # version
-            "raw_stream=true",
-            "log_level=verbose",
-            f"max_size={self.max_size}",
-            f"video_bit_rate={self.bit_rate.replace('M', '000000')}",
-            f"max_fps={self.max_fps}",
+            "3.3.1",
             "tunnel_forward=true",
-            "send_frame_meta=false",
-            "show_touches=false",
-            "stay_awake=true",
+            "control=false", 
+            "cleanup=false",
+            "raw_stream=true",
+            "audio=false",
+            f"max_size={self.max_size}",
+            f"max_fps={self.max_fps}",
+            f"video_bit_rate={self.bit_rate.replace('M', '000000')}",
             "video_codec=h264",
-            #"cleanup=false",
-            "control=false",
-            "audio=false"
+            "stay_awake=true",
+            "log_level=verbose"
         ]
         
         print(f"Starting scrcpy server: {' '.join(server_cmd)}")
@@ -316,44 +314,18 @@ class GPUAndroidStreamer:
         self.monitor_server_output()
         
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        
+        # Set TCP_NODELAY to disable Nagle algorithm for low latency
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         sock.settimeout(10)  # 10 second timeout
         
         try:
             sock.connect(("localhost", port))
-            print(f"Connected to video socket on port {port}")
+            print(f"Connected to video socket on port {port} with TCP_NODELAY")
             
-            # For standard scrcpy protocol, handle handshake properly
-            print("[DEBUG] Standard scrcpy protocol - handling handshake")
-            sock.settimeout(5)  # 5 second timeout for handshake
-            
-            # Read dummy byte (scrcpy protocol)
-            try:
-                dummy = sock.recv(1)
-                if dummy:
-                    print(f"[DEBUG] Received dummy byte: {dummy.hex()}")
-                else:
-                    print("[DEBUG] No dummy byte received")
-            except socket.timeout:
-                print("[DEBUG] Timeout waiting for dummy byte")
-            
-            # Read device name length and name
-            try:
-                name_length_data = sock.recv(4)
-                if len(name_length_data) == 4:
-                    name_length = struct.unpack(">I", name_length_data)[0]
-                    print(f"[DEBUG] Device name length: {name_length}")
-                    
-                    if name_length > 0 and name_length < 256:
-                        device_name = sock.recv(name_length).decode("utf-8")
-                        print(f"Connected to device: {device_name}")
-                    else:
-                        print("Connected to device: (no name)")
-                else:
-                    print("[DEBUG] Failed to read device name length")
-            except Exception as e:
-                print(f"[DEBUG] Device name read error: {e}")
-            
-            sock.settimeout(None)  # Remove timeout for streaming
+            # For raw_stream=true, no handshake needed - direct H264 stream
+            print("[DEBUG] Raw stream mode - no handshake, expecting direct H264")
+            sock.settimeout(None)  # Remove timeout for streaming - continuous read
             return sock
             
         except Exception as e:
@@ -451,34 +423,60 @@ class GPUAndroidStreamer:
             
             while self.is_streaming:
                 try:
-                    # Validate socket connection
-                    if not self.video_socket:
-                        print("[ERROR] Video socket is None, stopping stream")
-                        break
-                    
-                    # Read scrcpy frame header and data
-                    config_packet, key_frame, pts, packet_size = self.read_frame_header(self.video_socket)
-                    
-                    # Read frame data
-                    frame_data = b""
-                    remaining = packet_size
-                    while remaining > 0:
-                        if not self.video_socket:
-                            print("[ERROR] Socket disconnected during frame read")
-                            break
-                        chunk = self.video_socket.recv(min(remaining, 8192))
-                        if not chunk:
-                            print("[ERROR] No data received, connection lost")
-                            break
-                        frame_data += chunk
-                        remaining -= len(chunk)
-                    
-                    if len(frame_data) != packet_size:
+                    chunk = self.video_socket.recv(65536)  # Larger buffer for better throughput
+                    if not chunk:
+                        print("[DEBUG] No data in chunk, waiting...")
+                        time.sleep(0.001)  # Very short sleep
                         continue
+                    print(f"[DEBUG] Received {len(chunk)} bytes")
+                except socket.timeout:
+                    print("[DEBUG] Socket timeout, continuing...")
+                    continue
+                except Exception as e:
+                    print(f"[ERROR] Socket error: {e}")
+                    break
+                
+                # Accumulate H264 data and find NAL units
+                if not hasattr(self, '_h264_buffer'):
+                    self._h264_buffer = b""
+                
+                self._h264_buffer += chunk
+                
+                # Process complete NAL units
+                while len(self._h264_buffer) > 4:
+                    # Find NAL unit start codes (0x00000001 or 0x000001)
+                    start_pos = -1
+                    for i in range(len(self._h264_buffer) - 3):
+                        if (self._h264_buffer[i:i+4] == b'\x00\x00\x00\x01' or 
+                            self._h264_buffer[i:i+3] == b'\x00\x00\x01'):
+                            start_pos = i
+                            break
+                    
+                    if start_pos == -1:
+                        break  # No complete NAL unit yet
+                    
+                    # Find end of this NAL unit (start of next one)
+                    end_pos = len(self._h264_buffer)
+                    for i in range(start_pos + 4, len(self._h264_buffer) - 3):
+                        if (self._h264_buffer[i:i+4] == b'\x00\x00\x00\x01' or 
+                            self._h264_buffer[i:i+3] == b'\x00\x00\x01'):
+                            end_pos = i
+                            break
+                    
+                    if end_pos == len(self._h264_buffer) and len(self._h264_buffer) < 1048576:  # 1MB limit
+                        break  # Wait for more data
+                    
+                    # Extract NAL unit
+                    frame_data = self._h264_buffer[start_pos:end_pos]
+                    self._h264_buffer = self._h264_buffer[end_pos:]
+                    
+                    if len(frame_data) < 10:
+                        continue  # Skip too small frames
                     
                     # Decode frame
-                    tensor = self.decode_frame_gpu(frame_data, decoder)
-                    if tensor is not None:
+                    try:
+                        tensor = self.decode_frame_gpu(frame_data, decoder)
+                        if tensor is not None:
                             # Update statistics
                             self.frame_count += 1
                             current_time = time.time()
@@ -486,7 +484,8 @@ class GPUAndroidStreamer:
                                 fps = self.frame_count / (current_time - self.start_time)
                                 self.fps_history.append(fps)
                             
-                            # Add to queue (non-blocking) - use actual pts from frame header
+                            # Add to queue (non-blocking) - use frame count as pts for raw stream
+                            pts = self.frame_count
                             try:
                                 self.frame_queue.put((tensor, pts, current_time), block=False)
                             except queue.Full:
@@ -501,9 +500,9 @@ class GPUAndroidStreamer:
                             if self.frame_callback:
                                 self.frame_callback(tensor, pts, current_time)
                             
-                except Exception as e:
-                    print(f"Frame processing error: {e}")
-                    exit(1)
+                    except Exception as e:
+                        print(f"Frame processing error: {e}")
+                        continue
                     
         except Exception as e:
             print(f"Streaming error: {e}")
