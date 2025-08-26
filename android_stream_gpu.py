@@ -116,7 +116,6 @@ class GPUAndroidStreamer:
     def start_scrcpy_server(self) -> subprocess.Popen:
         """Start scrcpy server manually for direct socket access."""
         device_arg = f"-s {self.device_id}" if self.device_id else ""
-        device_arg += " -c "
         
         # Push scrcpy server to device
         server_locations = [
