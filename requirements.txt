@@ -5,3 +5,5 @@ numpy>=1.24.0
 av>=10.0.0
 pillow>=9.5.0
 psutil>=5.9.0
+pyyaml>=6.0.2
+
