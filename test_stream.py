@@ -83,6 +83,8 @@ class StreamingTester:
             monitor_thread = threading.Thread(target=self._monitor_system, daemon=True)
             monitor_thread.start()
             
+            # Run test
+            test_start = time.time()
             while time.time() - test_start < self.test_duration:
                 # Consume frames from buffer to prevent stalling
                 frame_data = streamer.get_latest_frame()
