@@ -144,7 +144,7 @@ class GPUAndroidStreamer:
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
             "3.3.1",  # version
-            "raw_video_stream=true",
+            "raw_stream=true",
             "log_level=debug",
             f"max_size={self.max_size}",
             f"video_bit_rate={self.bit_rate.replace('M', '000000')}",
