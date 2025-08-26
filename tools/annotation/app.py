@@ -29,42 +29,59 @@ def index():
 @app.route('/api/sessions')
 def discover_sessions():
     """Discover available annotation sessions."""
-    sessions = []
-    
-    # Search directories for sessions (new structure + legacy)
-    search_dirs = [
-        'data/raw',
-        'data/annotated',
-        'production_data',
-        'collected_data', 
-        'markup_data',
-        'sparse_data',
-        '.'
-    ]
-    
-    for search_dir in search_dirs:
-        search_path = Path(search_dir)
-        if search_path.exists():
-            for item in search_path.iterdir():
-                if item.is_dir():
-                    metadata_file = item / "metadata.json"
-                    if metadata_file.exists():
-                        try:
-                            with open(metadata_file, 'r') as f:
-                                metadata = json.load(f)
-                            
-                            sessions.append({
-                                'path': str(item),
-                                'session_id': metadata.get('session_id', item.name),
-                                'game_name': metadata.get('game_name', 'unknown'),
-                                'frames_count': len(metadata.get('frames', [])),
-                                'start_time': metadata.get('start_time', 'unknown')
-                            })
-                        except Exception as e:
-                            print(f"Error reading metadata from {metadata_file}: {e}")
-                            continue
-    
-    return jsonify(sessions)
+    try:
+        sessions = []
+        
+        # Search directories for sessions (new structure + legacy)
+        search_dirs = [
+            'data/raw',
+            'data/annotated',
+            'production_data',
+            'collected_data', 
+            'markup_data',
+            'sparse_data',
+            '.'
+        ]
+        
+        print(f"[DEBUG] Searching for sessions in: {search_dirs}")
+        print(f"[DEBUG] Current working directory: {Path.cwd()}")
+        
+        for search_dir in search_dirs:
+            search_path = Path(search_dir)
+            print(f"[DEBUG] Checking directory: {search_path} (exists: {search_path.exists()})")
+            
+            if search_path.exists():
+                for item in search_path.iterdir():
+                    if item.is_dir():
+                        print(f"[DEBUG] Found directory: {item}")
+                        metadata_file = item / "metadata.json"
+                        print(f"[DEBUG] Looking for metadata: {metadata_file} (exists: {metadata_file.exists()})")
+                        
+                        if metadata_file.exists():
+                            try:
+                                with open(metadata_file, 'r') as f:
+                                    metadata = json.load(f)
+                                
+                                session_info = {
+                                    'path': str(item),
+                                    'session_id': metadata.get('session_id', item.name),
+                                    'game_name': metadata.get('game_name', 'unknown'),
+                                    'frames_count': len(metadata.get('frames', [])),
+                                    'start_time': metadata.get('start_time', 'unknown')
+                                }
+                                sessions.append(session_info)
+                                print(f"[DEBUG] Added session: {session_info}")
+                                
+                            except Exception as e:
+                                print(f"[ERROR] Error reading metadata from {metadata_file}: {e}")
+                                continue
+        
+        print(f"[DEBUG] Total sessions found: {len(sessions)}")
+        return jsonify(sessions)
+        
+    except Exception as e:
+        print(f"[ERROR] Exception in discover_sessions: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/load_session', methods=['POST'])
