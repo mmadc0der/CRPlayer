@@ -458,6 +458,9 @@ class GPUAndroidStreamer:
             
             self.start_time = time.time()
             
+            last_data_time = time.time()
+            data_timeout = 5.0  # 5 second timeout for no data
+            
             while self.is_streaming:
                 try:
                     # Non-blocking receive with proper error handling
@@ -465,11 +468,17 @@ class GPUAndroidStreamer:
                     if not chunk:
                         print("[DEBUG] Connection closed by server")
                         break
-                    print(f"[DEBUG] Received {len(chunk)} bytes")
+                    
+                    last_data_time = time.time()
+                    if len(chunk) > 1000:  # Only log large chunks to reduce spam
+                        print(f"[DEBUG] Received {len(chunk)} bytes")
                     
                 except socket.error as e:
                     if e.errno == 10035 or e.errno == 11:  # WSAEWOULDBLOCK or EAGAIN
-                        # No data available right now, wait briefly
+                        # No data available right now, check for timeout
+                        if time.time() - last_data_time > data_timeout:
+                            print(f"[WARNING] No data received for {data_timeout}s - connection may be stalled")
+                            last_data_time = time.time()  # Reset to avoid spam
                         time.sleep(0.001)
                         continue
                     else:
@@ -524,10 +533,9 @@ class GPUAndroidStreamer:
                     
                     # Decode frame
                     try:
-                        print(f"[DEBUG] Attempting to decode NAL unit of {len(frame_data)} bytes")
                         tensor = self.decode_frame_gpu(frame_data, decoder)
                         if tensor is not None:
-                            print(f"[DEBUG] Successfully decoded frame: {tensor.shape}")
+                            print(f"[DEBUG] Successfully decoded frame #{self.frame_count + 1}: {tensor.shape}")
                             # Update statistics
                             self.frame_count += 1
                             current_time = time.time()

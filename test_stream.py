@@ -85,6 +85,10 @@ class StreamingTester:
             
             # Run test
             test_start = time.time()
+            last_frame_count = 0
+            stats_interval = 2.0  # Print stats every 2 seconds
+            last_stats_time = test_start
+            
             while time.time() - test_start < self.test_duration:
                 # Consume frames from buffer to prevent stalling
                 frame_data = streamer.get_latest_frame()
@@ -94,8 +98,17 @@ class StreamingTester:
                     pass
                 
                 time.sleep(0.001)
-                stats = streamer.get_fps_stats()
-                print(f"Stream stats: {stats}")
+                
+                # Print stats less frequently
+                current_time = time.time()
+                if current_time - last_stats_time >= stats_interval:
+                    stats = streamer.get_fps_stats()
+                    if stats['frame_count'] != last_frame_count:
+                        print(f"Stream stats: {stats}")
+                        last_frame_count = stats['frame_count']
+                    else:
+                        print(f"[WARNING] Frame count stuck at {stats['frame_count']} - streaming may have stalled")
+                    last_stats_time = current_time
             
             # Final results
             self._print_results(streamer)
