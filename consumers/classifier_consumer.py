@@ -9,7 +9,7 @@ import numpy as np
 from typing import Optional, List
 import time
 
-from stream_pipeline import StreamConsumer, FrameData
+from core.stream_pipeline import StreamConsumer, FrameData
 
 
 class ClassifierConsumer(StreamConsumer):
@@ -48,7 +48,7 @@ class ClassifierConsumer(StreamConsumer):
     def _load_model(self, model_path: str):
         """Load classification model."""
         try:
-            from game_state_classifier import TinyGameStateClassifier
+            from analysis.game_state_classifier import TinyGameStateClassifier
             import torchvision.transforms as transforms
             
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

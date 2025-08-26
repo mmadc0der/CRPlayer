@@ -14,7 +14,7 @@ from typing import Optional, Dict, Any
 import torch
 import cv2
 import numpy as np
-from android_stream_gpu import GPUAndroidStreamer
+from streamer.android_stream_gpu import GPUAndroidStreamer
 
 
 class GameDataCollector:

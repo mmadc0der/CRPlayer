@@ -15,7 +15,7 @@ from pathlib import Path
 import time
 import threading
 
-from pipeline_demo import PipelineManager
+from core.stream_pipeline import PipelineManager
 
 
 class PipelineScript:

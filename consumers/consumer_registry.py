@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 import threading
 import time
 
-from stream_pipeline import StreamConsumer, SharedStreamBuffer
+from core.stream_pipeline import StreamConsumer, SharedStreamBuffer
 
 
 class ConsumerFactory(ABC):
@@ -32,7 +32,7 @@ class DataCollectorFactory(ConsumerFactory):
     
     def create_consumer(self, consumer_id: str, stream_buffer: SharedStreamBuffer, 
                        **kwargs) -> StreamConsumer:
-        from data_collector_consumer import DataCollectorConsumer
+        from .data_collector_consumer import DataCollectorConsumer
         return DataCollectorConsumer(consumer_id, stream_buffer, **kwargs)
     
     def get_consumer_type(self) -> str:
@@ -44,7 +44,7 @@ class ClassifierFactory(ConsumerFactory):
     
     def create_consumer(self, consumer_id: str, stream_buffer: SharedStreamBuffer, 
                        **kwargs) -> StreamConsumer:
-        from classifier_consumer import ClassifierConsumer
+        from .classifier_consumer import ClassifierConsumer
         return ClassifierConsumer(consumer_id, stream_buffer, **kwargs)
     
     def get_consumer_type(self) -> str:

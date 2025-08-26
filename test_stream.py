@@ -7,7 +7,7 @@ import time
 import torch
 import psutil
 import threading
-from android_stream_gpu import GPUAndroidStreamer
+from streamer.android_stream_gpu import GPUAndroidStreamer
 
 
 class StreamingTester:

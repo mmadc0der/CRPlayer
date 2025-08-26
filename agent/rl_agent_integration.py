@@ -9,7 +9,7 @@ import numpy as np
 import time
 from collections import deque
 from typing import Dict, Any, Optional
-from android_stream_gpu import GPUAndroidStreamer
+from streamer.android_stream_gpu import GPUAndroidStreamer
 
 
 class AndroidGameEnvironment:

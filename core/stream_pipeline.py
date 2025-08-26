@@ -348,7 +348,7 @@ class StreamProducer:
         self._thread = None
         
         # Import here to avoid circular dependency
-        from android_stream_gpu import GPUAndroidStreamer
+        from streamer.android_stream_gpu import GPUAndroidStreamer
         
         self.streamer = GPUAndroidStreamer(
             max_fps=60,

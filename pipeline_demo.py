@@ -8,9 +8,9 @@ import threading
 import time
 from typing import Dict, List, Optional
 
-from stream_pipeline import SharedStreamBuffer, StreamProducer
-from consumer_registry import ConsumerRegistry, ConsumerBuilder
-from android_stream_gpu import GPUAndroidStreamer
+from core.stream_pipeline import SharedStreamBuffer, StreamProducer
+from consumers.consumer_registry import ConsumerRegistry, ConsumerBuilder
+from streamer.android_stream_gpu import GPUAndroidStreamer
 
 
 class PipelineManager:

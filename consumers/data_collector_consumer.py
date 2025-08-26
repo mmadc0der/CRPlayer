@@ -12,7 +12,7 @@ import json
 import time
 from datetime import datetime
 
-from stream_pipeline import StreamConsumer, FrameData
+from core.stream_pipeline import StreamConsumer, FrameData
 
 
 class DataCollectorConsumer(StreamConsumer):

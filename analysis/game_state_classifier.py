@@ -401,7 +401,7 @@ def train_game_state_classifier(annotation_file: str,
 
 def test_real_time_classification():
     """Test real-time classification with live stream."""
-    from android_stream_gpu import GPUAndroidStreamer
+    from streamer.android_stream_gpu import GPUAndroidStreamer
     
     # Load trained model
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
