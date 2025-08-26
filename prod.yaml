@@ -1,0 +1,22 @@
+# Production Pipeline Configuration
+# Optimized for data collection with monitoring
+
+settings:
+  auto_start: true
+
+consumers:
+  # Main data collector - sparse sampling for efficient collection
+  - type: data_collector
+    id: prod_collector
+    output_dir: production_data
+    session_name: prod_session
+    game_name: clash_royale
+    save_format: jpg
+    quality: 85
+    sample_rate: 10
+    sparsity_mode: uniform
+
+  # Performance monitor
+  - type: monitor
+    id: prod_monitor
+    stats_interval: 5.0

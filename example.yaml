@@ -1,0 +1,67 @@
+# Example Pipeline Configuration
+# Shows all available consumer types with their options
+
+settings:
+  auto_start: true
+  duration: 120  # Run for 2 minutes
+  wait_for_completion: false
+
+consumers:
+  # Data Collector - Full featured example
+  - type: data_collector
+    id: example_collector
+    output_dir: example_data
+    session_name: example_session
+    game_name: clash_royale
+    save_format: jpg
+    quality: 85
+    sample_rate: 5  # Every 5th frame
+    sparsity_mode: uniform
+    max_frames: 500
+
+  # Data Collector - Sparse for markup
+  - type: data_collector
+    id: markup_collector
+    output_dir: markup_data
+    session_name: markup_session
+    game_name: clash_royale
+    save_format: png
+    quality: 95
+    sample_rate: 30  # Every 30th frame (~2 FPS at 60 FPS input)
+    sparsity_mode: uniform
+    max_frames: 200
+
+  # Data Collector - Adaptive sampling
+  - type: data_collector
+    id: adaptive_collector
+    output_dir: adaptive_data
+    session_name: adaptive_session
+    sample_rate: 20
+    sparsity_mode: adaptive
+    max_frames: 1000
+
+  # Data Collector - Random sampling
+  - type: data_collector
+    id: random_collector
+    output_dir: random_data
+    session_name: random_session
+    sample_rate: 15
+    sparsity_mode: random
+    max_frames: 300
+
+  # Game State Classifier
+  - type: classifier
+    id: game_classifier
+    model_path: best_game_state_model.pth  # Optional - will skip if file doesn't exist
+    classification_interval: 30  # Classify every 30th frame
+    confidence_threshold: 0.7
+
+  # Performance Monitor - Detailed stats
+  - type: monitor
+    id: detailed_monitor
+    stats_interval: 3.0
+
+  # Performance Monitor - Quick stats
+  - type: monitor
+    id: quick_monitor
+    stats_interval: 10.0
