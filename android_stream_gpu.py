@@ -145,7 +145,7 @@ class GPUAndroidStreamer:
             "app_process", "/", "com.genymobile.scrcpy.Server",
             "3.3.1",  # version
             "raw_stream=true",
-            "log_level=debug",
+            "log_level=verbose",
             f"max_size={self.max_size}",
             f"video_bit_rate={self.bit_rate.replace('M', '000000')}",
             f"max_fps={self.max_fps}",
@@ -165,9 +165,9 @@ class GPUAndroidStreamer:
         process = subprocess.Popen(
             server_cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr into stdout
+            stderr=subprocess.PIPE,
             text=True,
-            bufsize=0  # Unbuffered for real-time output
+            bufsize=1
         )
         
         # Start monitoring immediately
@@ -240,64 +240,39 @@ class GPUAndroidStreamer:
                         print(f"[ERROR] Server process exited with code: {poll_result}")
                         # Get remaining output
                         try:
-                            remaining_output = self.scrcpy_process.stdout.read()
-                            if remaining_output:
-                                print(f"[SERVER FINAL] {remaining_output}")
+                            stdout, stderr = self.scrcpy_process.communicate(timeout=2)
+                            if stdout:
+                                print(f"[SERVER STDOUT FINAL] {stdout}")
+                            if stderr:
+                                print(f"[SERVER STDERR FINAL] {stderr}")
                         except:
                             pass
                         break
                     
-                    # Try to read output non-blocking
+                    # Read stdout line by line with timeout
                     try:
-                        if self.scrcpy_process and self.scrcpy_process.stdout:
-                            # Use readline with timeout simulation
-                            import select
-                            import sys
-                            
-                            if sys.platform != 'win32':
-                                # Unix-like systems - use select
-                                ready, _, _ = select.select([self.scrcpy_process.stdout], [], [], 0.1)
-                                if ready:
-                                    line = self.scrcpy_process.stdout.readline()
-                                    if line:
-                                        print(f"[SERVER] {line.strip()}")
-                            else:
-                                # Windows - read with timeout
-                                import threading
-                                import queue
+                        if self.scrcpy_process.stdout:
+                            line = self.scrcpy_process.stdout.readline()
+                            if line:
+                                print(f"[SERVER STDOUT] {line.strip()}")
+                        
+                        if self.scrcpy_process.stderr:
+                            line = self.scrcpy_process.stderr.readline()
+                            if line:
+                                print(f"[SERVER STDERR] {line.strip()}")
                                 
-                                def enqueue_output(out, queue):
-                                    try:
-                                        for line in iter(out.readline, ''):
-                                            queue.put(line)
-                                    except:
-                                        pass
-                                
-                                if not hasattr(self, '_output_queue'):
-                                    self._output_queue = queue.Queue()
-                                    self._output_thread = threading.Thread(
-                                        target=enqueue_output, 
-                                        args=(self.scrcpy_process.stdout, self._output_queue),
-                                        daemon=True
-                                    )
-                                    self._output_thread.start()
-                                
-                                try:
-                                    line = self._output_queue.get_nowait()
-                                    if line:
-                                        print(f"[SERVER] {line.strip()}")
-                                except queue.Empty:
-                                    pass
-                                    
                     except Exception as e:
                         print(f"Error reading server output: {e}")
                         
                     time.sleep(0.1)
-                        
+                    
                 except Exception as e:
-                    print(f"Error monitoring server: {e}")
+                    print(f"Monitor error: {e}")
                     break
+            
+            print("[MONITOR] Server output monitoring stopped")
         
+        # Start monitoring thread
         monitor_thread = threading.Thread(target=read_output, daemon=True)
         monitor_thread.start()
     
