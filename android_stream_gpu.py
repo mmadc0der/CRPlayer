@@ -154,11 +154,10 @@ class GPUAndroidStreamer:
             "show_touches=false",
             "stay_awake=true",
             "video_codec=h264",
+            "cleanup=false",
+            "control=false",
             "audio=false"
         ]
-        
-        # Remove empty args
-        server_cmd = [arg for arg in server_cmd if arg.strip()]
         
         print(f"Starting scrcpy server: {' '.join(server_cmd)}")
         
