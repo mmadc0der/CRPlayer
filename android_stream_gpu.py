@@ -152,7 +152,7 @@ class GPUAndroidStreamer:
             "audio=false",
             f"max_size={self.max_size}",
             f"max_fps={self.max_fps}",
-            f"video_bit_rate={self.bit_rate}",
+            f"video_bit_rate={int(self.bit_rate[:-1]) * 1024**2 if self.bit_rate[-1] == 'M' else self.bit_rate}",
             f"video_codec={self.video_codec}",
             "stay_awake=true",
             "power_off_on_close=false",
