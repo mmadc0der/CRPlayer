@@ -94,11 +94,10 @@ class GPUAndroidStreamer:
         
         # Generate random port and session ID (decimal for scid)
         local_port = random.randint(27000, 28000)
-        device_port = random.randint(27000, 28000)
         scid = random.randint(0x10000000, 0xFFFFFFFF)
         
         # Setup forward tunnel (PC -> device)
-        tunnel_cmd = ["adb", "forward", f"tcp:{local_port}", f"tcp:{device_port}"]
+        tunnel_cmd = ["adb", "forward", f"tcp:{local_port}", "localabstract:scrcpy"]
         print(f"Setting up ADB forward tunnel: {' '.join(tunnel_cmd)}")
         result = subprocess.run(tunnel_cmd, capture_output=True, text=True)
         
@@ -107,7 +106,7 @@ class GPUAndroidStreamer:
             print(f"ADB tunnel failed - STDERR: {result.stderr}")
             raise RuntimeError(f"Failed to setup ADB tunnel: {result.stderr}")
         
-        print(f"[OK] ADB forward tunnel setup: localhost:{local_port} -> device:{device_port}")
+        print(f"[OK] ADB forward tunnel setup: localhost:{local_port} -> device:localabstract:scrcpy")
         
         # Verify tunnel is active
         list_cmd = ["adb", "forward", "--list"]
@@ -147,18 +146,19 @@ class GPUAndroidStreamer:
             f"CLASSPATH=/data/local/tmp/scrcpy-server.jar",
             "app_process", "/", "com.genymobile.scrcpy.Server",
             "3.3.1",  # version
-            f"scid={scid:08x}",
+            #f"scid={scid:08x}",
+            "raw_stream=true",
             "log_level=debug",
             f"max_size={self.max_size}",
             f"video_bit_rate={self.bit_rate.replace('M', '000000')}",  # correct parameter name
             f"max_fps={self.max_fps}",
             "tunnel_forward=true",
             "send_frame_meta=false",
-            "control=false",
-            "display_id=0",
             "show_touches=false",
             "stay_awake=true",
             "video_codec=h265",
+            "cleanup=false",
+            "control=false",
             "audio=false"
         ]
         
