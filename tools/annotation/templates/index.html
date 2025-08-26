@@ -551,7 +551,7 @@
         // API calls
         async function loadSessions() {
             try {
-                const response = await fetch('/api/sessions');
+                const response = await fetch('./api/sessions');
                 const sessions = await response.json();
                 
                 const sessionList = document.getElementById('session-list');
@@ -580,7 +580,7 @@
 
         async function loadSession(sessionPath) {
             try {
-                const response = await fetch('/api/load_session', {
+                const response = await fetch('./api/load_session', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ session_path: sessionPath })
@@ -610,13 +610,13 @@
 
         async function loadFrame(frameIdx) {
             try {
-                const response = await fetch(`/api/frame/${frameIdx}`);
+                const response = await fetch(`./api/frame/${frameIdx}`);
                 const data = await response.json();
                 
                 currentFrameIdx = frameIdx;
                 
                 // Update image
-                document.getElementById('frame-image').src = `/api/image/${frameIdx}`;
+                document.getElementById('frame-image').src = `./api/image/${frameIdx}`;
                 
                 // Update frame info
                 document.getElementById('frame-id').textContent = data.frame_info.frame_id;
@@ -648,7 +648,7 @@
                 const importance = parseInt(document.querySelector('input[name="importance"]:checked').value);
                 const notes = document.getElementById('notes-input').value;
                 
-                const response = await fetch('/api/annotate', {
+                const response = await fetch('./api/annotate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -686,7 +686,7 @@
             if (!exportPath) return;
             
             try {
-                const response = await fetch('/api/export', {
+                const response = await fetch('./api/export', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ export_path: exportPath })
@@ -706,7 +706,7 @@
 
         async function updateStats() {
             try {
-                const response = await fetch('/api/stats');
+                const response = await fetch('./api/stats');
                 const stats = await response.json();
                 
                 const statsGrid = document.getElementById('stats-grid');
