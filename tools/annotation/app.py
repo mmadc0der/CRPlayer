@@ -156,16 +156,40 @@ def serve_image(frame_idx):
     """Serve frame image."""
     global session_data, session_dir
     
-    if not session_data or frame_idx >= len(session_data['frames']):
-        return "Image not found", 404
+    print(f"[DEBUG] Image request for frame_idx: {frame_idx}")
+    print(f"[DEBUG] Session data loaded: {session_data is not None}")
+    print(f"[DEBUG] Session dir: {session_dir}")
+    
+    if not session_data:
+        print(f"[ERROR] No session data loaded")
+        return "No session loaded", 404
+        
+    if frame_idx >= len(session_data['frames']):
+        print(f"[ERROR] Frame index {frame_idx} out of range (max: {len(session_data['frames'])-1})")
+        return "Frame index out of range", 404
     
     frame_info = session_data['frames'][frame_idx]
+    print(f"[DEBUG] Frame info: {frame_info}")
+    
+    # Check if we need to look in frames subdirectory
     image_path = session_dir / frame_info['filename']
+    frames_path = session_dir / 'frames' / frame_info['filename']
     
-    if not image_path.exists():
+    print(f"[DEBUG] Checking image path: {image_path}")
+    print(f"[DEBUG] Image exists at main path: {image_path.exists()}")
+    print(f"[DEBUG] Checking frames subdir: {frames_path}")
+    print(f"[DEBUG] Image exists at frames path: {frames_path.exists()}")
+    
+    # Try frames subdirectory first (new structure)
+    if frames_path.exists():
+        print(f"[DEBUG] Serving from frames subdir: {frames_path}")
+        return send_file(frames_path)
+    elif image_path.exists():
+        print(f"[DEBUG] Serving from main dir: {image_path}")
+        return send_file(image_path)
+    else:
+        print(f"[ERROR] Image not found at either location")
         return "Image not found", 404
-    
-    return send_file(image_path)
 
 
 @app.route('/api/annotate', methods=['POST'])
