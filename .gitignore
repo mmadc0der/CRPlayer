@@ -3,3 +3,10 @@ __pycache__
 *_data
 *.log
 .env
+
+# Data directories
+data/raw/
+data/annotated/
+data/datasets/
+data/models/
+data/temp/

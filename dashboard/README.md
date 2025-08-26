@@ -11,7 +11,6 @@ cd dashboard && cp .env.example .env
 docker stop crplayer-dashboard
 
 # Start the dashboard stack
-cd dashboard
 docker-compose up -d
 
 # Check status
