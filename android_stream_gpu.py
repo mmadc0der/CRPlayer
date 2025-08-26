@@ -25,7 +25,7 @@ class GPUAndroidStreamer:
                  device_id: Optional[str] = None,
                  max_fps: int = 60,
                  max_size: int = 1920,
-                 video_codec: str = "h265",
+                 video_codec: str = "h264",
                  bit_rate: str = "8M",
                  use_gpu: bool = True,
                  buffer_size: int = 30):
