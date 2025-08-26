@@ -62,7 +62,7 @@ class DataCollectorConsumer(StreamConsumer):
         else:
             session_name = f"{game_name}_{session_name}_{timestamp}_{unique_id[:8]}"
         self.game_name = game_name
-        self.session_name = session_name
+        self.session_id = session_name
         
         # Create session directory
         self.session_dir = self.output_dir / session_name
@@ -215,7 +215,7 @@ class DataCollectorConsumer(StreamConsumer):
             "created_at": self.session_metadata["start_time"],
             "frame_count": self.saved_count,
             "game_name": self.game_name,
-            "session_name": self.session_name,
+            "session_name": self.session_id,
             "resolution": "800x360",  # TODO: Get from actual frame data
             "fps": round(avg_fps, 2),
             "size_mb": round(size_mb, 2),
