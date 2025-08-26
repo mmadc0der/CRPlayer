@@ -252,9 +252,9 @@ class GPUAndroidStreamer:
                             pass
                         break
                     
-                    # Read output line by line
+                    # Try to read output non-blocking
                     try:
-                        if self.scrcpy_process.stdout:
+                        if self.scrcpy_process and self.scrcpy_process.stdout:
                             # Use readline with timeout simulation
                             import select
                             import sys
@@ -327,27 +327,9 @@ class GPUAndroidStreamer:
             sock.connect(("localhost", port))
             print(f"Connected to video socket on port {port}")
             
-            # For forward tunnel, check if we need to send dummy byte first
-            print("[DEBUG] Attempting to receive dummy byte...")
-            sock.settimeout(5)  # 5 second timeout for handshake
-            
-            try:
-                dummy = sock.recv(1)
-                if not dummy:
-                    print("[DEBUG] No dummy byte received, trying to send one...")
-                    # For forward tunnel, we might need to send dummy byte first
-                    sock.send(b'\x00')
-                    dummy = sock.recv(1)
-                    if not dummy:
-                        raise RuntimeError("Failed to receive dummy byte after sending")
-                print(f"[DEBUG] Received dummy byte: {dummy.hex()}")
-            except socket.timeout:
-                print("[DEBUG] Timeout receiving dummy byte, trying to send one...")
-                sock.send(b'\x00')
-                dummy = sock.recv(1)
-                if not dummy:
-                    raise RuntimeError("Failed to receive dummy byte after timeout")
-                print(f"[DEBUG] Received dummy byte after send: {dummy.hex()}")
+            # For tunnel_forward=true, skip dummy byte exchange and go straight to device name
+            print("[DEBUG] Forward tunnel mode - skipping dummy byte exchange")
+            sock.settimeout(10)  # 10 second timeout for handshake
             
             # Read device name length and name
             print("[DEBUG] Reading device name length...")
