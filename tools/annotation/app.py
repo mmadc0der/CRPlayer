@@ -27,20 +27,23 @@ def index():
 
 
 @app.route('/api/sessions')
-def list_sessions():
-    """List available annotation sessions."""
-    data_dirs = []
+def discover_sessions():
+    """Discover available annotation sessions."""
+    sessions = []
     
-    # Look for session directories in common locations
-    search_paths = [
-        Path.cwd() / "production_data",
-        Path.cwd() / "collected_data",
-        Path.cwd() / "markup_data",
-        Path.cwd() / "sparse_data",
-        Path.cwd()
+    # Search directories for sessions (new structure + legacy)
+    search_dirs = [
+        'data/raw',
+        'data/annotated',
+        'production_data',
+        'collected_data', 
+        'markup_data',
+        'sparse_data',
+        '.'
     ]
     
-    for search_path in search_paths:
+    for search_dir in search_dirs:
+        search_path = Path(search_dir)
         if search_path.exists():
             for item in search_path.iterdir():
                 if item.is_dir():

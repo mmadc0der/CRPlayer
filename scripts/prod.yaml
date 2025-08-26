@@ -8,8 +8,8 @@ consumers:
   # Main data collector - sparse sampling for efficient collection
   - type: data_collector
     id: prod_collector
-    output_dir: production_data
-    session_name: prod_session
+    output_dir: data/raw
+    session_name: null
     game_name: clash_royale
     save_format: jpg
     quality: 85

@@ -19,9 +19,9 @@ class DataCollectorConsumer(StreamConsumer):
     """Consumer that saves frames to disk for training data with metadata."""
     
     def __init__(self, consumer_id: str, stream_buffer, 
-                 output_dir: str = "collected_data",
+                 output_dir: str = "data/raw",
                  session_name: Optional[str] = None,
-                 game_name: str = "unknown_game",
+                 game_name: str = "clash_royale",
                  save_format: str = "jpg",
                  quality: int = 85,
                  sample_rate: int = 1,
@@ -53,15 +53,19 @@ class DataCollectorConsumer(StreamConsumer):
         
         # Sparsity tracking
         self.random_threshold = 1.0 / sample_rate if sparsity_mode == "random" else None
-        self.adaptive_counter = 0
-        
-        # Session management
+        # Generate unique session name with meaningful prefix
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.session_id = session_name or f"session_{timestamp}"
+        import uuid
+        unique_id = str(uuid.uuid4())
+        if session_name is None:
+            session_name = f"{game_name}_{timestamp}_{unique_id}"
+        else:
+            session_name = f"{game_name}_{session_name}_{timestamp}_{unique_id[:8]}"
         self.game_name = game_name
+        self.session_name = session_name
         
         # Create session directory
-        self.session_dir = self.output_dir / self.session_id
+        self.session_dir = self.output_dir / session_name
         self.session_dir.mkdir(parents=True, exist_ok=True)
         
         # Counters
@@ -200,15 +204,31 @@ class DataCollectorConsumer(StreamConsumer):
         self.session_metadata["frames_processed"] = self.frame_count
         self.session_metadata["frames_saved"] = self.saved_count
         
+        # Calculate stats for status tracking
+        elapsed = time.time() - self.start_time if hasattr(self, 'start_time') else 0
+        avg_fps = self.saved_count / elapsed if elapsed > 0 else 0
+        size_mb = self._get_session_size()
+        
+        # Create status.json for workflow tracking
+        status_data = {
+            "status": "captured",
+            "created_at": self.session_metadata["start_time"],
+            "frame_count": self.saved_count,
+            "game_name": self.game_name,
+            "session_name": self.session_name,
+            "resolution": "800x360",  # TODO: Get from actual frame data
+            "fps": round(avg_fps, 2),
+            "size_mb": round(size_mb, 2),
+            "next_step": "annotation"
+        }
+        status_path = self.session_dir / "status.json"
+        with open(status_path, 'w') as f:
+            json.dump(status_data, f, indent=2)
+        
         # Save session metadata
         metadata_path = self.session_dir / "metadata.json"
         with open(metadata_path, 'w') as f:
             json.dump(self.session_metadata, f, indent=2)
-        
-        # Print final stats
-        elapsed = time.time() - self.start_time if hasattr(self, 'start_time') else 0
-        avg_fps = self.saved_count / elapsed if elapsed > 0 else 0
-        size_mb = self._get_session_size()
         
         print(f"[DATA] Collection completed!")
         print(f"[DATA] Session: {self.session_id}")

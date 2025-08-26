@@ -8,10 +8,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ../production_data:/app/production_data:ro
-      - ../collected_data:/app/collected_data:ro
-      - ../markup_data:/app/markup_data:rw
-      - ../sparse_data:/app/sparse_data:ro
+      - ../data:/app/data:rw
     environment:
       - FLASK_ENV=production
       - FLASK_HOST=0.0.0.0
