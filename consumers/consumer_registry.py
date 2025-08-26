@@ -56,7 +56,7 @@ class MonitoringFactory(ConsumerFactory):
     
     def create_consumer(self, consumer_id: str, stream_buffer: SharedStreamBuffer, 
                        **kwargs) -> StreamConsumer:
-        from data_collector_consumer import MonitoringConsumer
+        from .data_collector_consumer import MonitoringConsumer
         return MonitoringConsumer(consumer_id, stream_buffer, **kwargs)
     
     def get_consumer_type(self) -> str:
