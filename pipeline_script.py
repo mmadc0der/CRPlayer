@@ -152,7 +152,14 @@ class PipelineScript:
                         self.manager.stop_pipeline()
                 
                 else:
-                    print("[SCRIPT] Pipeline started. Use interactive commands or Ctrl+C to stop.")
+                    print("[SCRIPT] Pipeline started. Press Ctrl+C to stop.")
+                    # Keep main thread alive
+                    try:
+                        while True:
+                            time.sleep(1)
+                    except KeyboardInterrupt:
+                        print("\n[SCRIPT] Interrupted, stopping pipeline...")
+                        self.manager.stop_pipeline()
             
             return True
             
