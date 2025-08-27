@@ -241,6 +241,8 @@
             cursor: pointer;
             transition: all 0.3s;
             border: 2px solid transparent;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         .session-item:hover {
@@ -320,6 +322,122 @@
             font-family: monospace;
         }
 
+        /* Dynamic category styles */
+        .category-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .category-option {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px;
+            border-radius: 4px;
+            transition: background 0.2s;
+            cursor: pointer;
+        }
+
+        .category-option:hover {
+            background: #333;
+        }
+
+        .category-option input[type="radio"] {
+            width: 18px;
+            height: 18px;
+        }
+
+        .add-category {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .category-input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #333;
+            color: white;
+        }
+
+        .small-btn {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .small-btn:hover {
+            background: #45a049;
+        }
+
+        /* Modal styles */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal-content {
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 10px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .category-hotkey-list {
+            margin: 20px 0;
+        }
+
+        .hotkey-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 10px;
+            background: #333;
+            border-radius: 5px;
+            margin-bottom: 10px;
+        }
+
+        .hotkey-item label {
+            flex: 1;
+            color: #4CAF50;
+        }
+
+        .hotkey-input {
+            width: 60px;
+            padding: 5px;
+            border: 1px solid #555;
+            border-radius: 3px;
+            background: #444;
+            color: white;
+            text-align: center;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
         @media (max-width: 768px) {
             .main-content {
                 grid-template-columns: 1fr;
@@ -351,7 +469,6 @@
         <!-- Session Selector -->
         <div id="session-selector" class="session-selector">
             <h3>Select Annotation Session</h3>
-            <button id="refresh-sessions" class="action-btn btn-secondary">🔄 Refresh Sessions</button>
             <div id="session-list" class="session-list">
                 <!-- Sessions will be loaded here -->
             </div>
@@ -383,43 +500,31 @@
 
                 <!-- Annotation Panel -->
                 <div class="annotation-panel">
+                    <!-- Category Management -->
                     <div class="annotation-section">
-                        <h3>Game State</h3>
-                        <div class="radio-group" id="game-state-group">
-                            <label class="radio-option">
-                                <input type="radio" name="game-state" value="menu" checked>
-                                <span>🏠 Menu</span>
-                            </label>
-                            <label class="radio-option">
-                                <input type="radio" name="game-state" value="loading">
-                                <span>⏳ Loading</span>
-                            </label>
-                            <label class="radio-option">
-                                <input type="radio" name="game-state" value="battle">
-                                <span>⚔️ Battle</span>
-                            </label>
-                            <label class="radio-option">
-                                <input type="radio" name="game-state" value="final">
-                                <span>🏆 Final</span>
-                            </label>
+                        <h3>Categories <button id="manage-categories-btn" class="small-btn">⚙️ Manage</button></h3>
+                        <div id="categories-container">
+                            <div id="category-list" class="category-list">
+                                <!-- Dynamic categories will be loaded here -->
+                            </div>
+                            <div class="add-category">
+                                <input type="text" id="new-category-input" placeholder="Add new category..." class="category-input">
+                                <button id="add-category-btn" class="small-btn">+</button>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="annotation-section">
-                        <h3>Importance Level</h3>
-                        <div class="radio-group" id="importance-group">
-                            <label class="radio-option">
-                                <input type="radio" name="importance" value="0">
-                                <span>🔵 Low (0)</span>
-                            </label>
-                            <label class="radio-option">
-                                <input type="radio" name="importance" value="1" checked>
-                                <span>🟡 Medium (1)</span>
-                            </label>
-                            <label class="radio-option">
-                                <input type="radio" name="importance" value="2">
-                                <span>🔴 High (2)</span>
-                            </label>
+                    <!-- Category Management Modal -->
+                    <div id="category-modal" class="modal hidden">
+                        <div class="modal-content">
+                            <h3>Manage Categories & Hotkeys</h3>
+                            <div id="category-hotkey-list" class="category-hotkey-list">
+                                <!-- Category hotkey assignments will be loaded here -->
+                            </div>
+                            <div class="modal-actions">
+                                <button id="save-hotkeys-btn" class="action-btn btn-primary">Save</button>
+                                <button id="close-modal-btn" class="action-btn btn-secondary">Close</button>
+                            </div>
                         </div>
                     </div>
 
@@ -445,13 +550,8 @@
                             <span>Save & Next</span>
                             <span><span class="key">Space</span></span>
                         </div>
-                        <div class="shortcut">
-                            <span>Game states</span>
-                            <span><span class="key">1</span>-<span class="key">4</span></span>
-                        </div>
-                        <div class="shortcut">
-                            <span>Importance</span>
-                            <span><span class="key">Q</span> <span class="key">W</span> <span class="key">E</span></span>
+                        <div id="dynamic-shortcuts">
+                            <!-- Dynamic category shortcuts will be shown here -->
                         </div>
                     </div>
                 </div>
@@ -469,11 +569,14 @@
 
     <script>
         // Global state
-        let currentSession = null;
-        let currentFrameIdx = 0;
-        let totalFrames = 0;
+        let currentFrame = 0;
+        let sessionData = null;
+        let annotations = {};
+        let currentProject = 'default';
+        let categories = [];
+        let categoryHotkeys = {};
 
-        // Initialize
+        // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
             loadSessions();
             setupEventListeners();
@@ -482,7 +585,14 @@
 
         // Event listeners
         function setupEventListeners() {
-            document.getElementById('refresh-sessions').addEventListener('click', loadSessions);
+            // Category management
+            document.getElementById('add-category-btn').addEventListener('click', addCategory);
+            document.getElementById('manage-categories-btn').addEventListener('click', openCategoryModal);
+            document.getElementById('close-modal-btn').addEventListener('click', closeCategoryModal);
+            document.getElementById('save-hotkeys-btn').addEventListener('click', saveHotkeys);
+            document.getElementById('new-category-input').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') addCategory();
+            });
             document.getElementById('first-btn').addEventListener('click', () => goToFrame(0));
             document.getElementById('prev-btn').addEventListener('click', () => goToFrame(currentFrameIdx - 1));
             document.getElementById('next-btn').addEventListener('click', () => goToFrame(currentFrameIdx + 1));
@@ -544,10 +654,21 @@
                     case 'E':
                         setImportance(2);
                         break;
+                    default:
+                        // Check for dynamic category hotkeys
+                        const key = e.key.toLowerCase();
+                        Object.entries(categoryHotkeys).forEach(([category, hotkey]) => {
+                            if (key === hotkey) {
+                                const radio = document.querySelector(`input[name="category"][value="${category}"]`);
+                                if (radio) radio.checked = true;
+                            }
+                        });
+                        break;
                 }
             });
         }
 
+// ...
         // API calls
         async function loadSessions() {
             try {
@@ -599,6 +720,7 @@
                     
                     loadFrame(0);
                     updateStats();
+                    loadCategoriesData(result);
                 } else {
                     alert('Error loading session: ' + result.error);
                 }
@@ -624,8 +746,7 @@
                 document.getElementById('frame-timestamp').textContent = data.frame_info.timestamp.toFixed(3) + 's';
                 
                 // Update annotation fields
-                setGameState(data.annotation.game_state);
-                setImportance(data.annotation.importance);
+                setSelectedCategory(data.annotation.category);
                 document.getElementById('notes-input').value = data.annotation.notes;
                 
                 // Update navigation
@@ -644,17 +765,17 @@
 
         async function saveAnnotation() {
             try {
-                const gameState = document.querySelector('input[name="game-state"]:checked').value;
-                const importance = parseInt(document.querySelector('input[name="importance"]:checked').value);
+                const category = getSelectedCategory();
                 const notes = document.getElementById('notes-input').value;
                 
-                const response = await fetch('./api/annotate', {
+                const response = await fetch('./api/save_annotation', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
                     body: JSON.stringify({
                         frame_idx: currentFrameIdx,
-                        game_state: gameState,
-                        importance: importance,
+                        category: category,
                         notes: notes
                     })
                 });
@@ -669,6 +790,7 @@
                 }
             } catch (error) {
                 console.error('Error saving annotation:', error);
+                alert('Error saving annotation');
                 return false;
             }
         }
@@ -750,12 +872,131 @@
             }
         }
 
-        function setGameState(state) {
-            document.querySelector(`input[name="game-state"][value="${state}"]`).checked = true;
+        // Category management functions
+        function addCategory() {
+            const input = document.getElementById('new-category-input');
+            const categoryName = input.value.trim();
+            
+            if (categoryName && !categories.includes(categoryName)) {
+                categories.push(categoryName);
+                input.value = '';
+                renderCategories();
+                saveCategoriesData();
+            }
         }
 
-        function setImportance(importance) {
-            document.querySelector(`input[name="importance"][value="${importance}"]`).checked = true;
+        function renderCategories() {
+            const categoryList = document.getElementById('category-list');
+            categoryList.innerHTML = '';
+            
+            categories.forEach((category, index) => {
+                const categoryOption = document.createElement('label');
+                categoryOption.className = 'category-option';
+                categoryOption.innerHTML = `
+                    <input type="radio" name="category" value="${category}">
+                    <span>${category}</span>
+                `;
+                categoryList.appendChild(categoryOption);
+            });
+        }
+
+        function openCategoryModal() {
+            renderHotkeyList();
+            document.getElementById('category-modal').classList.remove('hidden');
+        }
+
+        function closeCategoryModal() {
+            document.getElementById('category-modal').classList.add('hidden');
+        }
+
+        function renderHotkeyList() {
+            const hotkeyList = document.getElementById('category-hotkey-list');
+            hotkeyList.innerHTML = '';
+            
+            categories.forEach(category => {
+                const hotkeyItem = document.createElement('div');
+                hotkeyItem.className = 'hotkey-item';
+                hotkeyItem.innerHTML = `
+                    <label>${category}</label>
+                    <input type="text" class="hotkey-input" value="${categoryHotkeys[category] || ''}" 
+                           data-category="${category}" maxlength="1" placeholder="Key">
+                    <button class="small-btn" onclick="removeCategory('${category}')">🗑️</button>
+                `;
+                hotkeyList.appendChild(hotkeyItem);
+            });
+        }
+
+        function removeCategory(categoryName) {
+            categories = categories.filter(cat => cat !== categoryName);
+            delete categoryHotkeys[categoryName];
+            renderCategories();
+            renderHotkeyList();
+            saveCategoriesData();
+        }
+
+        function saveHotkeys() {
+            const hotkeyInputs = document.querySelectorAll('.hotkey-input');
+            hotkeyInputs.forEach(input => {
+                const category = input.dataset.category;
+                const key = input.value.toLowerCase();
+                if (key) {
+                    categoryHotkeys[category] = key;
+                } else {
+                    delete categoryHotkeys[category];
+                }
+            });
+            
+            updateDynamicShortcuts();
+            saveCategoriesData();
+            closeCategoryModal();
+        }
+
+        function updateDynamicShortcuts() {
+            const shortcutsDiv = document.getElementById('dynamic-shortcuts');
+            shortcutsDiv.innerHTML = '';
+            
+            Object.entries(categoryHotkeys).forEach(([category, key]) => {
+                const shortcut = document.createElement('div');
+                shortcut.className = 'shortcut';
+                shortcut.innerHTML = `
+                    <span>${category}</span>
+                    <span><span class="key">${key.toUpperCase()}</span></span>
+                `;
+                shortcutsDiv.appendChild(shortcut);
+            });
+        }
+
+        function saveCategoriesData() {
+            if (currentSession) {
+                // Save categories and hotkeys to the current project
+                fetch('./api/save_categories', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_path: currentSession,
+                        project_name: currentProject,
+                        categories: categories,
+                        hotkeys: categoryHotkeys
+                    })
+                }).catch(error => console.error('Error saving categories:', error));
+            }
+        }
+
+        function loadCategoriesData(sessionData) {
+            categories = sessionData.categories || [];
+            categoryHotkeys = sessionData.hotkeys || {};
+            renderCategories();
+            updateDynamicShortcuts();
+        }
+
+        function getSelectedCategory() {
+            const selectedRadio = document.querySelector('input[name="category"]:checked');
+            return selectedRadio ? selectedRadio.value : null;
+        }
+
+        function setSelectedCategory(category) {
+            const radio = document.querySelector(`input[name="category"][value="${category}"]`);
+            if (radio) radio.checked = true;
         }
 
         function updateProgress(annotated, total) {

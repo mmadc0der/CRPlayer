@@ -25,16 +25,17 @@ class FrameAnnotation:
         }
 
 
-@dataclass
 class AnnotationProject:
-    """Annotation project within a session."""
-    project_name: str
-    annotation_type: str  # 'classification', 'regression', 'detection'
-    categories: List[str] = field(default_factory=list)
-    targets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
-    annotations: Dict[str, FrameAnnotation] = field(default_factory=dict)
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    """Represents an annotation project with its settings and annotations."""
+    
+    def __init__(self, name: str, annotation_type: str = 'classification', categories: List[str] = None):
+        self.name = name
+        self.annotation_type = annotation_type  # 'classification', 'regression', 'object_detection'
+        self.categories = categories or []
+        self.hotkeys: Dict[str, str] = {}  # category -> hotkey mapping
+        self.annotations: Dict[str, FrameAnnotation] = {}
+        self.created_at = datetime.now()
+        self.updated_at = datetime.now()
     
     def add_annotation(self, frame_id: str, annotation_data: Dict[str, Any], confidence: float = 1.0):
         """Add or update frame annotation."""
@@ -63,10 +64,10 @@ class AnnotationProject:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
-            'project_name': self.project_name,
+            'name': self.name,
             'annotation_type': self.annotation_type,
             'categories': self.categories,
-            'targets': self.targets,
+            'hotkeys': self.hotkeys,
             'annotations': {k: v.to_dict() for k, v in self.annotations.items()},
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
@@ -76,13 +77,14 @@ class AnnotationProject:
     def from_dict(cls, data: Dict[str, Any]) -> 'AnnotationProject':
         """Create from dictionary."""
         project = cls(
-            project_name=data['project_name'],
+            name=data['name'],
             annotation_type=data['annotation_type'],
-            categories=data.get('categories', []),
-            targets=data.get('targets', {}),
-            created_at=datetime.fromisoformat(data['created_at']) if data.get('created_at') else None,
-            updated_at=datetime.fromisoformat(data['updated_at']) if data.get('updated_at') else None
+            categories=data.get('categories', [])
         )
+        
+        project.hotkeys = data.get('hotkeys', {})
+        project.created_at = datetime.fromisoformat(data['created_at']) if data.get('created_at') else None
+        project.updated_at = datetime.fromisoformat(data['updated_at']) if data.get('updated_at') else None
         
         # Load annotations
         annotations_data = data.get('annotations', {})

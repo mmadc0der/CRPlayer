@@ -73,7 +73,8 @@ def load_session():
             'annotated_count': len(project.annotations),
             'project_name': project_name,
             'annotation_type': project.annotation_type,
-            'categories': project.categories
+            'categories': project.categories,
+            'hotkeys': project.hotkeys
         })
         
     except Exception as e:
@@ -92,14 +93,10 @@ def get_frame(frame_idx):
     frame_id = str(frame_info['frame_id'])
     
     # Get existing annotation using new architecture
-    annotation_obj = annotation_store.get_annotation(frame_id)
-    if annotation_obj:
-        annotation = annotation_obj.annotations
-    else:
-        # Default annotation for backward compatibility
+    annotation = annotation_store.get_annotation(frame_idx)
+    if not annotation:
         annotation = {
-            'game_state': 'menu',
-            'importance': 1,
+            'category': '',
             'notes': ''
         }
     
@@ -155,7 +152,7 @@ def serve_image(frame_idx):
         return "Image not found", 404
 
 
-@app.route('/api/annotate', methods=['POST'])
+@app.route('/api/save_annotation', methods=['POST'])
 def save_annotation():
     """Save frame annotation."""
     global session_data
@@ -163,29 +160,14 @@ def save_annotation():
     data = request.get_json()
     frame_idx = data['frame_idx']
     
-    if not session_data or frame_idx >= len(session_data['frames']):
-        return jsonify({'error': 'Invalid frame index'}), 400
-    
-    frame_info = session_data['frames'][frame_idx]
-    frame_id = str(frame_info['frame_id'])
-    
     try:
-        # Prepare annotation data
+        # Save annotation using new architecture
         annotation_data = {
-            'game_state': data.get('game_state'),
-            'importance': data.get('importance'),
-            'notes': data.get('notes', ''),
-            'annotated_at': frame_idx
+            'category': data.get('category', ''),
+            'notes': data.get('notes', '')
         }
         
-        # Add new category if needed
-        if 'game_state' in data and data['game_state']:
-            annotation_store.add_category(data['game_state'])
-        
-        # Save annotation using new architecture
-        annotation_store.save_annotation(frame_id, annotation_data)
-        
-        # Get updated stats
+        annotation_store.save_annotation(frame_idx, annotation_data)
         stats = annotation_store.get_project_stats(len(session_data['frames']))
         
         return jsonify({
@@ -260,6 +242,30 @@ def get_stats():
 
 
 # New API endpoints for project management
+@app.route('/api/save_categories', methods=['POST'])
+def save_categories():
+    """Save categories and hotkeys for a project."""
+    data = request.get_json()
+    session_path = data['session_path']
+    project_name = data.get('project_name', 'default')
+    categories = data.get('categories', [])
+    hotkeys = data.get('hotkeys', {})
+    
+    try:
+        # Load the project and update categories
+        project = annotation_store.load_session_project(session_path, project_name)
+        project.categories = categories
+        project.hotkeys = hotkeys
+        
+        # Save the updated project
+        annotation_store.save_project(session_path, project_name, project)
+        
+        return jsonify({'success': True})
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/projects', methods=['GET'])
 def list_projects():
     """List all projects in current session."""
