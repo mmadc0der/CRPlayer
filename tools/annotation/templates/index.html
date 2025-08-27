@@ -345,6 +345,15 @@
             background: #333;
         }
 
+        /* Visual states */
+        .category-option.selected {
+            background: #3a3a3a;
+        }
+        .category-option.saved {
+            background: rgba(76, 175, 80, 0.15);
+            border: 1px solid #4CAF50;
+        }
+
         .category-option input[type="radio"] {
             width: 18px;
             height: 18px;
@@ -574,11 +583,14 @@
     <script>
         // Global state
         let currentFrame = 0;
-        let sessionData = null;
-        let annotations = {};
+        let currentFrameIdx = 0;
+        let totalFrames = 0;
+        let currentSession = null;
         let currentProject = 'default';
         let categories = [];
         let categoryHotkeys = {};
+        let currentSavedCategory = null; // what backend has saved for this frame
+        let currentFrameSaved = false;
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
@@ -622,12 +634,21 @@
             document.getElementById('save-next-btn').addEventListener('click', saveAndNext);
             document.getElementById('skip-btn').addEventListener('click', () => goToFrame(currentFrameIdx + 1));
             document.getElementById('export-btn').addEventListener('click', exportDataset);
+
+            // Add explicit Back button to return to session selector
+            const header = document.querySelector('.header');
+            const backBtn = document.createElement('button');
+            backBtn.textContent = '⬅ Back to Sessions';
+            backBtn.className = 'nav-btn';
+            backBtn.style.marginTop = '10px';
+            backBtn.addEventListener('click', showSessionSelector);
+            header.appendChild(backBtn);
         }
 
         // Keyboard shortcuts
         function setupKeyboardShortcuts() {
             document.addEventListener('keydown', function(e) {
-                if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+                if (e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')) return;
                 
                 switch(e.key) {
                     case 'ArrowLeft':
@@ -643,36 +664,28 @@
                         saveAndNext();
                         break;
                     case '1':
-                        setGameState('menu');
-                        break;
                     case '2':
-                        setGameState('loading');
-                        break;
                     case '3':
-                        setGameState('battle');
+                    case '4': {
+                        const idx = parseInt(e.key, 10) - 1;
+                        if (categories[idx]) {
+                            const cat = categories[idx];
+                            const radio = document.querySelector(`input[name="category"][value="${cat}"]`);
+                            if (radio) {
+                                radio.checked = true;
+                                currentFrameSaved = false;
+                                updateCategoryStyles();
+                            }
+                        }
                         break;
-                    case '4':
-                        setGameState('final');
-                        break;
-                    case 'q':
-                    case 'Q':
-                        setImportance(0);
-                        break;
-                    case 'w':
-                    case 'W':
-                        setImportance(1);
-                        break;
-                    case 'e':
-                    case 'E':
-                        setImportance(2);
-                        break;
+                    }
                     default:
                         // Check for dynamic category hotkeys
                         const key = e.key.toLowerCase();
                         Object.entries(categoryHotkeys).forEach(([category, hotkey]) => {
                             if (key === hotkey) {
                                 const radio = document.querySelector(`input[name="category"][value="${category}"]`);
-                                if (radio) radio.checked = true;
+                                if (radio) { radio.checked = true; currentFrameSaved = false; updateCategoryStyles(); }
                             }
                         });
                         break;
@@ -741,7 +754,7 @@
                     document.getElementById('session-selector').classList.add('hidden');
                     document.getElementById('annotation-interface').classList.remove('hidden');
                     document.getElementById('session-info').classList.remove('hidden');
-                    document.getElementById('session-name').textContent = `Session: ${result.session_id}`;
+                    document.getElementById('session-name').textContent = `Session: ${result.session_id} · Project: ${result.project_name}`;
                     
                     loadFrame(0);
                     updateStats();
@@ -771,7 +784,10 @@
                 document.getElementById('frame-timestamp').textContent = data.frame_info.timestamp.toFixed(3) + 's';
                 
                 // Update annotation fields
-                setSelectedCategory(data.annotation.category);
+                const savedCat = data.annotation.category;
+                setSelectedCategory(savedCat);
+                currentSavedCategory = savedCat || null;
+                currentFrameSaved = !!savedCat;
                 document.getElementById('notes-input').value = data.annotation.notes;
                 
                 // Update navigation
@@ -782,6 +798,7 @@
                 document.getElementById('last-btn').disabled = frameIdx === totalFrames - 1;
                 
                 updateProgress(data.annotated_frames, data.total_frames);
+                updateCategoryStyles();
                 
             } catch (error) {
                 console.error('Error loading frame:', error);
@@ -808,6 +825,11 @@
                 const result = await response.json();
                 if (result.success) {
                     updateStats();
+                    // mark current selection as saved
+                    currentSavedCategory = getSelectedCategory();
+                    currentFrameSaved = true;
+                    updateCategoryStyles();
+                    showToast('Saved');
                     return true;
                 } else {
                     alert('Error saving annotation: ' + result.error);
@@ -829,20 +851,17 @@
         }
 
         async function exportDataset() {
-            const exportPath = prompt('Enter export directory path:', './exported_dataset');
-            
-            if (!exportPath) return;
-            
+            const datasetId = prompt('Enter dataset ID (folder name):', `${currentProject}_${Date.now()}`);
+            if (!datasetId) return;
             try {
                 const response = await fetch('./api/export', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ export_path: exportPath })
+                    body: JSON.stringify({ dataset_id: datasetId })
                 });
-                
                 const result = await response.json();
                 if (result.success) {
-                    alert(`Successfully exported ${result.exported_count} frames to ${result.export_path}`);
+                    alert(`Exported ${result.exported_count} samples to ${result.export_path}`);
                 } else {
                     alert('Error exporting dataset: ' + result.error);
                 }
@@ -990,7 +1009,13 @@
                     updateDynamicShortcuts();
                     saveCategoriesData();
                 });
+
+                // Radio change sets unsaved state and updates styles
+                const radio = categoryOption.querySelector('input[type="radio"]');
+                radio.addEventListener('change', () => { currentFrameSaved = false; updateCategoryStyles(); });
             });
+
+            updateCategoryStyles();
         }
 
         function removeCategory(categoryName) {
@@ -1047,12 +1072,43 @@
         function setSelectedCategory(category) {
             const radio = document.querySelector(`input[name="category"][value="${category}"]`);
             if (radio) radio.checked = true;
+            updateCategoryStyles();
         }
 
         function updateProgress(annotated, total) {
             const percent = total > 0 ? (annotated / total * 100) : 0;
             document.getElementById('progress-fill').style.width = percent + '%';
             document.getElementById('progress-text').textContent = `${percent.toFixed(1)}% complete (${annotated}/${total})`;
+        }
+
+        function updateCategoryStyles() {
+            const options = document.querySelectorAll('.category-option');
+            options.forEach(opt => {
+                opt.classList.remove('selected', 'saved');
+                const radio = opt.querySelector('input[type="radio"]');
+                if (!radio) return;
+                if (radio.checked) {
+                    opt.classList.add('selected');
+                }
+                if (currentFrameSaved && currentSavedCategory && radio.value === currentSavedCategory) {
+                    opt.classList.add('saved');
+                }
+            });
+        }
+
+        // Simple toast feedback
+        function showToast(text) {
+            const el = document.createElement('div');
+            el.textContent = text;
+            el.style.position = 'fixed';
+            el.style.bottom = '20px';
+            el.style.right = '20px';
+            el.style.background = 'rgba(76,175,80,0.9)';
+            el.style.padding = '8px 12px';
+            el.style.borderRadius = '6px';
+            el.style.zIndex = '2000';
+            document.body.appendChild(el);
+            setTimeout(() => el.remove(), 900);
         }
 
         // Session restoration and browser navigation

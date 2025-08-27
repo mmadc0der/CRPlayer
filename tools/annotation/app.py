@@ -92,9 +92,14 @@ def get_frame(frame_idx):
     frame_info = session_data['frames'][frame_idx]
     frame_id = str(frame_info['frame_id'])
     
-    # Get existing annotation using new architecture
-    annotation = annotation_store.get_annotation(frame_idx)
-    if not annotation:
+    # Get existing annotation using new architecture (by frame_id)
+    ann_obj = annotation_store.get_annotation(frame_id)
+    if ann_obj:
+        annotation = {
+            'category': ann_obj.annotations.get('category', ''),
+            'notes': ann_obj.annotations.get('notes', '')
+        }
+    else:
         annotation = {
             'category': '',
             'notes': ''
@@ -161,13 +166,16 @@ def save_annotation():
     frame_idx = data['frame_idx']
     
     try:
-        # Save annotation using new architecture
+        # Map index to frame_id and save using new architecture
+        frame_info = session_data['frames'][frame_idx]
+        frame_id = str(frame_info['frame_id'])
+        
         annotation_data = {
             'category': data.get('category', ''),
             'notes': data.get('notes', '')
         }
         
-        annotation_store.save_annotation(frame_idx, annotation_data)
+        annotation_store.save_annotation(frame_id, annotation_data)
         stats = annotation_store.get_project_stats(len(session_data['frames']))
         
         return jsonify({
@@ -199,11 +207,13 @@ def export_dataset():
             session_ids=[session_id]
         )
         
+        export_path = str(dataset_builder.datasets_dir / manifest.dataset_id)
         return jsonify({
             'success': True,
             'dataset_id': manifest.dataset_id,
             'exported_count': len(manifest.samples),
-            'statistics': manifest.get_statistics()
+            'statistics': manifest.get_statistics(),
+            'export_path': export_path
         })
         
     except Exception as e:
@@ -226,7 +236,8 @@ def get_stats():
         state_counts = {}
         if annotation_store.current_project:
             for annotation in annotation_store.current_project.annotations.values():
-                state = annotation.annotations.get('game_state', 'unknown')
+                # Count by saved 'category'
+                state = annotation.annotations.get('category', 'unknown')
                 if state and state != 'unknown':
                     state_counts[state] = state_counts.get(state, 0) + 1
         
@@ -315,7 +326,7 @@ def create_project():
         return jsonify({
             'success': True,
             'project': {
-                'name': project.project_name,
+                'name': project.name,
                 'annotation_type': project.annotation_type,
                 'categories': project.categories,
                 'created_at': project.created_at.isoformat() if project.created_at else None

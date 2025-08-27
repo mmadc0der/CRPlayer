@@ -72,7 +72,8 @@ class DatasetBuilder:
             if not manifest.samples:
                 manifest.annotation_type = project.annotation_type
                 manifest.categories = project.categories.copy()
-                manifest.targets = project.targets.copy()
+                # Some projects may not define structured targets; keep empty if absent
+                manifest.targets = getattr(project, 'targets', {}).copy() if hasattr(project, 'targets') else {}
             
             # Add samples
             frames = session_data['frames']
