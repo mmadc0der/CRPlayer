@@ -66,6 +66,26 @@ def load_session():
         project = annotation_store.load_session_project(session_path, project_name)
         current_project_name = project_name
         
+        # Migrate legacy index-keyed annotations -> frame_id
+        try:
+            frames = session_info['frames']
+            total = len(frames)
+            idx_keys = [k for k in list(project.annotations.keys()) if k.isdigit() and int(k) < total]
+            migrated = 0
+            for k in idx_keys:
+                idx = int(k)
+                frame_id = str(frames[idx]['frame_id'])
+                if frame_id not in project.annotations:
+                    project.annotations[frame_id] = project.annotations[k]
+                    project.annotations[frame_id].frame_id = frame_id
+                    del project.annotations[k]
+                    migrated += 1
+            if migrated:
+                # Persist migration
+                annotation_store.save_project(session_path, project_name, project)
+        except Exception as _:
+            pass
+        
         return jsonify({
             'success': True,
             'session_id': session_info['session_id'],
@@ -217,13 +237,39 @@ def export_dataset():
             session_ids=[session_id]
         )
         
+        # Diagnostics
+        diag = {}
+        try:
+            sess = session_manager.load_session(str(session_dir))
+            frames = sess['frames']
+            frame_ids = {str(f['frame_id']) for f in frames}
+            projects = sess['projects']
+            proj = projects.get(current_project_name)
+            proj_ann = len(proj.annotations) if proj else 0
+            inter = 0
+            if proj:
+                for k in proj.annotations.keys():
+                    if k in frame_ids:
+                        label = proj.annotations[k].annotations.get('category') or proj.annotations[k].annotations.get('game_state')
+                        if label:
+                            inter += 1
+            diag = {
+                'frames_in_session': len(frames),
+                'project_annotations_total': proj_ann,
+                'annotated_frames_in_session_with_label': inter,
+                'project_loaded': bool(proj)
+            }
+        except Exception as _:
+            pass
+        
         export_path = str(dataset_builder.datasets_dir / manifest.dataset_id)
         return jsonify({
             'success': True,
             'dataset_id': manifest.dataset_id,
             'exported_count': len(manifest.samples),
             'statistics': manifest.get_statistics(),
-            'export_path': export_path
+            'export_path': export_path,
+            'diagnostics': diag
         })
         
     except Exception as e:
