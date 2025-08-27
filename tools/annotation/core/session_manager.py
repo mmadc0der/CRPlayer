@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from ..models.annotation import AnnotationProject
+from models.annotation import AnnotationProject
 
 
 class SessionManager:

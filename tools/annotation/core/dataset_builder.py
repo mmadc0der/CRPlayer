@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Dict, Any, List
 from datetime import datetime
 
-from .session_manager import SessionManager
-from ..models.dataset import DatasetManifest, DatasetSample
-from ..models.annotation import AnnotationProject
+from core.session_manager import SessionManager
+from models.dataset import DatasetManifest, DatasetSample
+from models.annotation import AnnotationProject
 
 
 class DatasetBuilder:

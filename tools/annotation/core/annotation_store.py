@@ -5,8 +5,8 @@ Annotation storage and retrieval operations.
 from typing import Dict, Any, Optional
 from pathlib import Path
 
-from .session_manager import SessionManager
-from ..models.annotation import AnnotationProject, FrameAnnotation
+from core.session_manager import SessionManager
+from models.annotation import AnnotationProject, FrameAnnotation
 
 
 class AnnotationStore:
