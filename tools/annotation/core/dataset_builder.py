@@ -43,8 +43,8 @@ class DatasetBuilder:
         self._save_manifest(manifest)
         return manifest
     
-    def _add_session_to_dataset(self, manifest: DatasetManifest, session_id: str, project_name: str):
-        """Add all annotated frames from a session to the dataset."""
+    def _add_session_to_dataset(self, manifest: DatasetManifest, session_id: str, project_name: str) -> int:
+        """Add all annotated frames from a session to the dataset. Returns number of samples added."""
         # Find session directory
         session_dir = None
         for search_dir in [self.session_manager.raw_dir, self.session_manager.annotated_dir]:
@@ -55,7 +55,7 @@ class DatasetBuilder:
         
         if not session_dir:
             print(f"[WARNING] Session {session_id} not found")
-            return
+            return 0
         
         # Load session data
         try:
@@ -64,7 +64,7 @@ class DatasetBuilder:
             
             if project_name not in projects:
                 print(f"[WARNING] Project {project_name} not found in session {session_id}")
-                return
+                return 0
             
             project = projects[project_name]
             
@@ -77,6 +77,7 @@ class DatasetBuilder:
             
             # Add samples
             frames = session_data['frames']
+            added = 0
             for frame_info in frames:
                 frame_id = str(frame_info['frame_id'])
                 annotation = project.get_annotation(frame_id)
@@ -84,22 +85,32 @@ class DatasetBuilder:
                 if annotation is None:
                     continue  # Skip unannotated frames
                 
-                # Determine frame path (check both locations)
+                # Determine frame path searching both raw and annotated roots
                 frame_filename = frame_info['filename']
-                frame_path_main = session_dir / frame_filename
-                frame_path_frames = session_dir / 'frames' / frame_filename
-                
-                if frame_path_frames.exists():
-                    relative_path = f"../../raw/{session_id}/frames/{frame_filename}"
-                elif frame_path_main.exists():
-                    relative_path = f"../../raw/{session_id}/{frame_filename}"
-                else:
-                    print(f"[WARNING] Frame {frame_filename} not found in {session_id}")
+                raw_root = self.session_manager.raw_dir / session_id
+                ann_root = self.session_manager.annotated_dir / session_id
+                candidates = [
+                    (raw_root / 'frames' / frame_filename, f"../../raw/{session_id}/frames/{frame_filename}"),
+                    (raw_root / frame_filename, f"../../raw/{session_id}/{frame_filename}"),
+                    (ann_root / 'frames' / frame_filename, f"../../annotated/{session_id}/frames/{frame_filename}"),
+                    (ann_root / frame_filename, f"../../annotated/{session_id}/{frame_filename}")
+                ]
+                relative_path = None
+                for abs_path, rel in candidates:
+                    if abs_path.exists():
+                        relative_path = rel
+                        break
+                if not relative_path:
+                    print(f"[WARNING] Frame {frame_filename} not found for session {session_id} in raw/ or annotated/")
                     continue
                 
                 # Extract label based on annotation type
                 if project.annotation_type == 'classification':
-                    label = annotation.annotations.get('category', 'unknown')
+                    # Prefer new key 'category', fall back to legacy 'game_state'
+                    label = annotation.annotations.get('category') or annotation.annotations.get('game_state', '')
+                    if not label:
+                        # Skip if still empty
+                        continue
                 elif project.annotation_type == 'regression':
                     label = annotation.annotations
                 else:
@@ -119,9 +130,12 @@ class DatasetBuilder:
                 )
                 
                 manifest.add_sample(sample)
-                
+                added += 1
+            return added
+            
         except Exception as e:
             print(f"[ERROR] Error processing session {session_id}: {e}")
+            return added
     
     def _save_manifest(self, manifest: DatasetManifest):
         """Save dataset manifest to file."""

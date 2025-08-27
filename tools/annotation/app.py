@@ -106,7 +106,17 @@ def get_frame(frame_idx):
         }
     
     # Get project stats
-    stats = annotation_store.get_project_stats(len(session_data['frames']))
+    # Compute stats limited to current session frames
+    frame_ids_set = set(str(f['frame_id']) for f in session_data['frames'])
+    annotated_on_session = 0
+    if annotation_store.current_project:
+        for k in annotation_store.current_project.annotations.keys():
+            if k in frame_ids_set:
+                annotated_on_session += 1
+    stats = {
+        'annotated_frames': annotated_on_session,
+        'total_frames': len(session_data['frames'])
+    }
     
     return jsonify({
         'frame_info': frame_info,
@@ -229,8 +239,18 @@ def get_stats():
         return jsonify({'error': 'No session loaded'}), 400
     
     try:
-        # Get stats using new architecture
-        stats = annotation_store.get_project_stats(len(session_data['frames']))
+        # Compute stats limited to current session frames
+        frame_ids_set = set(str(f['frame_id']) for f in session_data['frames'])
+        annotated_on_session = 0
+        if annotation_store.current_project:
+            for k in annotation_store.current_project.annotations.keys():
+                if k in frame_ids_set:
+                    annotated_on_session += 1
+        stats = {
+            'total_frames': len(session_data['frames']),
+            'annotated_frames': annotated_on_session,
+            'progress_percent': (annotated_on_session / len(session_data['frames']) * 100) if len(session_data['frames']) > 0 else 0
+        }
         
         # Get category distribution
         state_counts = {}
