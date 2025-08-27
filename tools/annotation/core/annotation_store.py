@@ -53,6 +53,10 @@ class AnnotationStore:
             self.current_project.categories.append(category)
             self.session_manager.update_project(self.current_session_dir, self.current_project)
     
+    def save_project(self, session_dir: str, project_name: str, project: AnnotationProject):
+        """Save a project to session."""
+        self.session_manager.update_project(session_dir, project)
+    
     def get_project_stats(self, total_frames: int) -> Dict[str, Any]:
         """Get statistics for current project."""
         if not self.current_project:
