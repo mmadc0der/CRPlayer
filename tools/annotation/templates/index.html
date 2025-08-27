@@ -578,9 +578,20 @@
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
-            loadSessions();
+            // Check if we should restore a session from localStorage
+            const savedSession = localStorage.getItem('currentSession');
+            const savedProject = localStorage.getItem('currentProject');
+            
+            if (savedSession && savedProject) {
+                // Try to restore the session
+                restoreSession(savedSession, savedProject);
+            } else {
+                loadSessions();
+            }
+            
             setupEventListeners();
             setupKeyboardShortcuts();
+            setupBrowserNavigation();
         });
 
         // Event listeners
@@ -710,8 +721,18 @@
                 const result = await response.json();
                 if (result.success) {
                     currentSession = sessionPath;
+                    currentProject = project_name;
                     totalFrames = result.frames_count;
                     currentFrameIdx = 0;
+                    
+                    // Save session state to localStorage
+                    localStorage.setItem('currentSession', sessionPath);
+                    localStorage.setItem('currentProject', project_name);
+                    localStorage.setItem('appState', 'annotation');
+                    
+                    // Update browser history
+                    history.pushState({state: 'annotation', session: sessionPath, project: project_name}, 
+                                    'Annotation', '#annotation');
                     
                     document.getElementById('session-selector').classList.add('hidden');
                     document.getElementById('annotation-interface').classList.remove('hidden');
@@ -909,6 +930,23 @@
             document.getElementById('category-modal').classList.add('hidden');
         }
 
+        // Close modal when clicking outside of it or pressing Escape
+        document.addEventListener('click', function(e) {
+            const modal = document.getElementById('category-modal');
+            if (e.target === modal) {
+                closeCategoryModal();
+            }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const modal = document.getElementById('category-modal');
+                if (!modal.classList.contains('hidden')) {
+                    closeCategoryModal();
+                }
+            }
+        });
+
         function renderHotkeyList() {
             const hotkeyList = document.getElementById('category-hotkey-list');
             hotkeyList.innerHTML = '';
@@ -1003,6 +1041,59 @@
             const percent = total > 0 ? (annotated / total * 100) : 0;
             document.getElementById('progress-fill').style.width = percent + '%';
             document.getElementById('progress-text').textContent = `${percent.toFixed(1)}% complete (${annotated}/${total})`;
+        }
+
+        // Session restoration and browser navigation
+        async function restoreSession(sessionPath, projectName) {
+            try {
+                await selectSession(sessionPath, projectName);
+            } catch (error) {
+                console.error('Failed to restore session:', error);
+                // Fall back to session selector
+                showSessionSelector();
+            }
+        }
+
+        function showSessionSelector() {
+            document.getElementById('session-selector').classList.remove('hidden');
+            document.getElementById('annotation-interface').classList.add('hidden');
+            document.getElementById('session-info').classList.add('hidden');
+            
+            // Clear session state
+            localStorage.removeItem('currentSession');
+            localStorage.removeItem('currentProject');
+            localStorage.setItem('appState', 'sessions');
+            
+            // Update browser history
+            history.pushState({state: 'sessions'}, 'Select Session', '#sessions');
+            
+            loadSessions();
+        }
+
+        function setupBrowserNavigation() {
+            // Handle browser back/forward buttons
+            window.addEventListener('popstate', function(event) {
+                if (event.state) {
+                    if (event.state.state === 'sessions') {
+                        showSessionSelector();
+                    } else if (event.state.state === 'annotation') {
+                        if (event.state.session && event.state.project) {
+                            restoreSession(event.state.session, event.state.project);
+                        } else {
+                            showSessionSelector();
+                        }
+                    }
+                } else {
+                    // No state, go to session selector
+                    showSessionSelector();
+                }
+            });
+
+            // Set initial state
+            const appState = localStorage.getItem('appState') || 'sessions';
+            if (appState === 'sessions') {
+                history.replaceState({state: 'sessions'}, 'Select Session', '#sessions');
+            }
         }
     </script>
 </body>
