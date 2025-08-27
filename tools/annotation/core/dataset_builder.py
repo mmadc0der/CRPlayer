@@ -21,7 +21,7 @@ class DatasetBuilder:
         self.datasets_dir.mkdir(parents=True, exist_ok=True)
     
     def create_dataset(self, dataset_id: str, project_name: str, session_ids: List[str], 
-                      splits: Dict[str, float] = None) -> DatasetManifest:
+                      splits: Dict[str, float] = None, session_paths: List[str] = None) -> DatasetManifest:
         """Create a new dataset from annotated sessions."""
         if splits is None:
             splits = {'train': 0.8, 'val': 0.2}
@@ -36,17 +36,23 @@ class DatasetBuilder:
         )
         
         # Collect samples from sessions
-        for session_id in session_ids:
-            self._add_session_to_dataset(manifest, session_id, project_name)
+        if session_paths:
+            for spath in session_paths:
+                self._add_session_to_dataset(manifest, self._resolve_session_id(spath), project_name, explicit_session_dir=Path(spath))
+        else:
+            for session_id in session_ids:
+                self._add_session_to_dataset(manifest, session_id, project_name)
         
         # Save manifest
         self._save_manifest(manifest)
         return manifest
     
-    def _add_session_to_dataset(self, manifest: DatasetManifest, session_id: str, project_name: str) -> int:
+    def _add_session_to_dataset(self, manifest: DatasetManifest, session_id: str, project_name: str, explicit_session_dir: Path = None) -> int:
         """Add all annotated frames from a session to the dataset. Returns number of samples added."""
         # Find session directory
-        session_dir = None
+        session_dir = explicit_session_dir
+        if session_dir is not None and not session_dir.exists():
+            session_dir = None
         for search_dir in [self.session_manager.raw_dir, self.session_manager.annotated_dir]:
             potential_path = search_dir / session_id
             if potential_path.exists():
@@ -108,7 +114,9 @@ class DatasetBuilder:
                 'missing_path': 0,
                 'missing_label': 0,
                 'missing_annotation': 0,
-                'missing_path_examples': []
+                'missing_path_examples': [],
+                'raw_root_exists': False,
+                'ann_root_exists': False
             }
 
             # Migrate legacy index-keyed annotations -> frame_id (in-memory, persist if possible)
@@ -147,6 +155,8 @@ class DatasetBuilder:
                 frame_filename = frame_info['filename']
                 raw_root = self.session_manager.raw_dir / session_id
                 ann_root = self.session_manager.annotated_dir / session_id
+                session_diag['raw_root_exists'] = session_diag['raw_root_exists'] or raw_root.exists()
+                session_diag['ann_root_exists'] = session_diag['ann_root_exists'] or ann_root.exists()
                 # Support both cases: filename may already include 'frames/' or other subdirs
                 from pathlib import Path as _P
                 fname_path = _P(frame_filename)
@@ -171,6 +181,55 @@ class DatasetBuilder:
                     if abs_path.exists():
                         relative_path = rel
                         break
+                if not relative_path:
+                    # Try alternate extensions
+                    alt_exts = ['.jpg', '.jpeg', '.png', '.bmp', '.webp']
+                    stem = basename.rsplit('.', 1)[0] if '.' in basename else basename
+                    alt_candidates = []
+                    for ext in alt_exts:
+                        alt_name = stem + ext
+                        alt_candidates.extend([
+                            (raw_root / 'frames' / alt_name, f"../../raw/{session_id}/frames/{alt_name}"),
+                            (raw_root / alt_name, f"../../raw/{session_id}/{alt_name}"),
+                            (ann_root / 'frames' / alt_name, f"../../annotated/{session_id}/frames/{alt_name}"),
+                            (ann_root / alt_name, f"../../annotated/{session_id}/{alt_name}")
+                        ])
+                    for abs_path, rel in alt_candidates:
+                        if abs_path.exists():
+                            relative_path = rel
+                            break
+                if not relative_path:
+                    # Last resort: recursive search for basename under session roots
+                    try:
+                        found_abs = None
+                        target_names = {basename.lower()}
+                        if '.' in basename:
+                            target_names.add(basename.rsplit('.', 1)[0].lower())
+                        for root in [raw_root, ann_root]:
+                            if root.exists():
+                                for p in root.rglob('*'):
+                                    if not p.is_file():
+                                        continue
+                                    name_lower = p.name.lower()
+                                    stem_lower = p.stem.lower()
+                                    if name_lower in target_names or stem_lower in target_names:
+                                        found_abs = p
+                                        break
+                            if found_abs:
+                                break
+                        if found_abs:
+                            # Compute relative_path based on which root matched
+                            try:
+                                if str(found_abs).startswith(str(raw_root)):
+                                    rel = found_abs.relative_to(raw_root).as_posix()
+                                    relative_path = f"../../raw/{session_id}/{rel}"
+                                else:
+                                    rel = found_abs.relative_to(ann_root).as_posix()
+                                    relative_path = f"../../annotated/{session_id}/{rel}"
+                            except Exception:
+                                relative_path = None
+                    except Exception:
+                        pass
                 if not relative_path:
                     print(f"[WARNING] Frame {frame_filename} not found for session {session_id} in raw/ or annotated/")
                     session_diag['missing_path'] += 1
@@ -224,6 +283,19 @@ class DatasetBuilder:
         except Exception as e:
             print(f"[ERROR] Error processing session {session_id}: {e}")
             return added
+
+    def _resolve_session_id(self, session_path: str) -> str:
+        """Extract session_id from an absolute session path by reading metadata.json or folder name."""
+        try:
+            p = Path(session_path)
+            meta = p / 'metadata.json'
+            if meta.exists():
+                with open(meta, 'r') as f:
+                    md = json.load(f)
+                return md.get('session_id', p.name)
+            return p.name
+        except Exception:
+            return Path(session_path).name
     
     def _save_manifest(self, manifest: DatasetManifest):
         """Save dataset manifest to file."""
