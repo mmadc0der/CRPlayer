@@ -234,7 +234,8 @@ def export_dataset():
         manifest = dataset_builder.create_dataset(
             dataset_id=dataset_id,
             project_name=current_project_name,
-            session_ids=[session_id]
+            session_ids=[session_id],
+            session_paths=[str(session_dir)] if session_dir else None
         )
         
         # Diagnostics
