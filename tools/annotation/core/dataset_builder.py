@@ -89,11 +89,24 @@ class DatasetBuilder:
                 frame_filename = frame_info['filename']
                 raw_root = self.session_manager.raw_dir / session_id
                 ann_root = self.session_manager.annotated_dir / session_id
+                # Support both cases: filename may already include 'frames/' or other subdirs
+                from pathlib import Path as _P
+                fname_path = _P(frame_filename)
+                basename = fname_path.name
+                # Build candidate pairs (absolute path, relative path string in dataset)
                 candidates = [
-                    (raw_root / 'frames' / frame_filename, f"../../raw/{session_id}/frames/{frame_filename}"),
-                    (raw_root / frame_filename, f"../../raw/{session_id}/{frame_filename}"),
-                    (ann_root / 'frames' / frame_filename, f"../../annotated/{session_id}/frames/{frame_filename}"),
-                    (ann_root / frame_filename, f"../../annotated/{session_id}/{frame_filename}")
+                    # raw, keep original relative if present
+                    (raw_root / fname_path, f"../../raw/{session_id}/{fname_path.as_posix()}"),
+                    # raw frames dir with basename
+                    (raw_root / 'frames' / basename, f"../../raw/{session_id}/frames/{basename}"),
+                    # raw root with basename
+                    (raw_root / basename, f"../../raw/{session_id}/{basename}"),
+                    # annotated, keep original
+                    (ann_root / fname_path, f"../../annotated/{session_id}/{fname_path.as_posix()}"),
+                    # annotated frames dir with basename
+                    (ann_root / 'frames' / basename, f"../../annotated/{session_id}/frames/{basename}"),
+                    # annotated root with basename
+                    (ann_root / basename, f"../../annotated/{session_id}/{basename}")
                 ]
                 relative_path = None
                 for abs_path, rel in candidates:
