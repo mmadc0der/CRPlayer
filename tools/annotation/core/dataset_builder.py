@@ -142,6 +142,16 @@ class DatasetBuilder:
                 pass
 
             added = 0
+            # Derive folder-based session name and root kind for relative paths
+            folder_session_name = session_dir.name
+            root_kind = 'raw'
+            try:
+                # Decide whether explicit dir is under raw/ or annotated/
+                if str(session_dir).startswith(str(self.session_manager.annotated_dir)):
+                    root_kind = 'annotated'
+            except Exception:
+                pass
+
             for frame_info in frames:
                 frame_id = str(frame_info['frame_id'])
                 annotation = project.get_annotation(frame_id)
@@ -162,18 +172,20 @@ class DatasetBuilder:
                 fname_path = _P(frame_filename)
                 basename = fname_path.name
                 # Build candidate pairs (absolute path, relative path string in dataset)
+                base_root = session_dir  # prefer actual folder location
+                rel_base = f"../../{root_kind}/{folder_session_name}"
                 candidates = [
+                    # prefer explicit session_dir
+                    (base_root / fname_path, f"{rel_base}/{fname_path.as_posix()}"),
+                    (base_root / 'frames' / basename, f"{rel_base}/frames/{basename}"),
+                    (base_root / basename, f"{rel_base}/{basename}"),
                     # raw, keep original relative if present
                     (raw_root / fname_path, f"../../raw/{session_id}/{fname_path.as_posix()}"),
-                    # raw frames dir with basename
                     (raw_root / 'frames' / basename, f"../../raw/{session_id}/frames/{basename}"),
-                    # raw root with basename
                     (raw_root / basename, f"../../raw/{session_id}/{basename}"),
-                    # annotated, keep original
+                    # annotated
                     (ann_root / fname_path, f"../../annotated/{session_id}/{fname_path.as_posix()}"),
-                    # annotated frames dir with basename
                     (ann_root / 'frames' / basename, f"../../annotated/{session_id}/frames/{basename}"),
-                    # annotated root with basename
                     (ann_root / basename, f"../../annotated/{session_id}/{basename}")
                 ]
                 relative_path = None
@@ -189,6 +201,8 @@ class DatasetBuilder:
                     for ext in alt_exts:
                         alt_name = stem + ext
                         alt_candidates.extend([
+                            (base_root / 'frames' / alt_name, f"{rel_base}/frames/{alt_name}"),
+                            (base_root / alt_name, f"{rel_base}/{alt_name}"),
                             (raw_root / 'frames' / alt_name, f"../../raw/{session_id}/frames/{alt_name}"),
                             (raw_root / alt_name, f"../../raw/{session_id}/{alt_name}"),
                             (ann_root / 'frames' / alt_name, f"../../annotated/{session_id}/frames/{alt_name}"),
@@ -205,7 +219,7 @@ class DatasetBuilder:
                         target_names = {basename.lower()}
                         if '.' in basename:
                             target_names.add(basename.rsplit('.', 1)[0].lower())
-                        for root in [raw_root, ann_root]:
+                        for root in [base_root, raw_root, ann_root]:
                             if root.exists():
                                 for p in root.rglob('*'):
                                     if not p.is_file():
