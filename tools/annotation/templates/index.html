@@ -710,28 +710,31 @@
             }
         }
 
-        async function loadSession(sessionPath) {
+        async function loadSession(sessionPath, projectName = 'default') {
             try {
                 const response = await fetch('./api/load_session', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ session_path: sessionPath })
+                    body: JSON.stringify({ 
+                        session_path: sessionPath,
+                        project_name: projectName 
+                    })
                 });
                 
                 const result = await response.json();
                 if (result.success) {
                     currentSession = sessionPath;
-                    currentProject = project_name;
+                    currentProject = projectName;
                     totalFrames = result.frames_count;
                     currentFrameIdx = 0;
                     
                     // Save session state to localStorage
                     localStorage.setItem('currentSession', sessionPath);
-                    localStorage.setItem('currentProject', project_name);
+                    localStorage.setItem('currentProject', projectName);
                     localStorage.setItem('appState', 'annotation');
                     
                     // Update browser history
-                    history.pushState({state: 'annotation', session: sessionPath, project: project_name}, 
+                    history.pushState({state: 'annotation', session: sessionPath, project: projectName}, 
                                     'Annotation', '#annotation');
                     
                     document.getElementById('session-selector').classList.add('hidden');
@@ -826,6 +829,7 @@
 
         async function exportDataset() {
             const exportPath = prompt('Enter export directory path:', './exported_dataset');
+            
             if (!exportPath) return;
             
             try {
@@ -844,6 +848,50 @@
             } catch (error) {
                 console.error('Error exporting dataset:', error);
                 alert('Error exporting dataset');
+            }
+        }
+
+        async function selectSession(sessionPath, project_name = 'default') {
+            try {
+                const response = await fetch('./api/load_session', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        session_path: sessionPath,
+                        project_name: project_name 
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    currentSession = sessionPath;
+                    currentProject = project_name;
+                    totalFrames = result.frames_count;
+                    currentFrameIdx = 0;
+                    
+                    // Save session state to localStorage
+                    localStorage.setItem('currentSession', sessionPath);
+                    localStorage.setItem('currentProject', project_name);
+                    localStorage.setItem('appState', 'annotation');
+                    
+                    // Update browser history
+                    history.pushState({state: 'annotation', session: sessionPath, project: project_name}, 
+                                    'Annotation', '#annotation');
+                    
+                    document.getElementById('session-selector').classList.add('hidden');
+                    document.getElementById('annotation-interface').classList.remove('hidden');
+                    document.getElementById('session-info').classList.remove('hidden');
+                    document.getElementById('session-name').textContent = `Session: ${result.session_id}`;
+                    
+                    loadFrame(0);
+                    updateStats();
+                    loadCategoriesData(result);
+                } else {
+                    alert('Error loading session: ' + result.error);
+                }
+            } catch (error) {
+                console.error('Error loading session:', error);
+                alert('Error loading session');
             }
         }
 
