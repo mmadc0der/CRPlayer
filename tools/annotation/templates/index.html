@@ -338,6 +338,7 @@
             border-radius: 4px;
             transition: background 0.2s;
             cursor: pointer;
+            justify-content: space-between;
         }
 
         .category-option:hover {
@@ -347,6 +348,23 @@
         .category-option input[type="radio"] {
             width: 18px;
             height: 18px;
+        }
+
+        .category-controls {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .hotkey-input-inline {
+            width: 30px;
+            padding: 2px 4px;
+            border: 1px solid #555;
+            border-radius: 3px;
+            background: #444;
+            color: white;
+            text-align: center;
+            font-size: 11px;
         }
 
         .add-category {
@@ -502,7 +520,7 @@
                 <div class="annotation-panel">
                     <!-- Category Management -->
                     <div class="annotation-section">
-                        <h3>Categories <button id="manage-categories-btn" class="small-btn">⚙️ Manage</button></h3>
+                        <h3>Categories</h3>
                         <div id="categories-container">
                             <div id="category-list" class="category-list">
                                 <!-- Dynamic categories will be loaded here -->
@@ -510,20 +528,6 @@
                             <div class="add-category">
                                 <input type="text" id="new-category-input" placeholder="Add new category..." class="category-input">
                                 <button id="add-category-btn" class="small-btn">+</button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Category Management Modal -->
-                    <div id="category-modal" class="modal hidden">
-                        <div class="modal-content">
-                            <h3>Manage Categories & Hotkeys</h3>
-                            <div id="category-hotkey-list" class="category-hotkey-list">
-                                <!-- Category hotkey assignments will be loaded here -->
-                            </div>
-                            <div class="modal-actions">
-                                <button id="save-hotkeys-btn" class="action-btn btn-primary">Save</button>
-                                <button id="close-modal-btn" class="action-btn btn-secondary">Close</button>
                             </div>
                         </div>
                     </div>
@@ -598,9 +602,6 @@
         function setupEventListeners() {
             // Category management
             document.getElementById('add-category-btn').addEventListener('click', addCategory);
-            document.getElementById('manage-categories-btn').addEventListener('click', openCategoryModal);
-            document.getElementById('close-modal-btn').addEventListener('click', closeCategoryModal);
-            document.getElementById('save-hotkeys-btn').addEventListener('click', saveHotkeys);
             document.getElementById('new-category-input').addEventListener('keypress', function(e) {
                 if (e.key === 'Enter') addCategory();
             });
@@ -959,56 +960,36 @@
             categoryList.innerHTML = '';
             
             categories.forEach((category, index) => {
-                const categoryOption = document.createElement('label');
+                const categoryOption = document.createElement('div');
                 categoryOption.className = 'category-option';
                 categoryOption.innerHTML = `
-                    <input type="radio" name="category" value="${category}">
-                    <span>${category}</span>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="radio" name="category" value="${category}">
+                        <span>${category}</span>
+                    </label>
+                    <div class="category-controls">
+                        <input type="text" class="hotkey-input-inline" value="${categoryHotkeys[category] || ''}" 
+                               placeholder="Key" maxlength="1" data-category="${category}">
+                        <button class="small-btn" onclick="removeCategory('${category}')" style="padding: 2px 4px; font-size: 10px;">🗑️</button>
+                    </div>
                 `;
                 categoryList.appendChild(categoryOption);
-            });
-        }
-
-        function openCategoryModal() {
-            renderHotkeyList();
-            document.getElementById('category-modal').classList.remove('hidden');
-        }
-
-        function closeCategoryModal() {
-            document.getElementById('category-modal').classList.add('hidden');
-        }
-
-        // Close modal when clicking outside of it or pressing Escape
-        document.addEventListener('click', function(e) {
-            const modal = document.getElementById('category-modal');
-            if (e.target === modal) {
-                closeCategoryModal();
-            }
-        });
-
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                const modal = document.getElementById('category-modal');
-                if (!modal.classList.contains('hidden')) {
-                    closeCategoryModal();
-                }
-            }
-        });
-
-        function renderHotkeyList() {
-            const hotkeyList = document.getElementById('category-hotkey-list');
-            hotkeyList.innerHTML = '';
-            
-            categories.forEach(category => {
-                const hotkeyItem = document.createElement('div');
-                hotkeyItem.className = 'hotkey-item';
-                hotkeyItem.innerHTML = `
-                    <label>${category}</label>
-                    <input type="text" class="hotkey-input" value="${categoryHotkeys[category] || ''}" 
-                           data-category="${category}" maxlength="1" placeholder="Key">
-                    <button class="small-btn" onclick="removeCategory('${category}')">🗑️</button>
-                `;
-                hotkeyList.appendChild(hotkeyItem);
+                
+                // Add event listener for hotkey input
+                const hotkeyInput = categoryOption.querySelector('.hotkey-input-inline');
+                hotkeyInput.addEventListener('input', function(e) {
+                    const key = e.target.value.toLowerCase();
+                    const category = e.target.dataset.category;
+                    
+                    if (key) {
+                        categoryHotkeys[category] = key;
+                    } else {
+                        delete categoryHotkeys[category];
+                    }
+                    
+                    updateDynamicShortcuts();
+                    saveCategoriesData();
+                });
             });
         }
 
@@ -1016,25 +997,8 @@
             categories = categories.filter(cat => cat !== categoryName);
             delete categoryHotkeys[categoryName];
             renderCategories();
-            renderHotkeyList();
-            saveCategoriesData();
-        }
-
-        function saveHotkeys() {
-            const hotkeyInputs = document.querySelectorAll('.hotkey-input');
-            hotkeyInputs.forEach(input => {
-                const category = input.dataset.category;
-                const key = input.value.toLowerCase();
-                if (key) {
-                    categoryHotkeys[category] = key;
-                } else {
-                    delete categoryHotkeys[category];
-                }
-            });
-            
             updateDynamicShortcuts();
             saveCategoriesData();
-            closeCategoryModal();
         }
 
         function updateDynamicShortcuts() {
