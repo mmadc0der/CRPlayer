@@ -269,7 +269,8 @@ def export_dataset():
             'exported_count': len(manifest.samples),
             'statistics': manifest.get_statistics(),
             'export_path': export_path,
-            'diagnostics': diag
+            'diagnostics': diag,
+            'session_diagnostics': manifest.metadata.get('session_diagnostics', [])
         })
         
     except Exception as e:

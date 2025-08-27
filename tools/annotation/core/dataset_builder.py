@@ -53,8 +53,29 @@ class DatasetBuilder:
                 session_dir = potential_path
                 break
         
+        # Fallback: scan for a session whose metadata.json has matching session_id
         if not session_dir:
-            print(f"[WARNING] Session {session_id} not found")
+            for search_dir in [self.session_manager.raw_dir, self.session_manager.annotated_dir]:
+                if not search_dir.exists():
+                    continue
+                for candidate in search_dir.iterdir():
+                    if not candidate.is_dir():
+                        continue
+                    meta = candidate / 'metadata.json'
+                    try:
+                        if meta.exists():
+                            with open(meta, 'r') as f:
+                                md = json.load(f)
+                            if md.get('session_id') == session_id:
+                                session_dir = candidate
+                                break
+                    except Exception:
+                        continue
+                if session_dir:
+                    break
+        
+        if not session_dir:
+            print(f"[WARNING] Session {session_id} not found by name or metadata scan")
             return 0
         
         # Load session data
@@ -77,13 +98,50 @@ class DatasetBuilder:
             
             # Add samples
             frames = session_data['frames']
+            # Diagnostics for this session
+            session_diag = {
+                'session_id': session_id,
+                'frames_total': len(frames),
+                'annotations_found': 0,
+                'labels_present': 0,
+                'path_found': 0,
+                'missing_path': 0,
+                'missing_label': 0,
+                'missing_annotation': 0,
+                'missing_path_examples': []
+            }
+
+            # Migrate legacy index-keyed annotations -> frame_id (in-memory, persist if possible)
+            try:
+                total = len(frames)
+                idx_keys = [k for k in list(project.annotations.keys()) if isinstance(k, str) and k.isdigit() and int(k) < total]
+                migrated = 0
+                for k in idx_keys:
+                    idx = int(k)
+                    frame_id_m = str(frames[idx]['frame_id'])
+                    if frame_id_m not in project.annotations:
+                        project.annotations[frame_id_m] = project.annotations[k]
+                        project.annotations[frame_id_m].frame_id = frame_id_m
+                        del project.annotations[k]
+                        migrated += 1
+                if migrated:
+                    # Try to persist so future calls see consistent keys
+                    try:
+                        self.session_manager.update_project(str(session_dir), project)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             added = 0
             for frame_info in frames:
                 frame_id = str(frame_info['frame_id'])
                 annotation = project.get_annotation(frame_id)
                 
                 if annotation is None:
+                    session_diag['missing_annotation'] += 1
                     continue  # Skip unannotated frames
+                session_diag['annotations_found'] += 1
                 
                 # Determine frame path searching both raw and annotated roots
                 frame_filename = frame_info['filename']
@@ -115,6 +173,12 @@ class DatasetBuilder:
                         break
                 if not relative_path:
                     print(f"[WARNING] Frame {frame_filename} not found for session {session_id} in raw/ or annotated/")
+                    session_diag['missing_path'] += 1
+                    if len(session_diag['missing_path_examples']) < 5:
+                        session_diag['missing_path_examples'].append({
+                            'filename': frame_filename,
+                            'tried': [str(p) for p, _ in candidates]
+                        })
                     continue
                 
                 # Extract label based on annotation type
@@ -123,7 +187,10 @@ class DatasetBuilder:
                     label = annotation.annotations.get('category') or annotation.annotations.get('game_state', '')
                     if not label:
                         # Skip if still empty
+                        session_diag['missing_label'] += 1
                         continue
+                    else:
+                        session_diag['labels_present'] += 1
                 elif project.annotation_type == 'regression':
                     label = annotation.annotations
                 else:
@@ -144,6 +211,14 @@ class DatasetBuilder:
                 
                 manifest.add_sample(sample)
                 added += 1
+                session_diag['path_found'] += 1
+            # Store diagnostics
+            try:
+                if 'session_diagnostics' not in manifest.metadata:
+                    manifest.metadata['session_diagnostics'] = []
+                manifest.metadata['session_diagnostics'].append(session_diag)
+            except Exception:
+                pass
             return added
             
         except Exception as e:
