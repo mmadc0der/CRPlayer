@@ -131,10 +131,8 @@ class SessionManager:
         
         # Create new project
         project = AnnotationProject(
-            project_name=project_name,
-            annotation_type=annotation_type,
-            created_at=datetime.now(),
-            updated_at=datetime.now()
+            name=project_name,
+            annotation_type=annotation_type
         )
         
         # Add to projects and save
@@ -151,7 +149,7 @@ class SessionManager:
     def update_project(self, session_dir: str, project: AnnotationProject):
         """Update a project in a session."""
         projects = self._load_session_projects(Path(session_dir))
-        projects[project.project_name] = project
+        projects[project.name] = project
         self.save_session_projects(session_dir, projects)
     
     def _get_session_status(self, session_dir: Path) -> str:
