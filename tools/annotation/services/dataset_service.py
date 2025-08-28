@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import List, Optional
-from pathlib import Path
+from typing import List, Optional, Dict, Any
+import warnings
 
 from core.session_manager import SessionManager
 from core.dataset_builder import DatasetBuilder
 from core.path_resolver import resolve_session_dir, resolve_frame_relative_path
-from models.dataset import DatasetManifest
 
 
 class DatasetService:
@@ -16,5 +15,15 @@ class DatasetService:
         self.sm = session_manager
         self.builder = DatasetBuilder(session_manager)
 
-    def build_from_sessions(self, project_name: str, session_ids: Optional[List[str]] = None) -> DatasetManifest:
-        return self.builder.build_dataset(project_name, session_ids=session_ids)
+    def fetch_labeled(self, dataset_id: int) -> List[Dict[str, Any]]:
+        """Return labeled items for a dataset (DB-backed)."""
+        return self.builder.fetch_labeled(dataset_id)
+
+    def build_from_sessions(self, project_name: str, session_ids: Optional[List[str]] = None):
+        """DEPRECATED: Legacy filesystem dataset builds are not supported."""
+        warnings.warn(
+            "build_from_sessions is deprecated. Use DB-backed dataset endpoints or DatasetService.fetch_labeled.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        raise NotImplementedError("Use DB-backed dataset flows")

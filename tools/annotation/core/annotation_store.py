@@ -1,64 +1,64 @@
 """
-Annotation storage and retrieval operations.
+DEPRECATED: Filesystem-based AnnotationStore.
+
+This module previously handled annotation CRUD via annotations.json on disk.
+The project is now fully DB-backed. Use `services.annotation_service.AnnotationService` instead.
+All methods here either no-op or raise to prevent accidental filesystem writes.
 """
 
 from typing import Dict, Any, Optional
-from pathlib import Path
+import warnings
 
 from core.session_manager import SessionManager
-from models.annotation import AnnotationProject, FrameAnnotation
 
 
 class AnnotationStore:
-    """Handles annotation CRUD operations."""
-    
+    """DEPRECATED shim for legacy filesystem-based annotation store.
+
+    Use `services.annotation_service.AnnotationService` for DB-backed CRUD.
+    """
+
     def __init__(self, session_manager: SessionManager):
+        warnings.warn(
+            "AnnotationStore is deprecated. Use services.annotation_service.AnnotationService instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.session_manager = session_manager
-        self.current_session_dir: Optional[str] = None
-        self.current_project: Optional[AnnotationProject] = None
-    
-    def load_session_project(self, session_dir: str, project_name: str) -> AnnotationProject:
-        """Load or create a project in a session."""
-        self.current_session_dir = session_dir
-        
-        # Try to load existing project
-        project = self.session_manager.get_project(session_dir, project_name)
-        if project is None:
-            # Create new project - default to classification for now
-            project = self.session_manager.create_project(session_dir, project_name, 'classification')
-        
-        self.current_project = project
-        return project
-    
+
+    def load_session_project(self, session_dir: str, project_name: str) -> Dict[str, Any]:
+        warnings.warn(
+            "load_session_project is deprecated and no longer supported in DB-backed flow.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        raise NotImplementedError("Use Dataset + AnnotationService instead of projects")
+
     def save_annotation(self, frame_id: str, annotation_data: Dict[str, Any], confidence: float = 1.0):
-        """Save annotation for current project."""
-        if not self.current_project or not self.current_session_dir:
-            raise ValueError("No project loaded")
-        
-        self.current_project.add_annotation(frame_id, annotation_data, confidence)
-        self.session_manager.update_project(self.current_session_dir, self.current_project)
-    
-    def get_annotation(self, frame_id: str) -> Optional[FrameAnnotation]:
-        """Get annotation for a frame."""
-        if not self.current_project:
-            return None
-        return self.current_project.get_annotation(frame_id)
-    
+        raise NotImplementedError("Use AnnotationService.save_* endpoints (DB-backed)")
+
+    def get_annotation(self, frame_id: str) -> Optional[Dict[str, Any]]:
+        warnings.warn(
+            "get_annotation (filesystem) is deprecated.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return None
+
     def add_category(self, category: str):
-        """Add a new category to current project."""
-        if not self.current_project:
-            raise ValueError("No project loaded")
-        
-        if category not in self.current_project.categories:
-            self.current_project.categories.append(category)
-            self.session_manager.update_project(self.current_session_dir, self.current_project)
-    
-    def save_project(self, session_dir: str, project_name: str, project: AnnotationProject):
-        """Save a project to session."""
-        self.session_manager.update_project(session_dir, project)
-    
+        raise NotImplementedError("Categories via projects are deprecated. Use dataset metadata if needed.")
+
+    def save_project(self, session_dir: str, project_name: str, project: Dict[str, Any]):
+        warnings.warn(
+            "save_project is deprecated and has no effect.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     def get_project_stats(self, total_frames: int) -> Dict[str, Any]:
-        """Get statistics for current project."""
-        if not self.current_project:
-            return {}
-        return self.current_project.get_progress(total_frames)
+        warnings.warn(
+            "get_project_stats is deprecated. Use dataset progress endpoints.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return {}

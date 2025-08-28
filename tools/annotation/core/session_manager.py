@@ -1,217 +1,168 @@
 """
-Session management for annotation tool.
+Session management for annotation tool (DB-backed).
+
+Reads sessions and frames from SQLite. Metadata is sourced from the
+authoritative metadata.json captured under data/raw and stored in the DB by
+the indexer. This module does not write to metadata.json.
 """
 
 import json
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+import sqlite3
 
-from models.annotation import AnnotationProject
+from tools.annotation.db.connection import get_connection
+from tools.annotation.db.schema import init_db
 
 
 class SessionManager:
-    """Manages annotation sessions and projects."""
-    
-    def __init__(self, data_root: str = "data"):
+    """Manages sessions using DB as the source of truth."""
+
+    def __init__(self, data_root: str = "data", conn: Optional[sqlite3.Connection] = None):
         self.data_root = Path(data_root)
         self.raw_dir = self.data_root / "raw"
-        self.annotated_dir = self.data_root / "annotated"
+        self._external_conn = conn
+
+    def _conn(self) -> sqlite3.Connection:
+        if self._external_conn is not None:
+            return self._external_conn
+        conn = get_connection()
+        init_db(conn)
+        return conn
     
     def discover_sessions(self) -> List[Dict[str, Any]]:
-        """Discover available annotation sessions."""
-        # Use a map keyed by session_id to deduplicate; prefer annotated over raw
-        session_map: Dict[str, Dict[str, Any]] = {}
-        search_dirs = [self.raw_dir, self.annotated_dir]
+        """List sessions from DB with frame counts.
 
-        for search_dir in search_dirs:
-            if not search_dir.exists():
-                continue
-
-            for session_dir in search_dir.iterdir():
-                if not session_dir.is_dir():
-                    continue
-
-                metadata_file = session_dir / "metadata.json"
-                if not metadata_file.exists():
-                    continue
-
-                try:
-                    with open(metadata_file, 'r') as f:
-                        metadata = json.load(f)
-
-                    projects = self._load_session_projects(session_dir)
-                    session_id = metadata.get('session_id', session_dir.name)
-                    session_info = {
-                        'session_id': session_id,
-                        'path': str(session_dir),
-                        'game_name': metadata.get('game_name', 'unknown'),
-                        'frames_count': len(metadata.get('frames', [])),
-                        'start_time': metadata.get('start_time', 'unknown'),
-                        'projects': list(projects.keys()),
-                        'status': self._get_session_status(session_dir)
-                    }
-
-                    # If duplicate, prefer annotated dir
-                    existing = session_map.get(session_id)
-                    if existing:
-                        try:
-                            is_new_annotated = str(session_dir).startswith(str(self.annotated_dir))
-                            is_existing_annotated = str(existing['path']).startswith(str(self.annotated_dir))
-                            if is_new_annotated and not is_existing_annotated:
-                                session_map[session_id] = session_info
-                        except Exception:
-                            # Fallback to override last wins to keep it simple
-                            session_map[session_id] = session_info
-                    else:
-                        session_map[session_id] = session_info
-
-                except Exception as e:
-                    print(f"[ERROR] Error reading session {session_dir}: {e}")
-                    continue
-
-        return list(session_map.values())
+        - path is taken from sessions.root_path
+        - frames_count from frames table
+        - metadata fields (game_name, start_time) parsed from sessions.metadata_json if present
+        - status is read from status.json on disk if available (read-only)
+        """
+        conn = self._conn()
+        cur = conn.execute("SELECT id, session_id, root_path, metadata_json FROM sessions")
+        rows = cur.fetchall()
+        results: List[Dict[str, Any]] = []
+        for sid_db, session_id, root_path, md_json in rows:
+            try:
+                md = json.loads(md_json) if md_json else {}
+            except Exception:
+                md = {}
+            # frames count via DB
+            cnt = conn.execute("SELECT COUNT(1) FROM frames WHERE session_id = ?", (sid_db,)).fetchone()[0]
+            session_dir = Path(root_path)
+            results.append({
+                'session_id': session_id,
+                'path': root_path,
+                'game_name': md.get('game_name', 'unknown'),
+                'frames_count': int(cnt),
+                'start_time': md.get('start_time', 'unknown'),
+                'projects': [],
+                'status': self._get_session_status(session_dir),
+            })
+        return results
 
     def get_session_path_by_id(self, session_id: str) -> Optional[Path]:
-        """Resolve a session directory by session_id, preferring annotated over raw."""
-        # Prefer annotated
-        for base in [self.annotated_dir, self.raw_dir]:
-            if not base.exists():
-                continue
-            for session_dir in base.iterdir():
-                if not session_dir.is_dir():
-                    continue
-                metadata_file = session_dir / "metadata.json"
-                if not metadata_file.exists():
-                    continue
-                try:
-                    with open(metadata_file, 'r') as f:
-                        metadata = json.load(f)
-                    sid = metadata.get('session_id', session_dir.name)
-                    if sid == session_id:
-                        return session_dir
-                except Exception:
-                    continue
-        return None
+        """Resolve a session directory by session_id from DB."""
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT root_path FROM sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if not row or not row[0]:
+            return None
+        return Path(row[0])
 
     def find_session_by_id(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """Load session info by session_id, preferring annotated over raw."""
-        session_dir = self.get_session_path_by_id(session_id)
-        if not session_dir:
+        """Load session info by session_id from DB.
+
+        Returns metadata stored in DB (captured from metadata.json by the indexer).
+        Frames are not expanded here; callers should query frames table if needed.
+        """
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT id, root_path, metadata_json FROM sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if not row:
             return None
-        metadata_file = session_dir / "metadata.json"
+        sid_db, root_path, md_json = row
         try:
-            with open(metadata_file, 'r') as f:
-                metadata = json.load(f)
+            metadata = json.loads(md_json) if md_json else {}
         except Exception:
-            return None
+            metadata = {}
         return {
-            'session_id': metadata.get('session_id', session_dir.name),
-            'session_dir': str(session_dir),
+            'session_id': session_id,
+            'session_dir': str(root_path),
             'metadata': metadata,
-            'frames': metadata.get('frames', []),
-            'projects': self._load_session_projects(session_dir)
+            'frames_count': int(
+                (self._conn().execute("SELECT COUNT(1) FROM frames WHERE session_id = ?", (sid_db,)).fetchone() or (0,))[0]
+            ),
+            'projects': [],
         }
     
     def load_session(self, session_path: str) -> Dict[str, Any]:
-        """Load session metadata and frame information."""
+        """Load session by path (read-only).
+
+        This remains as a helper for tools operating directly on data/raw. It does
+        not write to metadata.json and is not used for persistence.
+        """
         session_dir = Path(session_path)
         metadata_file = session_dir / "metadata.json"
-        
         if not metadata_file.exists():
             raise FileNotFoundError(f"No metadata.json found in {session_dir}")
-        
-        with open(metadata_file, 'r') as f:
+        with open(metadata_file, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
-        
         return {
             'session_id': metadata.get('session_id', session_dir.name),
             'session_dir': str(session_dir),
             'metadata': metadata,
             'frames': metadata.get('frames', []),
-            'projects': self._load_session_projects(session_dir)
+            'projects': [],
         }
     
-    def _load_session_projects(self, session_dir: Path) -> Dict[str, AnnotationProject]:
-        """Load all annotation projects for a session."""
-        projects = {}
-        annotations_file = session_dir / "annotations.json"
-        
-        if not annotations_file.exists():
-            return projects
-        
-        try:
-            with open(annotations_file, 'r') as f:
-                data = json.load(f)
-            
-            projects_data = data.get('projects', {})
-            for project_name, project_data in projects_data.items():
-                projects[project_name] = AnnotationProject.from_dict(project_data)
-                
-        except Exception as e:
-            print(f"[ERROR] Error loading projects from {annotations_file}: {e}")
-        
-        return projects
+    def _load_session_projects(self, session_dir: Path) -> Dict[str, Any]:
+        """DEPRECATED: Projects are not used in DB-backed flow."""
+        warnings.warn(
+            "_load_session_projects is deprecated in DB-backed flow.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return {}
     
-    def save_session_projects(self, session_dir: str, projects: Dict[str, AnnotationProject]):
-        """Save all annotation projects for a session."""
-        session_path = Path(session_dir)
-        annotations_file = session_path / "annotations.json"
-        
-        # Load existing data or create new
-        if annotations_file.exists():
-            with open(annotations_file, 'r') as f:
-                data = json.load(f)
-        else:
-            data = {
-                'session_id': session_path.name,
-                'updated_at': datetime.now().isoformat(),
-                'projects': {}
-            }
-        
-        # Update projects data
-        data['projects'] = {name: project.to_dict() for name, project in projects.items()}
-        data['updated_at'] = datetime.now().isoformat()
-        
-        # Save atomically to minimize partial writes / blocking issues
-        tmp_file = annotations_file.with_suffix('.json.tmp')
-        with open(tmp_file, 'w') as f:
-            json.dump(data, f, indent=2)
-        try:
-            # Path.replace is atomic on most OSes when on same filesystem
-            Path(tmp_file).replace(annotations_file)
-        except Exception:
-            # Fallback to write direct if replace fails
-            with open(annotations_file, 'w') as f:
-                json.dump(data, f, indent=2)
-    
-    def create_project(self, session_dir: str, project_name: str, annotation_type: str) -> AnnotationProject:
-        """Create a new annotation project in a session."""
-        # Load existing projects
-        projects = self._load_session_projects(Path(session_dir))
-        
-        # Create new project
-        project = AnnotationProject(
-            name=project_name,
-            annotation_type=annotation_type
+    def save_session_projects(self, session_dir: str, projects: Dict[str, Any]):
+        """DEPRECATED: Projects persistence removed."""
+        warnings.warn(
+            "save_session_projects is deprecated and has no effect in DB-backed flow.",
+            DeprecationWarning,
+            stacklevel=2,
         )
         
-        # Add to projects and save
-        projects[project_name] = project
-        self.save_session_projects(session_dir, projects)
-        
-        return project
+    def create_project(self, session_dir: str, project_name: str, annotation_type: str) -> Dict[str, Any]:
+        """DEPRECATED: Project creation is not supported in DB-backed flow."""
+        warnings.warn(
+            "create_project is deprecated and not supported.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return {}
     
-    def get_project(self, session_dir: str, project_name: str) -> Optional[AnnotationProject]:
-        """Get a specific project from a session."""
-        projects = self._load_session_projects(Path(session_dir))
-        return projects.get(project_name)
+    def get_project(self, session_dir: str, project_name: str) -> Optional[Dict[str, Any]]:
+        """DEPRECATED: Projects are not supported in DB-backed flow."""
+        warnings.warn(
+            "get_project is deprecated and returns None.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return None
     
-    def update_project(self, session_dir: str, project: AnnotationProject):
-        """Update a project in a session."""
-        projects = self._load_session_projects(Path(session_dir))
-        projects[project.name] = project
-        self.save_session_projects(session_dir, projects)
+    def update_project(self, session_dir: str, project: Dict[str, Any]):
+        """DEPRECATED: Projects are not supported in DB-backed flow."""
+        warnings.warn(
+            "update_project is deprecated and has no effect.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     
     def _get_session_status(self, session_dir: Path) -> str:
         """Get current status of a session."""

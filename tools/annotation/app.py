@@ -7,11 +7,15 @@ Flask web application for in-place annotation via browser.
 from flask import Flask, render_template
 from pathlib import Path
 import argparse
+import threading
+import atexit
+import os
 
 from core.session_manager import SessionManager
 from api import create_annotation_api
 from db.connection import get_connection
 from db.schema import init_db
+from db.indexer import run_indexer_loop
 
 # Ensure static/templates resolve regardless of where the process is started
 BASE_DIR = Path(__file__).parent.resolve()
@@ -36,6 +40,44 @@ try:
 except Exception as _e:
     # Keep app running even if DB init fails; API can still operate in file-only mode
     print(f"[DB] Initialization skipped due to error: {_e}")
+
+# -------------------- Background Indexer --------------------
+_indexer_stop_event = threading.Event()
+
+def _start_indexer():
+    try:
+        t = threading.Thread(
+            target=run_indexer_loop,
+            args=(Path(session_manager.data_root),),
+            kwargs={
+                'interval_s': 5.0,
+                'jitter_s': 1.0,
+                'stop_event': _indexer_stop_event,
+            },
+            daemon=True,
+        )
+        t.start()
+    except Exception as e:
+        print(f"[indexer] failed to start: {e}")
+
+def _stop_indexer():
+    try:
+        _indexer_stop_event.set()
+    except Exception:
+        pass
+
+def _should_start_indexer() -> bool:
+    try:
+        # If debug reloader is active, only start in the reloader main process
+        if app.debug:
+            return os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+        return True
+    except Exception:
+        return True
+
+if _should_start_indexer():
+    _start_indexer()
+atexit.register(_stop_indexer)
 
 
 @app.route('/')

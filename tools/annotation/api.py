@@ -152,9 +152,9 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
     @bp.route('/api/datasets/<int:dataset_id>/labeled', methods=['GET'])
     def api_dataset_labeled(dataset_id: int):
         try:
-            conn = get_connection()
-            init_db(conn)
-            return jsonify(db_list_labeled(conn, dataset_id))
+            # Use service to enrich with frame_path_rel based on metadata and resolvers
+            rows = dataset_service.fetch_labeled(dataset_id)
+            return jsonify(rows)
         except Exception as e:
             err = ErrorResponse(code='labeled_error', message='Failed to list labeled items', details={'error': str(e)})
             return jsonify(err.dict()), 500
