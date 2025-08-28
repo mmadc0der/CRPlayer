@@ -13,6 +13,8 @@ from dto import FrameQuery, ImageQuery, SaveAnnotationRequest, ErrorResponse
 from db.connection import get_connection
 from db.schema import init_db
 from db.indexer import reindex_sessions
+from db.projects import list_projects as db_list_projects, create_project as db_create_project, list_datasets as db_list_datasets, create_dataset as db_create_dataset, get_dataset as db_get_dataset, dataset_progress as db_dataset_progress
+from db.datasets import enroll_session_frames as db_enroll_session_frames, list_labeled as db_list_labeled
 
 
 def create_annotation_api(session_manager: SessionManager) -> Blueprint:
@@ -44,6 +46,108 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             })
         except Exception as e:
             err = ErrorResponse(code='reindex_error', message='Failed to reindex', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    # -------------------- Projects & Datasets CRUD --------------------
+    @bp.route('/api/projects', methods=['GET'])
+    def api_list_projects():
+        try:
+            conn = get_connection()
+            init_db(conn)
+            return jsonify(db_list_projects(conn))
+        except Exception as e:
+            err = ErrorResponse(code='projects_error', message='Failed to list projects', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/projects', methods=['POST'])
+    def api_create_project():
+        try:
+            payload = request.get_json(force=True) or {}
+            name = payload.get('name')
+            description = payload.get('description')
+            if not name:
+                err = ErrorResponse(code='bad_request', message='name is required')
+                return jsonify(err.dict()), 400
+            conn = get_connection()
+            init_db(conn)
+            pid = db_create_project(conn, name, description)
+            return jsonify({'id': pid, 'name': name, 'description': description}), 201
+        except Exception as e:
+            err = ErrorResponse(code='create_project_error', message='Failed to create project', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/projects/<int:project_id>/datasets', methods=['GET'])
+    def api_list_datasets(project_id: int):
+        try:
+            conn = get_connection()
+            init_db(conn)
+            return jsonify(db_list_datasets(conn, project_id))
+        except Exception as e:
+            err = ErrorResponse(code='datasets_error', message='Failed to list datasets', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/projects/<int:project_id>/datasets', methods=['POST'])
+    def api_create_dataset(project_id: int):
+        try:
+            payload = request.get_json(force=True) or {}
+            name = payload.get('name')
+            description = payload.get('description')
+            target_type_id = payload.get('target_type_id')
+            if not name or target_type_id is None:
+                err = ErrorResponse(code='bad_request', message='name and target_type_id are required')
+                return jsonify(err.dict()), 400
+            conn = get_connection()
+            init_db(conn)
+            did = db_create_dataset(conn, project_id, name, description, int(target_type_id))
+            return jsonify({'id': did, 'project_id': project_id, 'name': name, 'description': description, 'target_type_id': int(target_type_id)}), 201
+        except Exception as e:
+            err = ErrorResponse(code='create_dataset_error', message='Failed to create dataset', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    # Enroll session frames into dataset (creates annotations rows with status=unlabeled)
+    @bp.route('/api/datasets/<int:dataset_id>/enroll_session', methods=['POST'])
+    def api_enroll_session(dataset_id: int):
+        try:
+            payload = request.get_json(force=True) or {}
+            session_id = payload.get('session_id')
+            settings = payload.get('settings')  # optional default settings_json
+            if not session_id:
+                err = ErrorResponse(code='bad_request', message='session_id is required')
+                return jsonify(err.dict()), 400
+            conn = get_connection()
+            init_db(conn)
+            # Ensure dataset exists
+            d = db_get_dataset(conn, dataset_id)
+            if not d:
+                err = ErrorResponse(code='not_found', message='Dataset not found')
+                return jsonify(err.dict()), 404
+            summary = db_enroll_session_frames(conn, dataset_id, session_id, settings)
+            return jsonify({'ok': True, 'summary': summary})
+        except ValueError as ve:
+            err = ErrorResponse(code='bad_request', message=str(ve))
+            return jsonify(err.dict()), 400
+        except Exception as e:
+            err = ErrorResponse(code='enroll_error', message='Failed to enroll session', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>/progress', methods=['GET'])
+    def api_dataset_progress(dataset_id: int):
+        try:
+            conn = get_connection()
+            init_db(conn)
+            return jsonify(db_dataset_progress(conn, dataset_id))
+        except Exception as e:
+            err = ErrorResponse(code='progress_error', message='Failed to get dataset progress', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>/labeled', methods=['GET'])
+    def api_dataset_labeled(dataset_id: int):
+        try:
+            conn = get_connection()
+            init_db(conn)
+            return jsonify(db_list_labeled(conn, dataset_id))
+        except Exception as e:
+            err = ErrorResponse(code='labeled_error', message='Failed to list labeled items', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
     @bp.route('/api/frame', methods=['GET'])
@@ -129,12 +233,12 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             return jsonify({'saved': saved})
         except IndexError as e:
             err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.dict()), 404
+            return jsonify(err.model_dump()), 404
         except FileNotFoundError as e:
             err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.dict()), 404
+            return jsonify(err.model_dump()), 404
         except Exception as e:
             err = ErrorResponse(code='save_error', message='Failed to save annotation', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     return bp

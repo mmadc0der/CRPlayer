@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS annotations (
   frame_id     INTEGER NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
   status       TEXT NOT NULL DEFAULT 'unlabeled'
                CHECK (status IN ('unlabeled','labeled','skipped')),
+  settings_json JSON, -- free-form settings like categories/hotkeys
   created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at   TEXT,
   PRIMARY KEY (dataset_id, frame_id)
@@ -200,6 +201,7 @@ BEGIN
   WHERE dataset_id = NEW.dataset_id AND frame_id = NEW.frame_id;
 END;
 
+-- View: all annotations with payloads, labeled-only
 CREATE VIEW IF NOT EXISTS annotations_view AS
 SELECT
   a.dataset_id,
@@ -207,6 +209,7 @@ SELECT
   a.status,
   a.created_at,
   a.updated_at,
+  a.settings_json,
   r.value_real,
   c.class_id AS single_label_class_id,
   group_concat(al.class_id) AS multilabel_class_ids_csv
@@ -217,11 +220,35 @@ LEFT JOIN classification_annotations c
        ON c.dataset_id = a.dataset_id AND c.frame_id = a.frame_id
 LEFT JOIN annotation_labels al
        ON al.dataset_id = a.dataset_id AND al.frame_id = a.frame_id
+WHERE a.status = 'labeled'
 GROUP BY
-  a.dataset_id, a.frame_id, a.status, a.created_at, a.updated_at, r.value_real, c.class_id;
+  a.dataset_id, a.frame_id, a.status, a.created_at, a.updated_at, a.settings_json, r.value_real, c.class_id;
+
+-- View: dataset labeled items with session/frame identity
+CREATE VIEW IF NOT EXISTS dataset_labeled_view AS
+SELECT
+  d.id AS dataset_id,
+  s.session_id AS session_id,
+  f.frame_id AS frame_id,
+  av.value_real,
+  av.single_label_class_id,
+  av.multilabel_class_ids_csv
+FROM annotations_view av
+JOIN annotations a ON a.dataset_id = av.dataset_id AND a.frame_id = av.frame_id
+JOIN frames f ON f.id = a.frame_id
+JOIN sessions s ON s.id = f.session_id
+JOIN datasets d ON d.id = a.dataset_id;
 """
 
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    # Backfill: add settings_json if missing
+    try:
+        cur = conn.execute("PRAGMA table_info(annotations);")
+        cols = [row[1] for row in cur.fetchall()]
+        if 'settings_json' not in cols:
+            conn.execute("ALTER TABLE annotations ADD COLUMN settings_json TEXT;")
+    except Exception:
+        pass
     conn.commit()
