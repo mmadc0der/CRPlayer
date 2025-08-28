@@ -11,18 +11,18 @@ class ErrorResponse(BaseModel):
 
 
 class FrameQuery(BaseModel):
-    session_path: str
+    session_id: str
     project_name: Optional[str] = Field(default='default')
     idx: int
 
 
 class ImageQuery(BaseModel):
-    session_path: str
+    session_id: str
     idx: int
 
 
 class SaveAnnotationRequest(BaseModel):
-    session_path: str
+    session_id: str
     project_name: str = Field(default='default')
     frame_id: Optional[str] = None
     frame_idx: Optional[int] = None

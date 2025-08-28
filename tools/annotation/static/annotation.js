@@ -6,7 +6,7 @@
 
   // App state
   let state = {
-    session_path: null,
+    session_id: null,
     project_name: 'default',
     currentIdx: 0,
     totalFrames: 0,
@@ -68,8 +68,8 @@
 
   // Persistence helpers (localStorage per session/project)
   function lsKey(prefix) {
-    if (!state.session_path) return `${prefix}:none`;
-    return `${prefix}:${state.session_path}:${state.project_name}`;
+    if (!state.session_id) return `${prefix}:none`;
+    return `${prefix}:${state.session_id}:${state.project_name}`;
   }
 
   function loadCategoriesFromStorage() {
@@ -93,7 +93,7 @@
 
   function saveSessionSelection() {
     try {
-      localStorage.setItem('currentSession', state.session_path || '');
+      localStorage.setItem('currentSession', state.session_id || '');
       localStorage.setItem('currentProject', state.project_name || 'default');
       localStorage.setItem('appState', 'annotation');
     } catch {}
@@ -111,7 +111,7 @@
         <div class="selector__meta">Game: ${s.game_name || '-'} · Frames: ${s.frames_count || '-'}</div>
         <div class="selector__meta">Started: ${s.start_time ? new Date(s.start_time).toLocaleString() : '-'}</div>
       `;
-      div.addEventListener('click', () => selectSession(s.path));
+      div.addEventListener('click', () => selectSession(s.session_id));
       list.appendChild(div);
     });
     if (sessions.length === 0) {
@@ -211,8 +211,8 @@
     }
   }
 
-  async function selectSession(session_path, project_name = 'default', opts = { pushHistory: true }) {
-    state.session_path = session_path;
+  async function selectSession(session_id, project_name = 'default', opts = { pushHistory: true }) {
+    state.session_id = session_id;
     state.project_name = project_name;
     state.currentIdx = 0;
 
@@ -224,11 +224,11 @@
     els.sessionSelector().classList.add('hidden');
     els.annotationInterface().classList.remove('hidden');
     els.sessionInfo().classList.remove('hidden');
-    els.sessionName().textContent = `Session: ${session_path} · Project: ${project_name}`;
+    els.sessionName().textContent = `Session: ${session_id} · Project: ${project_name}`;
 
     saveSessionSelection();
     if (opts && opts.pushHistory) {
-      history.pushState({ state: 'annotation', session: session_path, project: project_name }, 'Annotation', '#annotation');
+      history.pushState({ state: 'annotation', session: session_id, project: project_name }, 'Annotation', '#annotation');
     }
     await loadFrame(0);
   }
@@ -237,7 +237,7 @@
     if (idx < 0) idx = 0;
     try {
       const data = await apiGet('./api/frame', {
-        session_path: state.session_path,
+        session_id: state.session_id,
         project_name: state.project_name,
         idx: idx,
       });
@@ -255,7 +255,7 @@
       }
 
       // Update image and frame info
-      els.img().src = `./api/image?${new URLSearchParams({ session_path: state.session_path, idx: String(idx) }).toString()}`;
+      els.img().src = `./api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`;
       els.frameId().textContent = frame.frame_id ?? '-';
       els.frameFilename().textContent = frame.filename ?? '-';
       const ts = frame.timestamp;
@@ -288,7 +288,7 @@
     const notes = els.notes().value || '';
     try {
       const result = await apiPost('./api/save_annotation', {
-        session_path: state.session_path,
+        session_id: state.session_id,
         project_name: state.project_name,
         frame_idx: state.currentIdx,
         annotations: { category, notes },
@@ -404,9 +404,9 @@
     // Browser navigation basics
     window.addEventListener('popstate', (event) => {
       const st = event.state;
-      if (st && st.state === 'annotation' && st.session && st.project) {
+      if (st && st.state === 'annotation' && st.session_id && st.project) {
         // navigate without pushing a new history entry
-        selectSession(st.session, st.project, { pushHistory: false });
+        selectSession(st.session_id, st.project, { pushHistory: false });
       } else {
         showSessionSelector({ pushHistory: false });
       }
@@ -418,6 +418,7 @@
 
     // Initial state from URL or localStorage
     const hash = (location.hash || '').toLowerCase();
+    // Backward compatibility: if 'currentSession' stored a path earlier, we still pass it as session_id string
     const savedSession = localStorage.getItem('currentSession');
     const savedProject = localStorage.getItem('currentProject');
     if (hash === '#annotation' && savedSession && savedProject) {

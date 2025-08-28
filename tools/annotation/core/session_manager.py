@@ -71,6 +71,47 @@ class SessionManager:
                     continue
 
         return list(session_map.values())
+
+    def get_session_path_by_id(self, session_id: str) -> Optional[Path]:
+        """Resolve a session directory by session_id, preferring annotated over raw."""
+        # Prefer annotated
+        for base in [self.annotated_dir, self.raw_dir]:
+            if not base.exists():
+                continue
+            for session_dir in base.iterdir():
+                if not session_dir.is_dir():
+                    continue
+                metadata_file = session_dir / "metadata.json"
+                if not metadata_file.exists():
+                    continue
+                try:
+                    with open(metadata_file, 'r') as f:
+                        metadata = json.load(f)
+                    sid = metadata.get('session_id', session_dir.name)
+                    if sid == session_id:
+                        return session_dir
+                except Exception:
+                    continue
+        return None
+
+    def find_session_by_id(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Load session info by session_id, preferring annotated over raw."""
+        session_dir = self.get_session_path_by_id(session_id)
+        if not session_dir:
+            return None
+        metadata_file = session_dir / "metadata.json"
+        try:
+            with open(metadata_file, 'r') as f:
+                metadata = json.load(f)
+        except Exception:
+            return None
+        return {
+            'session_id': metadata.get('session_id', session_dir.name),
+            'session_dir': str(session_dir),
+            'metadata': metadata,
+            'frames': metadata.get('frames', []),
+            'projects': self._load_session_projects(session_dir)
+        }
     
     def load_session(self, session_path: str) -> Dict[str, Any]:
         """Load session metadata and frame information."""

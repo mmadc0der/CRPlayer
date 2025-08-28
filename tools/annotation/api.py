@@ -31,7 +31,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
     @bp.route('/api/frame', methods=['GET'])
     def get_frame():
         try:
-            q = FrameQuery(session_path=request.args.get('session_path', ''),
+            q = FrameQuery(session_id=request.args.get('session_id', ''),
                            project_name=request.args.get('project_name', 'default'),
                            idx=int(request.args.get('idx', '-1')))
         except Exception as e:
@@ -39,9 +39,9 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             return jsonify(err.dict()), 400
 
         try:
-            frame = session_service.get_frame_by_idx(q.session_path, q.idx)
+            frame = session_service.get_frame_by_idx(q.session_id, q.idx)
             # best-effort: include current annotation if exists
-            ann = annotation_service.get_annotation(q.session_path, q.project_name, str(frame['frame_id']))
+            ann = annotation_service.get_annotation(q.session_id, q.project_name, str(frame['frame_id']))
             return jsonify({'frame': frame, 'annotation': ann})
         except IndexError as e:
             err = ErrorResponse(code='not_found', message=str(e))
@@ -56,14 +56,17 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
     @bp.route('/api/image', methods=['GET'])
     def get_image():
         try:
-            q = ImageQuery(session_path=request.args.get('session_path', ''),
+            q = ImageQuery(session_id=request.args.get('session_id', ''),
                            idx=int(request.args.get('idx', '-1')))
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid query parameters', details={'error': str(e)})
             return jsonify(err.dict()), 400
 
         try:
-            info = session_manager.load_session(q.session_path)
+            info = session_manager.find_session_by_id(q.session_id)
+            if not info:
+                err = ErrorResponse(code='not_found', message='Session not found', details={'session_id': q.session_id})
+                return jsonify(err.dict()), 404
             session_dir = Path(info['session_dir'])
             frames = info['metadata'].get('frames', [])
             if q.idx < 0 or q.idx >= len(frames):
@@ -96,10 +99,10 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
         try:
             frame_id: Optional[str] = payload.frame_id
             if frame_id is None and payload.frame_idx is not None:
-                frame = session_service.get_frame_by_idx(payload.session_path, int(payload.frame_idx))
+                frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
                 frame_id = str(frame['frame_id'])
             saved = annotation_service.save_annotation(
-                session_path=payload.session_path,
+                session_id=payload.session_id,
                 project_name=payload.project_name,
                 frame_id=str(frame_id),
                 annotations=payload.annotations,
