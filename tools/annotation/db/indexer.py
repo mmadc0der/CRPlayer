@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import time
+import random
 from pathlib import Path
 from typing import Optional
+import threading
 import sqlite3
 
 from .connection import get_connection
@@ -33,6 +35,29 @@ def _load_json_stable(path: Path, retries: int = 3, sleep_s: float = 0.05) -> Op
             pass
         time.sleep(sleep_s)
     return _safe_load_json(path)
+
+
+def _derive_ts_ms(frame_entry: dict) -> Optional[int]:
+    """Return ts_ms if present else convert 'timestamp' seconds to ms; otherwise None.
+
+    - Accepts numeric or string types for ts_ms/timestamp.
+    - Rounds to nearest millisecond when converting seconds.
+    """
+    ts = frame_entry.get('ts_ms')
+    if ts is not None:
+        try:
+            return int(ts)
+        except Exception:
+            pass
+    sec = frame_entry.get('timestamp')
+    if sec is not None:
+        try:
+            # Support string or float seconds
+            sec_f = float(sec)
+            return int(round(sec_f * 1000.0))
+        except Exception:
+            return None
+    return None
 
 
 def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dict:
@@ -80,12 +105,7 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
             frame_id = fr.get('frame_id')
             if not frame_id:
                 continue
-            ts = fr.get('ts_ms')
-            if isinstance(ts, str):
-                try:
-                    ts = int(ts)
-                except Exception:
-                    ts = None
+            ts = _derive_ts_ms(fr)
             upsert_frame(conn, session_db_id, str(frame_id), ts)
             inserted_frames += 1
 
@@ -97,3 +117,42 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
         'sessions_indexed': inserted_sessions,
         'frames_indexed': inserted_frames,
     }
+
+
+def run_indexer_loop(
+    data_root: Path,
+    interval_s: float = 5.0,
+    jitter_s: float = 1.0,
+    stop_event: Optional[threading.Event] = None,
+) -> None:
+    """Run the reindexer periodically in the background.
+
+    - Read-only access to metadata.json under data/raw/*.
+    - Idempotent DB upserts; safe to run continuously.
+    - Lightweight logging via print; replace with app logger if available.
+    - Optional stop_event to terminate loop gracefully.
+    """
+    while True:
+        if stop_event is not None and stop_event.is_set():
+            break
+        t0 = time.time()
+        try:
+            stats = reindex_sessions(None, data_root)
+            print(f"[indexer] sessions={stats.get('sessions_indexed',0)} frames={stats.get('frames_indexed',0)}")
+        except Exception as e:
+            print(f"[indexer][error] {e}")
+        # Sleep with small jitter to avoid sync with writers
+        elapsed = time.time() - t0
+        delay = max(0.5, interval_s - elapsed) + (random.random() * jitter_s)
+        # Allow prompt shutdown
+        if stop_event is not None:
+            # Wait in small increments so we can react to stop_event
+            waited = 0.0
+            step = 0.25
+            while waited < delay:
+                if stop_event.is_set():
+                    return
+                time.sleep(min(step, delay - waited))
+                waited += step
+        else:
+            time.sleep(delay)
