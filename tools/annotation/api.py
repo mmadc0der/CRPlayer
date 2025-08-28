@@ -7,9 +7,18 @@ from typing import Optional
 from core.session_manager import SessionManager
 from services.session_service import SessionService
 from services.annotation_service import AnnotationService
+from services.settings_service import SettingsService
 from services.dataset_service import DatasetService
 from core.path_resolver import resolve_frame_absolute_path
-from dto import FrameQuery, ImageQuery, SaveAnnotationRequest, ErrorResponse
+from dto import (
+    FrameQuery,
+    ImageQuery,
+    SaveAnnotationRequest,
+    ErrorResponse,
+    SaveRegressionRequest,
+    SaveSingleLabelRequest,
+    SaveMultilabelRequest,
+)
 from db.connection import get_connection
 from db.schema import init_db
 from db.indexer import reindex_sessions
@@ -23,6 +32,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
     session_service = SessionService(session_manager)
     annotation_service = AnnotationService(session_manager)
     dataset_service = DatasetService(session_manager)
+    settings_service = SettingsService()
 
     @bp.route('/api/sessions', methods=['GET'])
     def discover_sessions():
@@ -240,5 +250,111 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
         except Exception as e:
             err = ErrorResponse(code='save_error', message='Failed to save annotation', details={'error': str(e)})
             return jsonify(err.model_dump()), 500
+
+    # -------------------- DB-backed annotation write endpoints --------------------
+    @bp.route('/api/annotations/regression', methods=['POST'])
+    def api_save_regression():
+        try:
+            payload = SaveRegressionRequest.parse_obj(request.get_json())
+        except Exception as e:
+            err = ErrorResponse(code='bad_request', message='Invalid payload', details={'error': str(e)})
+            return jsonify(err.dict()), 400
+        try:
+            frame_id = payload.frame_id
+            if frame_id is None and payload.frame_idx is not None:
+                frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
+                frame_id = str(frame['frame_id'])
+            res = annotation_service.save_regression(
+                session_id=payload.session_id,
+                dataset_id=payload.dataset_id,
+                frame_id=str(frame_id),
+                value=payload.value,
+                override_settings=payload.override_settings,
+            )
+            return jsonify(res)
+        except Exception as e:
+            err = ErrorResponse(code='save_error', message='Failed to save regression', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/annotations/single_label', methods=['POST'])
+    def api_save_single_label():
+        try:
+            payload = SaveSingleLabelRequest.parse_obj(request.get_json())
+        except Exception as e:
+            err = ErrorResponse(code='bad_request', message='Invalid payload', details={'error': str(e)})
+            return jsonify(err.dict()), 400
+        try:
+            frame_id = payload.frame_id
+            if frame_id is None and payload.frame_idx is not None:
+                frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
+                frame_id = str(frame['frame_id'])
+            res = annotation_service.save_single_label(
+                session_id=payload.session_id,
+                dataset_id=payload.dataset_id,
+                frame_id=str(frame_id),
+                class_id=payload.class_id,
+                override_settings=payload.override_settings,
+            )
+            return jsonify(res)
+        except Exception as e:
+            err = ErrorResponse(code='save_error', message='Failed to save single label', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/annotations/multilabel', methods=['POST'])
+    def api_save_multilabel():
+        try:
+            payload = SaveMultilabelRequest.parse_obj(request.get_json())
+        except Exception as e:
+            err = ErrorResponse(code='bad_request', message='Invalid payload', details={'error': str(e)})
+            return jsonify(err.dict()), 400
+        try:
+            frame_id = payload.frame_id
+            if frame_id is None and payload.frame_idx is not None:
+                frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
+                frame_id = str(frame['frame_id'])
+            res = annotation_service.save_multilabel(
+                session_id=payload.session_id,
+                dataset_id=payload.dataset_id,
+                frame_id=str(frame_id),
+                class_ids=payload.class_ids,
+                override_settings=payload.override_settings,
+            )
+            return jsonify(res)
+        except Exception as e:
+            err = ErrorResponse(code='save_error', message='Failed to save multilabel', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    # -------------------- Dataset-session settings --------------------
+    @bp.route('/api/datasets/<int:dataset_id>/sessions/<session_id>/settings', methods=['PUT'])
+    def api_upsert_dataset_session_settings(dataset_id: int, session_id: str):
+        try:
+            payload = request.get_json(force=True) or {}
+            settings = payload.get('settings')
+            if not isinstance(settings, dict):
+                err = ErrorResponse(code='bad_request', message='settings (object) is required')
+                return jsonify(err.dict()), 400
+            settings_service.upsert_dataset_session_settings(dataset_id, session_id, settings)
+            return jsonify({'ok': True})
+        except Exception as e:
+            err = ErrorResponse(code='settings_error', message='Failed to upsert settings', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>/sessions/<session_id>/settings', methods=['GET'])
+    def api_get_dataset_session_settings(dataset_id: int, session_id: str):
+        try:
+            s = settings_service.get_dataset_session_settings(dataset_id, session_id)
+            return jsonify({'settings': s})
+        except Exception as e:
+            err = ErrorResponse(code='settings_error', message='Failed to get settings', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>/sessions/<session_id>/settings', methods=['DELETE'])
+    def api_delete_dataset_session_settings(dataset_id: int, session_id: str):
+        try:
+            settings_service.clear_dataset_session_settings(dataset_id, session_id)
+            return jsonify({'ok': True})
+        except Exception as e:
+            err = ErrorResponse(code='settings_error', message='Failed to delete settings', details={'error': str(e)})
+            return jsonify(err.dict()), 500
 
     return bp

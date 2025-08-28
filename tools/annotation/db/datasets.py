@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 from typing import Dict, Any, List, Optional
+from .repository import (
+    get_session_db_id,
+    upsert_dataset_session_settings,
+)
 
 
 def enroll_session_frames(
@@ -18,26 +21,26 @@ def enroll_session_frames(
     Idempotent: uses INSERT OR IGNORE on (dataset_id, frame_id) PK.
     """
     # Resolve DB ids
-    cur = conn.execute("SELECT id FROM sessions WHERE session_id = ?", (session_id_str,))
-    srow = cur.fetchone()
-    if not srow:
+    session_db_id = get_session_db_id(conn, session_id_str)
+    if session_db_id is None:
         raise ValueError(f"Unknown session_id: {session_id_str}")
-    session_db_id = int(srow[0])
 
     # Frames for session
     cur = conn.execute("SELECT id FROM frames WHERE session_id = ?", (session_db_id,))
     frame_ids = [int(r[0]) for r in cur.fetchall()]
 
-    settings_json = json.dumps(default_settings, ensure_ascii=False) if default_settings else None
+    # Store baseline settings once per (dataset, session)
+    if default_settings is not None:
+        upsert_dataset_session_settings(conn, dataset_id, session_db_id, default_settings)
 
     inserted = 0
     for fid in frame_ids:
         conn.execute(
             """
-            INSERT OR IGNORE INTO annotations(dataset_id, frame_id, status, settings_json)
-            VALUES (?, ?, 'unlabeled', ?)
+            INSERT OR IGNORE INTO annotations(dataset_id, frame_id, status)
+            VALUES (?, ?, 'unlabeled')
             """,
-            (dataset_id, fid, settings_json),
+            (dataset_id, fid),
         )
         if conn.total_changes:
             inserted += 1
