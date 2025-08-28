@@ -10,6 +10,7 @@ from datetime import datetime
 from core.session_manager import SessionManager
 from models.dataset import DatasetManifest, DatasetSample
 from models.annotation import AnnotationProject
+from core.path_resolver import resolve_session_dir, resolve_frame_relative_path
 
 
 class DatasetBuilder:
@@ -49,36 +50,12 @@ class DatasetBuilder:
     
     def _add_session_to_dataset(self, manifest: DatasetManifest, session_id: str, project_name: str, explicit_session_dir: Path = None) -> int:
         """Add all annotated frames from a session to the dataset. Returns number of samples added."""
-        # Find session directory
-        session_dir = explicit_session_dir
-        if session_dir is not None and not session_dir.exists():
-            session_dir = None
-        for search_dir in [self.session_manager.raw_dir, self.session_manager.annotated_dir]:
-            potential_path = search_dir / session_id
-            if potential_path.exists():
-                session_dir = potential_path
-                break
-        
-        # Fallback: scan for a session whose metadata.json has matching session_id
-        if not session_dir:
-            for search_dir in [self.session_manager.raw_dir, self.session_manager.annotated_dir]:
-                if not search_dir.exists():
-                    continue
-                for candidate in search_dir.iterdir():
-                    if not candidate.is_dir():
-                        continue
-                    meta = candidate / 'metadata.json'
-                    try:
-                        if meta.exists():
-                            with open(meta, 'r') as f:
-                                md = json.load(f)
-                            if md.get('session_id') == session_id:
-                                session_dir = candidate
-                                break
-                    except Exception:
-                        continue
-                if session_dir:
-                    break
+        # Resolve session directory deterministically
+        session_dir = None
+        if explicit_session_dir is not None and explicit_session_dir.exists():
+            session_dir = explicit_session_dir
+        else:
+            session_dir = resolve_session_dir(self.session_manager, session_id)
         
         if not session_dir:
             print(f"[WARNING] Session {session_id} not found by name or metadata scan")
@@ -142,16 +119,6 @@ class DatasetBuilder:
                 pass
 
             added = 0
-            # Derive folder-based session name and root kind for relative paths
-            folder_session_name = session_dir.name
-            root_kind = 'raw'
-            try:
-                # Decide whether explicit dir is under raw/ or annotated/
-                if str(session_dir).startswith(str(self.session_manager.annotated_dir)):
-                    root_kind = 'annotated'
-            except Exception:
-                pass
-
             for frame_info in frames:
                 frame_id = str(frame_info['frame_id'])
                 annotation = project.get_annotation(frame_id)
@@ -161,96 +128,26 @@ class DatasetBuilder:
                     continue  # Skip unannotated frames
                 session_diag['annotations_found'] += 1
                 
-                # Determine frame path searching both raw and annotated roots
+                # Determine frame path using deterministic resolver
                 frame_filename = frame_info['filename']
+                # Record root existence for diagnostics
                 raw_root = self.session_manager.raw_dir / session_id
                 ann_root = self.session_manager.annotated_dir / session_id
                 session_diag['raw_root_exists'] = session_diag['raw_root_exists'] or raw_root.exists()
                 session_diag['ann_root_exists'] = session_diag['ann_root_exists'] or ann_root.exists()
-                # Support both cases: filename may already include 'frames/' or other subdirs
-                from pathlib import Path as _P
-                fname_path = _P(frame_filename)
-                basename = fname_path.name
-                # Build candidate pairs (absolute path, relative path string in dataset)
-                base_root = session_dir  # prefer actual folder location
-                rel_base = f"../../{root_kind}/{folder_session_name}"
-                candidates = [
-                    # prefer explicit session_dir
-                    (base_root / fname_path, f"{rel_base}/{fname_path.as_posix()}"),
-                    (base_root / 'frames' / basename, f"{rel_base}/frames/{basename}"),
-                    (base_root / basename, f"{rel_base}/{basename}"),
-                    # raw, keep original relative if present
-                    (raw_root / fname_path, f"../../raw/{session_id}/{fname_path.as_posix()}"),
-                    (raw_root / 'frames' / basename, f"../../raw/{session_id}/frames/{basename}"),
-                    (raw_root / basename, f"../../raw/{session_id}/{basename}"),
-                    # annotated
-                    (ann_root / fname_path, f"../../annotated/{session_id}/{fname_path.as_posix()}"),
-                    (ann_root / 'frames' / basename, f"../../annotated/{session_id}/frames/{basename}"),
-                    (ann_root / basename, f"../../annotated/{session_id}/{basename}")
-                ]
-                relative_path = None
-                for abs_path, rel in candidates:
-                    if abs_path.exists():
-                        relative_path = rel
-                        break
+
+                relative_path = resolve_frame_relative_path(self.session_manager, session_dir, session_id, frame_filename)
+                # Try with just basename as fallback (if filename had subdir mismatch)
                 if not relative_path:
-                    # Try alternate extensions
-                    alt_exts = ['.jpg', '.jpeg', '.png', '.bmp', '.webp']
-                    stem = basename.rsplit('.', 1)[0] if '.' in basename else basename
-                    alt_candidates = []
-                    for ext in alt_exts:
-                        alt_name = stem + ext
-                        alt_candidates.extend([
-                            (base_root / 'frames' / alt_name, f"{rel_base}/frames/{alt_name}"),
-                            (base_root / alt_name, f"{rel_base}/{alt_name}"),
-                            (raw_root / 'frames' / alt_name, f"../../raw/{session_id}/frames/{alt_name}"),
-                            (raw_root / alt_name, f"../../raw/{session_id}/{alt_name}"),
-                            (ann_root / 'frames' / alt_name, f"../../annotated/{session_id}/frames/{alt_name}"),
-                            (ann_root / alt_name, f"../../annotated/{session_id}/{alt_name}")
-                        ])
-                    for abs_path, rel in alt_candidates:
-                        if abs_path.exists():
-                            relative_path = rel
-                            break
-                if not relative_path:
-                    # Last resort: recursive search for basename under session roots
-                    try:
-                        found_abs = None
-                        target_names = {basename.lower()}
-                        if '.' in basename:
-                            target_names.add(basename.rsplit('.', 1)[0].lower())
-                        for root in [base_root, raw_root, ann_root]:
-                            if root.exists():
-                                for p in root.rglob('*'):
-                                    if not p.is_file():
-                                        continue
-                                    name_lower = p.name.lower()
-                                    stem_lower = p.stem.lower()
-                                    if name_lower in target_names or stem_lower in target_names:
-                                        found_abs = p
-                                        break
-                            if found_abs:
-                                break
-                        if found_abs:
-                            # Compute relative_path based on which root matched
-                            try:
-                                if str(found_abs).startswith(str(raw_root)):
-                                    rel = found_abs.relative_to(raw_root).as_posix()
-                                    relative_path = f"../../raw/{session_id}/{rel}"
-                                else:
-                                    rel = found_abs.relative_to(ann_root).as_posix()
-                                    relative_path = f"../../annotated/{session_id}/{rel}"
-                            except Exception:
-                                relative_path = None
-                    except Exception:
-                        pass
+                    from pathlib import Path as _P
+                    relative_path = resolve_frame_relative_path(self.session_manager, session_dir, session_id, _P(frame_filename).name)
                 if not relative_path:
                     print(f"[WARNING] Frame {frame_filename} not found for session {session_id} in raw/ or annotated/")
                     session_diag['missing_path'] += 1
                     if len(session_diag['missing_path_examples']) < 5:
                         session_diag['missing_path_examples'].append({
                             'filename': frame_filename,
-                            'tried': [str(p) for p, _ in candidates]
+                            'hint': 'Ensure frames are under frames/ subdir and filenames in metadata are correct'
                         })
                     continue
                 

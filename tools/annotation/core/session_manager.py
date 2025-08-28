@@ -20,31 +20,30 @@ class SessionManager:
     
     def discover_sessions(self) -> List[Dict[str, Any]]:
         """Discover available annotation sessions."""
-        sessions = []
-        
+        # Use a map keyed by session_id to deduplicate; prefer annotated over raw
+        session_map: Dict[str, Dict[str, Any]] = {}
         search_dirs = [self.raw_dir, self.annotated_dir]
-        
+
         for search_dir in search_dirs:
             if not search_dir.exists():
                 continue
-                
+
             for session_dir in search_dir.iterdir():
                 if not session_dir.is_dir():
                     continue
-                    
+
                 metadata_file = session_dir / "metadata.json"
                 if not metadata_file.exists():
                     continue
-                
+
                 try:
                     with open(metadata_file, 'r') as f:
                         metadata = json.load(f)
-                    
-                    # Load existing projects
+
                     projects = self._load_session_projects(session_dir)
-                    
+                    session_id = metadata.get('session_id', session_dir.name)
                     session_info = {
-                        'session_id': metadata.get('session_id', session_dir.name),
+                        'session_id': session_id,
                         'path': str(session_dir),
                         'game_name': metadata.get('game_name', 'unknown'),
                         'frames_count': len(metadata.get('frames', [])),
@@ -52,13 +51,26 @@ class SessionManager:
                         'projects': list(projects.keys()),
                         'status': self._get_session_status(session_dir)
                     }
-                    sessions.append(session_info)
-                    
+
+                    # If duplicate, prefer annotated dir
+                    existing = session_map.get(session_id)
+                    if existing:
+                        try:
+                            is_new_annotated = str(session_dir).startswith(str(self.annotated_dir))
+                            is_existing_annotated = str(existing['path']).startswith(str(self.annotated_dir))
+                            if is_new_annotated and not is_existing_annotated:
+                                session_map[session_id] = session_info
+                        except Exception:
+                            # Fallback to override last wins to keep it simple
+                            session_map[session_id] = session_info
+                    else:
+                        session_map[session_id] = session_info
+
                 except Exception as e:
                     print(f"[ERROR] Error reading session {session_dir}: {e}")
                     continue
-        
-        return sessions
+
+        return list(session_map.values())
     
     def load_session(self, session_path: str) -> Dict[str, Any]:
         """Load session metadata and frame information."""
@@ -120,9 +132,17 @@ class SessionManager:
         data['projects'] = {name: project.to_dict() for name, project in projects.items()}
         data['updated_at'] = datetime.now().isoformat()
         
-        # Save to file
-        with open(annotations_file, 'w') as f:
+        # Save atomically to minimize partial writes / blocking issues
+        tmp_file = annotations_file.with_suffix('.json.tmp')
+        with open(tmp_file, 'w') as f:
             json.dump(data, f, indent=2)
+        try:
+            # Path.replace is atomic on most OSes when on same filesystem
+            Path(tmp_file).replace(annotations_file)
+        except Exception:
+            # Fallback to write direct if replace fails
+            with open(annotations_file, 'w') as f:
+                json.dump(data, f, indent=2)
     
     def create_project(self, session_dir: str, project_name: str, annotation_type: str) -> AnnotationProject:
         """Create a new annotation project in a session."""
