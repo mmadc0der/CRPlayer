@@ -10,6 +10,9 @@ from services.annotation_service import AnnotationService
 from services.dataset_service import DatasetService
 from core.path_resolver import resolve_frame_absolute_path
 from dto import FrameQuery, ImageQuery, SaveAnnotationRequest, ErrorResponse
+from db.connection import get_connection
+from db.schema import init_db
+from db.indexer import reindex_sessions
 
 
 def create_annotation_api(session_manager: SessionManager) -> Blueprint:
@@ -26,6 +29,21 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             return jsonify(sessions)
         except Exception as e:
             err = ErrorResponse(code='sessions_error', message='Failed to discover sessions', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/reindex', methods=['POST'])
+    def reindex():
+        """Scan data directories and populate SQLite with sessions/frames."""
+        try:
+            conn = get_connection()
+            init_db(conn)
+            summary = reindex_sessions(conn, Path(session_manager.data_root))
+            return jsonify({
+                'ok': True,
+                'summary': summary,
+            })
+        except Exception as e:
+            err = ErrorResponse(code='reindex_error', message='Failed to reindex', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
     @bp.route('/api/frame', methods=['GET'])

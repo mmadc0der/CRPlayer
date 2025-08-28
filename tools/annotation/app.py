@@ -10,6 +10,8 @@ import argparse
 
 from core.session_manager import SessionManager
 from api import create_annotation_api
+from db.connection import get_connection
+from db.schema import init_db
 
 # Ensure static/templates resolve regardless of where the process is started
 BASE_DIR = Path(__file__).parent.resolve()
@@ -23,6 +25,17 @@ app = Flask(
 # Bootstrap services and register blueprint
 session_manager = SessionManager()
 app.register_blueprint(create_annotation_api(session_manager))
+
+# Initialize SQLite schema (idempotent)
+try:
+    _conn = get_connection()
+    try:
+        init_db(_conn)
+    finally:
+        _conn.close()
+except Exception as _e:
+    # Keep app running even if DB init fails; API can still operate in file-only mode
+    print(f"[DB] Initialization skipped due to error: {_e}")
 
 
 @app.route('/')
