@@ -43,7 +43,7 @@ CREATE TABLE IF NOT EXISTS frames (
   id          INTEGER PRIMARY KEY,
   session_id  INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
   frame_id    TEXT NOT NULL,
-  ts_ms       INTEGER,
+  ts_ms       INTEGER CHECK (ts_ms IS NULL OR ts_ms >= 0),
   UNIQUE(session_id, frame_id)
 );
 
@@ -53,25 +53,37 @@ CREATE TABLE IF NOT EXISTS dataset_classes (
   id          INTEGER PRIMARY KEY,
   dataset_id  INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
   name        TEXT NOT NULL,
-  idx         INTEGER,
+  idx         INTEGER CHECK (idx IS NULL OR idx >= 0),
   UNIQUE(dataset_id, name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_dataset_classes_dataset ON dataset_classes(dataset_id);
+-- Ensure dataset + class id pair is unique to support composite FK references
+CREATE UNIQUE INDEX IF NOT EXISTS ux_dataset_classes_dataset_id_id
+  ON dataset_classes(dataset_id, id);
+-- Enforce stable class ordering per dataset
+CREATE UNIQUE INDEX IF NOT EXISTS ux_dataset_classes_dataset_id_idx
+  ON dataset_classes(dataset_id, idx);
 
 CREATE TABLE IF NOT EXISTS annotations (
   dataset_id   INTEGER NOT NULL REFERENCES datasets(id) ON DELETE CASCADE,
   frame_id     INTEGER NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
   status       TEXT NOT NULL DEFAULT 'unlabeled'
                CHECK (status IN ('unlabeled','labeled','skipped')),
-  settings_json JSON, -- free-form settings like categories/hotkeys
+  settings_json TEXT, -- free-form per-frame override settings
+  CHECK (settings_json IS NULL OR json_valid(settings_json)),
   created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
   updated_at   TEXT,
   PRIMARY KEY (dataset_id, frame_id)
-);
+)
+WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_annotations_frame ON annotations(frame_id);
 CREATE INDEX IF NOT EXISTS idx_annotations_dataset ON annotations(dataset_id);
+-- Partial index to speed up labeled lookups per dataset
+CREATE INDEX IF NOT EXISTS idx_annotations_labeled
+ON annotations(dataset_id, frame_id)
+WHERE status = 'labeled';
 
 CREATE TABLE IF NOT EXISTS regression_annotations (
   dataset_id INTEGER NOT NULL,
@@ -80,7 +92,8 @@ CREATE TABLE IF NOT EXISTS regression_annotations (
   PRIMARY KEY (dataset_id, frame_id),
   FOREIGN KEY (dataset_id, frame_id)
     REFERENCES annotations(dataset_id, frame_id) ON DELETE CASCADE
-);
+)
+WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS classification_annotations (
   dataset_id INTEGER NOT NULL,
@@ -89,8 +102,11 @@ CREATE TABLE IF NOT EXISTS classification_annotations (
              REFERENCES dataset_classes(id) ON DELETE RESTRICT,
   PRIMARY KEY (dataset_id, frame_id),
   FOREIGN KEY (dataset_id, frame_id)
-    REFERENCES annotations(dataset_id, frame_id) ON DELETE CASCADE
-);
+    REFERENCES annotations(dataset_id, frame_id) ON DELETE CASCADE,
+  FOREIGN KEY (dataset_id, class_id)
+    REFERENCES dataset_classes(dataset_id, id) ON DELETE RESTRICT
+)
+WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS annotation_labels (
   dataset_id   INTEGER NOT NULL,
@@ -99,8 +115,23 @@ CREATE TABLE IF NOT EXISTS annotation_labels (
                REFERENCES dataset_classes(id) ON DELETE CASCADE,
   PRIMARY KEY (dataset_id, frame_id, class_id),
   FOREIGN KEY (dataset_id, frame_id)
-    REFERENCES annotations(dataset_id, frame_id) ON DELETE CASCADE
-);
+    REFERENCES annotations(dataset_id, frame_id) ON DELETE CASCADE,
+  FOREIGN KEY (dataset_id, class_id)
+    REFERENCES dataset_classes(dataset_id, id) ON DELETE CASCADE
+)
+WITHOUT ROWID;
+
+-- Baseline settings per (dataset, session)
+CREATE TABLE IF NOT EXISTS dataset_session_settings (
+  dataset_id    INTEGER NOT NULL REFERENCES datasets(id)  ON DELETE CASCADE,
+  session_id    INTEGER NOT NULL REFERENCES sessions(id)  ON DELETE CASCADE,
+  settings_json TEXT,
+  CHECK (settings_json IS NULL OR json_valid(settings_json)),
+  created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at    TEXT,
+  PRIMARY KEY (dataset_id, session_id)
+)
+WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_ann_labels_dataset ON annotation_labels(dataset_id);
 CREATE INDEX IF NOT EXISTS idx_ann_labels_frame   ON annotation_labels(frame_id);
@@ -174,25 +205,7 @@ BEGIN
   SELECT RAISE(ABORT, 'Cannot insert multilabel when regression or single-label exists for same (dataset_id, frame_id)');
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_classification_class_belongs_to_dataset
-BEFORE INSERT ON classification_annotations
-WHEN NOT EXISTS (
-  SELECT 1 FROM dataset_classes dc
-  WHERE dc.id = NEW.class_id AND dc.dataset_id = NEW.dataset_id
-)
-BEGIN
-  SELECT RAISE(ABORT, 'classification_annotations.class_id must belong to the same dataset');
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_multilabel_class_belongs_to_dataset
-BEFORE INSERT ON annotation_labels
-WHEN NOT EXISTS (
-  SELECT 1 FROM dataset_classes dc
-  WHERE dc.id = NEW.class_id AND dc.dataset_id = NEW.dataset_id
-)
-BEGIN
-  SELECT RAISE(ABORT, 'annotation_labels.class_id must belong to the same dataset');
-END;
+-- Triggers enforcing class belongs to dataset are replaced by composite FKs above
 
 CREATE TRIGGER IF NOT EXISTS trg_annotations_touch_updated_at
 AFTER UPDATE ON annotations
@@ -201,8 +214,25 @@ BEGIN
   WHERE dataset_id = NEW.dataset_id AND frame_id = NEW.frame_id;
 END;
 
--- View: all annotations with payloads, labeled-only
+CREATE TRIGGER IF NOT EXISTS trg_ds_settings_touch_updated_at
+AFTER UPDATE ON dataset_session_settings
+BEGIN
+  UPDATE dataset_session_settings SET updated_at = CURRENT_TIMESTAMP
+  WHERE dataset_id = NEW.dataset_id AND session_id = NEW.session_id;
+END;
+
+-- View: all annotations with payloads, labeled-only (deterministic multilabel order)
 CREATE VIEW IF NOT EXISTS annotations_view AS
+WITH ordered_labels AS (
+  SELECT al.dataset_id, al.frame_id, al.class_id
+  FROM annotation_labels al
+  JOIN dataset_classes dc ON dc.id = al.class_id AND dc.dataset_id = al.dataset_id
+  ORDER BY dc.idx, al.class_id
+), labels AS (
+  SELECT dataset_id, frame_id, group_concat(class_id) AS multilabel_class_ids_csv
+  FROM ordered_labels
+  GROUP BY dataset_id, frame_id
+)
 SELECT
   a.dataset_id,
   a.frame_id,
@@ -212,14 +242,14 @@ SELECT
   a.settings_json,
   r.value_real,
   c.class_id AS single_label_class_id,
-  group_concat(al.class_id) AS multilabel_class_ids_csv
+  l.multilabel_class_ids_csv
 FROM annotations a
 LEFT JOIN regression_annotations r
        ON r.dataset_id = a.dataset_id AND r.frame_id = a.frame_id
 LEFT JOIN classification_annotations c
        ON c.dataset_id = a.dataset_id AND c.frame_id = a.frame_id
-LEFT JOIN annotation_labels al
-       ON al.dataset_id = a.dataset_id AND al.frame_id = a.frame_id
+LEFT JOIN labels l
+       ON l.dataset_id = a.dataset_id AND l.frame_id = a.frame_id
 WHERE a.status = 'labeled'
 GROUP BY
   a.dataset_id, a.frame_id, a.status, a.created_at, a.updated_at, a.settings_json, r.value_real, c.class_id;
