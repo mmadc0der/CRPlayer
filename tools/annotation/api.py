@@ -13,7 +13,6 @@ from core.path_resolver import resolve_frame_absolute_path
 from dto import (
     FrameQuery,
     ImageQuery,
-    SaveAnnotationRequest,
     ErrorResponse,
     SaveRegressionRequest,
     SaveSingleLabelRequest,
@@ -172,9 +171,8 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
 
         try:
             frame = session_service.get_frame_by_idx(q.session_id, q.idx)
-            # best-effort: include current annotation if exists
-            ann = annotation_service.get_annotation(q.session_id, q.project_name, str(frame['frame_id']))
-            return jsonify({'frame': frame, 'annotation': ann})
+            # Deprecated filesystem annotation removed; return only frame
+            return jsonify({'frame': frame})
         except IndexError as e:
             err = ErrorResponse(code='not_found', message=str(e))
             return jsonify(err.dict()), 404
@@ -220,36 +218,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             err = ErrorResponse(code='image_error', message='Failed to load image', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
-    @bp.route('/api/save_annotation', methods=['POST'])
-    def save_annotation():
-        try:
-            payload = SaveAnnotationRequest.parse_obj(request.get_json())
-        except Exception as e:
-            err = ErrorResponse(code='bad_request', message='Invalid payload', details={'error': str(e)})
-            return jsonify(err.dict()), 400
-
-        try:
-            frame_id: Optional[str] = payload.frame_id
-            if frame_id is None and payload.frame_idx is not None:
-                frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
-                frame_id = str(frame['frame_id'])
-            saved = annotation_service.save_annotation(
-                session_id=payload.session_id,
-                project_name=payload.project_name,
-                frame_id=str(frame_id),
-                annotations=payload.annotations,
-                confidence=payload.confidence,
-            )
-            return jsonify({'saved': saved})
-        except IndexError as e:
-            err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.model_dump()), 404
-        except FileNotFoundError as e:
-            err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.model_dump()), 404
-        except Exception as e:
-            err = ErrorResponse(code='save_error', message='Failed to save annotation', details={'error': str(e)})
-            return jsonify(err.model_dump()), 500
+    # Legacy filesystem save endpoint removed in favor of DB-backed endpoints above
 
     # -------------------- DB-backed annotation write endpoints --------------------
     @bp.route('/api/annotations/regression', methods=['POST'])
