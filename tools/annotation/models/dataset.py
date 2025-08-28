@@ -1,16 +1,21 @@
 """
-Dataset models for export and management.
+DEPRECATED: Legacy dataset models used for filesystem-style export manifests.
+
+The system now uses DB-backed repositories and services. These classes are
+kept only for backward compatibility with any export tooling that still
+consumes JSON manifests. Prefer querying the DB and generating exports
+directly from query results.
 """
 
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-from pathlib import Path
+import warnings
 
 
 @dataclass
 class DatasetSample:
-    """Single sample in a dataset."""
+    """DEPRECATED: Single sample structure for legacy export manifests."""
     frame_path: str
     label: Any
     session_id: str
@@ -31,7 +36,11 @@ class DatasetSample:
 
 @dataclass
 class DatasetManifest:
-    """Dataset manifest containing metadata and sample references."""
+    """DEPRECATED: Dataset manifest for legacy filesystem-style exports.
+
+    Instantiating this class will emit a deprecation warning. Prefer using
+    DB-backed queries and producing export artifacts directly.
+    """
     dataset_id: str
     annotation_type: str
     project_name: str
@@ -44,13 +53,13 @@ class DatasetManifest:
     metadata: Dict[str, Any] = field(default_factory=dict)
     
     def add_sample(self, sample: DatasetSample):
-        """Add a sample to the dataset."""
+        """DEPRECATED: Add a sample to the legacy manifest."""
         self.samples.append(sample)
         if sample.session_id not in self.source_sessions:
             self.source_sessions.append(sample.session_id)
     
     def get_split_samples(self, split_name: str) -> List[DatasetSample]:
-        """Get samples for a specific split."""
+        """DEPRECATED: Get samples for a split from legacy manifest."""
         if split_name not in self.splits:
             return []
         
@@ -67,7 +76,7 @@ class DatasetManifest:
             return []
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Get dataset statistics."""
+        """DEPRECATED: Compute stats from legacy manifest."""
         stats = {
             'total_samples': len(self.samples),
             'source_sessions': len(self.source_sessions),
@@ -90,7 +99,7 @@ class DatasetManifest:
         return stats
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
+        """DEPRECATED: Serialize legacy manifest to dict."""
         return {
             'dataset_id': self.dataset_id,
             'annotation_type': self.annotation_type,
@@ -107,7 +116,7 @@ class DatasetManifest:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'DatasetManifest':
-        """Create from dictionary."""
+        """DEPRECATED: Deserialize legacy manifest from dict."""
         manifest = cls(
             dataset_id=data['dataset_id'],
             annotation_type=data['annotation_type'],
@@ -133,4 +142,9 @@ class DatasetManifest:
             )
             manifest.samples.append(sample)
         
+        warnings.warn(
+            "Loading legacy DatasetManifest. Prefer DB-backed export flows.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return manifest

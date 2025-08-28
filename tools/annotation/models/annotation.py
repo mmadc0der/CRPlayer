@@ -1,16 +1,20 @@
 """
-Annotation data models.
+DEPRECATED: Legacy filesystem-based annotation models.
+
+These classes were used for per-frame JSON storage and in-memory aggregation.
+The system now uses a DB-backed flow via repository/services. Do not use these
+models for new code. They are kept only to avoid breaking imports in older modules.
 """
 
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-import json
+import warnings
 
 
 @dataclass
 class FrameAnnotation:
-    """Single frame annotation data."""
+    """DEPRECATED: Single frame annotation data (legacy)."""
     frame_id: str
     annotations: Dict[str, Any] = field(default_factory=dict)
     confidence: float = 1.0
@@ -26,9 +30,18 @@ class FrameAnnotation:
 
 
 class AnnotationProject:
-    """Represents an annotation project with its settings and annotations."""
+    """DEPRECATED legacy in-memory project. Use DB-backed services instead.
+
+    This class remains only for backward compatibility. Instantiating it will
+    emit a deprecation warning. All functionality here is considered legacy.
+    """
     
     def __init__(self, name: str, annotation_type: str = 'classification', categories: List[str] = None):
+        warnings.warn(
+            "AnnotationProject is deprecated. Use DB-backed services (AnnotationService, SettingsService).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.name = name
         self.annotation_type = annotation_type  # 'classification', 'regression', 'object_detection'
         self.categories = categories or []
@@ -38,7 +51,7 @@ class AnnotationProject:
         self.updated_at = datetime.now()
     
     def add_annotation(self, frame_id: str, annotation_data: Dict[str, Any], confidence: float = 1.0):
-        """Add or update frame annotation."""
+        """DEPRECATED: Adds or updates a legacy in-memory annotation."""
         self.annotations[frame_id] = FrameAnnotation(
             frame_id=frame_id,
             annotations=annotation_data,
@@ -48,11 +61,11 @@ class AnnotationProject:
         self.updated_at = datetime.now()
     
     def get_annotation(self, frame_id: str) -> Optional[FrameAnnotation]:
-        """Get frame annotation."""
+        """DEPRECATED: Get legacy in-memory frame annotation."""
         return self.annotations.get(frame_id)
     
     def get_progress(self, total_frames: int) -> Dict[str, Any]:
-        """Get annotation progress statistics."""
+        """DEPRECATED: Get progress based on legacy in-memory annotations."""
         annotated_count = len(self.annotations)
         return {
             'annotated_frames': annotated_count,
@@ -62,7 +75,7 @@ class AnnotationProject:
         }
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for JSON serialization."""
+        """DEPRECATED: Serialize legacy model."""
         return {
             'name': self.name,
             'annotation_type': self.annotation_type,
@@ -75,7 +88,7 @@ class AnnotationProject:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AnnotationProject':
-        """Create from dictionary."""
+        """DEPRECATED: Deserialize legacy model."""
         project = cls(
             name=data['name'],
             annotation_type=data['annotation_type'],
@@ -86,7 +99,7 @@ class AnnotationProject:
         project.created_at = datetime.fromisoformat(data['created_at']) if data.get('created_at') else None
         project.updated_at = datetime.fromisoformat(data['updated_at']) if data.get('updated_at') else None
         
-        # Load annotations
+        # Load annotations (legacy)
         annotations_data = data.get('annotations', {})
         for frame_id, ann_data in annotations_data.items():
             project.annotations[frame_id] = FrameAnnotation(
@@ -95,5 +108,11 @@ class AnnotationProject:
                 confidence=ann_data.get('confidence', 1.0),
                 annotated_at=datetime.fromisoformat(ann_data['annotated_at']) if ann_data.get('annotated_at') else None
             )
+        
+        warnings.warn(
+            "Loading legacy annotations. Use DB-backed services (AnnotationService, SettingsService) instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         
         return project
