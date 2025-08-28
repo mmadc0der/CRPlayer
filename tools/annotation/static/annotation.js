@@ -211,7 +211,7 @@
     }
   }
 
-  async function selectSession(session_path, project_name = 'default') {
+  async function selectSession(session_path, project_name = 'default', opts = { pushHistory: true }) {
     state.session_path = session_path;
     state.project_name = project_name;
     state.currentIdx = 0;
@@ -227,6 +227,9 @@
     els.sessionName().textContent = `Session: ${session_path} · Project: ${project_name}`;
 
     saveSessionSelection();
+    if (opts && opts.pushHistory) {
+      history.pushState({ state: 'annotation', session: session_path, project: project_name }, 'Annotation', '#annotation');
+    }
     await loadFrame(0);
   }
 
@@ -316,7 +319,7 @@
     loadFrame(idx);
   }
 
-  function showSessionSelector() {
+  function showSessionSelector(opts = { pushHistory: true }) {
     els.sessionSelector().classList.remove('hidden');
     els.annotationInterface().classList.add('hidden');
     els.sessionInfo().classList.add('hidden');
@@ -325,6 +328,9 @@
       localStorage.removeItem('currentSession');
       localStorage.removeItem('currentProject');
     } catch {}
+    if (opts && opts.pushHistory) {
+      history.pushState({ state: 'sessions' }, 'Select Session', '#sessions');
+    }
     loadSessions();
   }
 
@@ -397,16 +403,12 @@
 
     // Browser navigation basics
     window.addEventListener('popstate', (event) => {
-      if (event.state && event.state.state === 'annotation') {
-        if (event.state.session && event.state.project) {
-          state.session_path = event.state.session;
-          state.project_name = event.state.project;
-          selectSession(state.session_path, state.project_name);
-        } else {
-          showSessionSelector();
-        }
+      const st = event.state;
+      if (st && st.state === 'annotation' && st.session && st.project) {
+        // navigate without pushing a new history entry
+        selectSession(st.session, st.project, { pushHistory: false });
       } else {
-        showSessionSelector();
+        showSessionSelector({ pushHistory: false });
       }
     });
   }
@@ -414,11 +416,12 @@
   async function init() {
     bindEvents();
 
-    // Try restore
+    // Initial state from URL or localStorage
+    const hash = (location.hash || '').toLowerCase();
     const savedSession = localStorage.getItem('currentSession');
     const savedProject = localStorage.getItem('currentProject');
-    if (savedSession && savedProject) {
-      await selectSession(savedSession, savedProject);
+    if (hash === '#annotation' && savedSession && savedProject) {
+      await selectSession(savedSession, savedProject, { pushHistory: false });
     } else {
       await loadSessions();
       history.replaceState({ state: 'sessions' }, 'Select Session', '#sessions');

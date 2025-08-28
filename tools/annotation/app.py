@@ -4,17 +4,20 @@ Web-based Annotation Tool for Game State Markup
 Flask web application for in-place annotation via browser.
 """
 
-from flask import Flask, render_template, request, jsonify, send_file
-import json
-import os
+from flask import Flask, render_template
 from pathlib import Path
-from typing import Dict, List, Optional
 import argparse
 
 from core.session_manager import SessionManager
 from api import create_annotation_api
 
-app = Flask(__name__)
+# Ensure static/templates resolve regardless of where the process is started
+BASE_DIR = Path(__file__).parent.resolve()
+app = Flask(
+    __name__,
+    static_folder=str(BASE_DIR / 'static'),
+    template_folder=str(BASE_DIR / 'templates'),
+)
 
 # Bootstrap services and register blueprint
 session_manager = SessionManager()
