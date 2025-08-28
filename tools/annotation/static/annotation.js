@@ -66,6 +66,29 @@
     return res.json();
   }
 
+  async function apiPostNoBody(url) {
+    const res = await fetch(url, { method: 'POST' });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  }
+
+  // Projects & Datasets API helpers (DB-backed)
+  async function listProjects() {
+    return apiGet('/api/projects');
+  }
+  async function createProject(name, description = '') {
+    return apiPost('/api/projects', { name, description });
+  }
+  async function listDatasets(projectId) {
+    return apiGet(`/api/projects/${projectId}/datasets`);
+  }
+  async function createDataset(projectId, name, description = '', target_type_id = 2) {
+    return apiPost(`/api/projects/${projectId}/datasets`, { name, description, target_type_id });
+  }
+  async function enrollSession(datasetId, sessionId, settings = undefined) {
+    return apiPost(`/api/datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
+  }
+
   // Persistence helpers (localStorage per session/project)
   function lsKey(prefix) {
     if (!state.session_id) return `${prefix}:none`;
@@ -110,12 +133,74 @@
         <h4>${s.session_id}</h4>
         <div class="selector__meta">Game: ${s.game_name || '-'} · Frames: ${s.frames_count || '-'}</div>
         <div class="selector__meta">Started: ${s.start_time ? new Date(s.start_time).toLocaleString() : '-'}</div>
+        <div class="selector__actions" style="margin-top:6px; display:flex; gap:8px;">
+          <button class="btn btn--primary" data-action="open">Open</button>
+          <button class="btn" data-action="enroll">Enroll</button>
+        </div>
       `;
-      div.addEventListener('click', () => selectSession(s.session_id));
+      const openBtn = div.querySelector('[data-action="open"]');
+      const enrollBtn = div.querySelector('[data-action="enroll"]');
+      openBtn.addEventListener('click', () => selectSession(s.session_id));
+      enrollBtn.addEventListener('click', () => startEnrollmentFlow(s.session_id));
       list.appendChild(div);
     });
     if (sessions.length === 0) {
       list.innerHTML = '<div class="selector__meta">No annotation sessions found. Run data collection first.</div>';
+    }
+  }
+
+  async function startEnrollmentFlow(sessionId) {
+    try {
+      // 1) Choose or create Project
+      const projects = await listProjects();
+      const choices = projects.map((p, i) => `${i + 1}) ${p.name}`).join('\n');
+      let sel = prompt(`Select a project by number or type 'new' to create:\n${choices}`);
+      let projectId;
+      if (sel && sel.toLowerCase() === 'new') {
+        const name = prompt('New project name:');
+        if (!name) return;
+        const desc = prompt('Description (optional):') || '';
+        const created = await createProject(name, desc);
+        projectId = created.id;
+      } else {
+        const idx = parseInt(sel, 10) - 1;
+        if (Number.isNaN(idx) || idx < 0 || idx >= projects.length) return;
+        projectId = projects[idx].id;
+      }
+
+      // 2) Choose or create Dataset in selected Project
+      const datasets = await listDatasets(projectId);
+      const dsChoices = datasets.map((d, i) => `${i + 1}) ${d.name} [type ${d.target_type_id}]`).join('\n');
+      sel = prompt(`Select a dataset by number or type 'new' to create:\n${dsChoices || '(none yet)'}`);
+      let datasetId;
+      if (sel && sel.toLowerCase() === 'new') {
+        const dsName = prompt('New dataset name:');
+        if (!dsName) return;
+        const dsDesc = prompt('Description (optional):') || '';
+        const typeStr = prompt('Target type id (1=Regression, 2=SingleLabelClassification, 3=MultiLabelClassification):', '2') || '2';
+        const type = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
+        const createdDs = await createDataset(projectId, dsName, dsDesc, type);
+        datasetId = createdDs.id;
+      } else {
+        const idx = parseInt(sel, 10) - 1;
+        if (Number.isNaN(idx) || idx < 0 || idx >= datasets.length) return;
+        datasetId = datasets[idx].id;
+      }
+
+      // 3) Optional baseline settings JSON
+      let settings = undefined;
+      const wantSettings = confirm('Provide baseline settings JSON for this dataset+session pair?');
+      if (wantSettings) {
+        const raw = prompt('Enter JSON (e.g., {"categories":["battle","menu"],"hotkeys":{}}):', '{}') || '{}';
+        try { settings = JSON.parse(raw); } catch { settings = undefined; }
+      }
+
+      // 4) Enroll
+      await enrollSession(datasetId, sessionId, settings);
+      toast('Session enrolled');
+    } catch (e) {
+      console.error(e);
+      toast('Enrollment failed');
     }
   }
 
@@ -203,7 +288,7 @@
   // Core flows
   async function loadSessions() {
     try {
-      const sessions = await apiGet('./api/sessions');
+      const sessions = await apiGet('/api/sessions');
       renderSessionList(sessions);
     } catch (e) {
       console.error(e);
@@ -236,7 +321,7 @@
   async function loadFrame(idx) {
     if (idx < 0) idx = 0;
     try {
-      const data = await apiGet('./api/frame', {
+      const data = await apiGet('/api/frame', {
         session_id: state.session_id,
         project_name: state.project_name,
         idx: idx,
@@ -255,7 +340,7 @@
       }
 
       // Update image and frame info
-      els.img().src = `./api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`;
+      els.img().src = `/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`;
       els.frameId().textContent = frame.frame_id ?? '-';
       els.frameFilename().textContent = frame.filename ?? '-';
       const ts = frame.timestamp;
@@ -284,28 +369,10 @@
   }
 
   async function saveAnnotation() {
-    const category = getSelectedCategory();
-    const notes = els.notes().value || '';
-    try {
-      const result = await apiPost('./api/save_annotation', {
-        session_id: state.session_id,
-        project_name: state.project_name,
-        frame_idx: state.currentIdx,
-        annotations: { category, notes },
-      });
-      if (result && (result.saved || result.ok)) {
-        state.savedCategoryForFrame = category;
-        state.frameSaved = true;
-        toast('Saved');
-        return true;
-      }
-      toast('Save failed');
-      return false;
-    } catch (e) {
-      console.error(e);
-      toast('Error while saving');
-      return false;
-    }
+    // DB-backed save endpoints are exposed under /api/annotations/* and require a dataset context.
+    // This UI does not yet collect dataset_id (will be implemented in F6). Prevent legacy call.
+    toast('Saving not yet wired to DB-backed API. Complete dataset setup first.');
+    return false;
   }
 
   async function saveAndNext() {
@@ -409,6 +476,25 @@
         selectSession(st.session_id, st.project, { pushHistory: false });
       } else {
         showSessionSelector({ pushHistory: false });
+      }
+    });
+
+    // Session selector controls
+    const btnRefresh = document.getElementById('refresh-sessions');
+    const btnReindex = document.getElementById('reindex-sessions');
+    if (btnRefresh) btnRefresh.addEventListener('click', loadSessions);
+    if (btnReindex) btnReindex.addEventListener('click', async () => {
+      const prev = btnReindex.textContent;
+      btnReindex.disabled = true;
+      btnReindex.textContent = 'Reindexing...';
+      try {
+        await apiPostNoBody('/api/reindex');
+      } catch (e) {
+        toast('Reindex failed');
+      } finally {
+        btnReindex.disabled = false;
+        btnReindex.textContent = prev;
+        loadSessions();
       }
     });
   }
