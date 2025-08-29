@@ -58,6 +58,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             conn = get_connection()
             init_db(conn)
             summary = reindex_sessions(conn, Path(session_manager.data_root))
+            print(f"[api][reindex] {summary}", flush=True)
             return jsonify({
                 'ok': True,
                 'summary': summary,
@@ -206,6 +207,19 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             return jsonify(err.dict()), 400
 
         try:
+            # Debug: log incoming params and DB frame count
+            try:
+                print(f"[api][frame] session_id={q.session_id} idx={q.idx}", flush=True)
+                sid_db = session_manager.get_session_db_id(q.session_id)
+                if sid_db is not None:
+                    conn = get_connection()
+                    init_db(conn)
+                    total = conn.execute("SELECT COUNT(1) FROM frames WHERE session_id = ?", (sid_db,)).fetchone()[0]
+                    print(f"[api][frame] db_count={total}", flush=True)
+                else:
+                    print("[api][frame] session not in DB", flush=True)
+            except Exception:
+                pass
             frame = session_service.get_frame_by_idx(q.session_id, q.idx)
             # Deprecated filesystem annotation removed; return only frame
             return jsonify({'frame': frame})

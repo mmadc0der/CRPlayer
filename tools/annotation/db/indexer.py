@@ -86,15 +86,23 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
         for session_dir in raw_dir.iterdir():
             if not session_dir.is_dir():
                 continue
-            metadata_file = session_dir / 'metadata.json'
-            if not metadata_file.exists():
+            try:
+                # Ignore system/hidden folders
+                if session_dir.name.startswith('.'):
+                    continue
+            except Exception:
                 continue
-            md = _load_json_stable(metadata_file) or {}
-            sid = md.get('session_id') or session_dir.name
-            session_map[sid] = session_dir
+            try:
+                metadata_file = session_dir / 'metadata.json'
+                md = _load_json_stable(metadata_file) if metadata_file.exists() else {}
+                sid = md.get('session_id') or session_dir.name
+                session_map[sid] = session_dir
+            except Exception:
+                continue
 
     inserted_sessions = 0
     inserted_frames = 0
+    details: list[dict] = []
 
     for sid, sdir in session_map.items():
         md = _load_json_stable(sdir / 'metadata.json') or {}
@@ -115,9 +123,15 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
                 if len(sample_ids) < 5:
                     sample_ids.append(str(frame_id))
             try:
-                print(f"[indexer][session={sid}] frames_from=metadata count={len(frames)} sample={sample_ids}")
+                print(f"[indexer][session={sid}] frames_from=metadata count={len(frames)} sample={sample_ids}", flush=True)
             except Exception:
                 pass
+            details.append({
+                'session_id': sid,
+                'source': 'metadata',
+                'count': len(frames),
+                'sample': sample_ids,
+            })
         else:
             # Filesystem fallback: enumerate frames by filename
             candidates = []
@@ -137,9 +151,16 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
                 candidates = []
             try:
                 origin = str(frames_dir) if frames_dir.exists() else str(sdir)
-                print(f"[indexer][session={sid}] frames_from=filesystem dir={origin} count={len(candidates)} sample={candidates[:5]}")
+                print(f"[indexer][session={sid}] frames_from=filesystem dir={origin} count={len(candidates)} sample={candidates[:5]}", flush=True)
             except Exception:
                 pass
+            details.append({
+                'session_id': sid,
+                'source': 'filesystem',
+                'dir': str(frames_dir) if frames_dir.exists() else str(sdir),
+                'count': len(candidates),
+                'sample': candidates[:5],
+            })
             for fname in candidates:
                 # Use filename as stable frame_id
                 upsert_frame(conn, session_db_id, fname, None)
@@ -152,6 +173,7 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
     return {
         'sessions_indexed': inserted_sessions,
         'frames_indexed': inserted_frames,
+        'details': details,
     }
 
 
@@ -174,9 +196,9 @@ def run_indexer_loop(
         t0 = time.time()
         try:
             stats = reindex_sessions(None, data_root)
-            print(f"[indexer] sessions={stats.get('sessions_indexed',0)} frames={stats.get('frames_indexed',0)}")
+            print(f"[indexer] sessions={stats.get('sessions_indexed',0)} frames={stats.get('frames_indexed',0)}", flush=True)
         except Exception as e:
-            print(f"[indexer][error] {e}")
+            print(f"[indexer][error] {e}", flush=True)
         # Sleep with small jitter to avoid sync with writers
         elapsed = time.time() - t0
         delay = max(0.5, interval_s - elapsed) + (random.random() * jitter_s)
