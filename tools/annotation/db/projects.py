@@ -66,3 +66,16 @@ def dataset_progress(conn: sqlite3.Connection, dataset_id: int) -> Dict[str, int
         (dataset_id,),
     ).fetchone()[0]
     return {"total": int(total), "labeled": int(labeled), "unlabeled": int(total - labeled)}
+
+
+def get_dataset_by_name(conn: sqlite3.Connection, project_id: int, name: str) -> Optional[Dict[str, Any]]:
+    cur = conn.execute(
+        """
+        SELECT id, project_id, name, description, target_type_id, created_at
+        FROM datasets
+        WHERE project_id = ? AND name = ?
+        """,
+        (project_id, name),
+    )
+    row = cur.fetchone()
+    return dict(row) if row else None

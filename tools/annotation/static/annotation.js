@@ -109,6 +109,7 @@
 
   async function fetchDatasetSessionSettings(datasetId, sessionId) {
     try {
+      if (!datasetId) return {};
       const url = `/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`;
       const res = await fetch(withBase(url));
       if (!res.ok) throw new Error('settings fetch failed');
@@ -657,15 +658,28 @@
   async function init() {
     bindEvents();
 
+    // Always load sessions first so we can validate any saved selection
+    await loadSessions();
+
     // Initial state from URL or localStorage
     const hash = (location.hash || '').toLowerCase();
-    // Backward compatibility: if 'currentSession' stored a path earlier, we still pass it as session_id string
     const savedSession = localStorage.getItem('currentSession');
     const savedProject = localStorage.getItem('currentProject');
-    if (hash === '#annotation' && savedSession && savedProject) {
+
+    // Validate saved session exists in discovered list
+    let canAutoSelect = false;
+    if (savedSession && savedProject && hash === '#annotation') {
+      try {
+        const sessions = await apiGet('sessions');
+        canAutoSelect = Array.isArray(sessions) && sessions.some(s => s.session_id === savedSession);
+      } catch { canAutoSelect = false; }
+    }
+
+    if (canAutoSelect) {
       await selectSession(savedSession, savedProject, { pushHistory: false });
     } else {
-      await loadSessions();
+      // Clear stale saved values
+      try { localStorage.removeItem('currentSession'); localStorage.removeItem('currentProject'); } catch {}
       history.replaceState({ state: 'sessions' }, 'Select Session', '#sessions');
     }
   }

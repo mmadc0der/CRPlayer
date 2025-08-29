@@ -21,7 +21,16 @@ from dto import (
 from db.connection import get_connection
 from db.schema import init_db
 from db.indexer import reindex_sessions
-from db.projects import list_projects as db_list_projects, create_project as db_create_project, list_datasets as db_list_datasets, create_dataset as db_create_dataset, get_dataset as db_get_dataset, dataset_progress as db_dataset_progress
+from db.projects import (
+    list_projects as db_list_projects,
+    create_project as db_create_project,
+    list_datasets as db_list_datasets,
+    create_dataset as db_create_dataset,
+    get_dataset as db_get_dataset,
+    dataset_progress as db_dataset_progress,
+    get_dataset_by_name as db_get_dataset_by_name,
+)
+import sqlite3
 from db.datasets import enroll_session_frames as db_enroll_session_frames, list_labeled as db_list_labeled
 
 
@@ -79,8 +88,17 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 return jsonify(err.dict()), 400
             conn = get_connection()
             init_db(conn)
-            pid = db_create_project(conn, name, description)
-            return jsonify({'id': pid, 'name': name, 'description': description}), 201
+            try:
+                pid = db_create_project(conn, name, description)
+                return jsonify({'id': pid, 'name': name, 'description': description}), 201
+            except sqlite3.IntegrityError:
+                # Unique constraint on projects.name; return existing
+                # Fetch existing row id
+                cur = conn.execute("SELECT id, name, description, created_at FROM projects WHERE name = ?", (name,))
+                row = cur.fetchone()
+                if row:
+                    return jsonify({'id': int(row['id']), 'name': row['name'], 'description': row['description']}), 200
+                raise
         except Exception as e:
             err = ErrorResponse(code='create_project_error', message='Failed to create project', details={'error': str(e)})
             return jsonify(err.dict()), 500
@@ -107,8 +125,15 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 return jsonify(err.dict()), 400
             conn = get_connection()
             init_db(conn)
-            did = db_create_dataset(conn, project_id, name, description, int(target_type_id))
-            return jsonify({'id': did, 'project_id': project_id, 'name': name, 'description': description, 'target_type_id': int(target_type_id)}), 201
+            try:
+                did = db_create_dataset(conn, project_id, name, description, int(target_type_id))
+                return jsonify({'id': did, 'project_id': project_id, 'name': name, 'description': description, 'target_type_id': int(target_type_id)}), 201
+            except sqlite3.IntegrityError:
+                # Unique(project_id, name) exists: return existing entry as 200
+                existing = db_get_dataset_by_name(conn, project_id, name)
+                if existing:
+                    return jsonify(existing), 200
+                raise
         except Exception as e:
             err = ErrorResponse(code='create_dataset_error', message='Failed to create dataset', details={'error': str(e)})
             return jsonify(err.dict()), 500
