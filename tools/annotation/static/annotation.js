@@ -464,7 +464,6 @@
     try {
       const data = await apiGet('frame', {
         session_id: state.session_id,
-        project_name: state.project_name,
         idx: idx,
       });
 
