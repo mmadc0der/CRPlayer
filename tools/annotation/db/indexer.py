@@ -103,6 +103,7 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
             inserted_sessions += 1
         frames = md.get('frames', [])
         if frames and isinstance(frames, list):
+            sample_ids = []
             for fr in frames:
                 # Deterministic: require frame_id from metadata; derive nothing else except ts
                 frame_id = fr.get('frame_id')
@@ -111,6 +112,12 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
                 ts = _derive_ts_ms(fr)
                 upsert_frame(conn, session_db_id, str(frame_id), ts)
                 inserted_frames += 1
+                if len(sample_ids) < 5:
+                    sample_ids.append(str(frame_id))
+            try:
+                print(f"[indexer][session={sid}] frames_from=metadata count={len(frames)} sample={sample_ids}")
+            except Exception:
+                pass
         else:
             # Filesystem fallback: enumerate frames by filename
             candidates = []
@@ -128,6 +135,11 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
                             candidates.append(p.name)
             except Exception:
                 candidates = []
+            try:
+                origin = str(frames_dir) if frames_dir.exists() else str(sdir)
+                print(f"[indexer][session={sid}] frames_from=filesystem dir={origin} count={len(candidates)} sample={candidates[:5]}")
+            except Exception:
+                pass
             for fname in candidates:
                 # Use filename as stable frame_id
                 upsert_frame(conn, session_db_id, fname, None)
