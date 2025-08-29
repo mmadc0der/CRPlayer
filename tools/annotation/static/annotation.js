@@ -80,7 +80,7 @@
   async function apiGet(url, params = {}) {
     const usp = new URLSearchParams(params);
     const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const res = await fetch(`${full}?${usp.toString()}`);
+    const res = await fetch(`${withBase(full)}?${usp.toString()}`);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   }
@@ -110,7 +110,7 @@
   async function fetchDatasetSessionSettings(datasetId, sessionId) {
     try {
       const url = `/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`;
-      const res = await fetch(url);
+      const res = await fetch(withBase(url));
       if (!res.ok) throw new Error('settings fetch failed');
       const data = await res.json();
       return data.settings || {};
@@ -122,7 +122,7 @@
 
   async function apiPost(url, body) {
     const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const res = await fetch(full, {
+    const res = await fetch(withBase(full), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -133,29 +133,29 @@
 
   async function apiPostNoBody(url) {
     const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const res = await fetch(full, { method: 'POST' });
+    const res = await fetch(withBase(full), { method: 'POST' });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   }
 
   // Projects & Datasets API helpers (DB-backed)
   async function listProjects() {
-    return apiGet('annotation/projects');
+    return apiGet('projects');
   }
   async function createProject(name, description = '') {
-    return apiPost('annotation/projects', { name, description });
+    return apiPost('projects', { name, description });
   }
   async function listDatasets(projectId) {
-    return apiGet(`annotation/projects/${projectId}/datasets`);
+    return apiGet(`projects/${projectId}/datasets`);
   }
   async function createDataset(projectId, name, description = '', target_type_id = 2) {
-    return apiPost(`annotation/projects/${projectId}/datasets`, { name, description, target_type_id });
+    return apiPost(`projects/${projectId}/datasets`, { name, description, target_type_id });
   }
   async function enrollSession(datasetId, sessionId, settings = undefined) {
-    return apiPost(`annotation/datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
+    return apiPost(`datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
   }
   async function datasetProgress(datasetId) {
-    return apiGet(`annotation/datasets/${datasetId}/progress`);
+    return apiGet(`datasets/${datasetId}/progress`);
   }
 
   // Persistence helpers (localStorage per session/project)
@@ -387,7 +387,7 @@
   // Core flows
   async function loadSessions() {
     try {
-      const sessions = await apiGet('annotation/sessions');
+      const sessions = await apiGet('sessions');
       renderSessionList(sessions);
     } catch (e) {
       console.error(e);
@@ -440,7 +440,7 @@
   async function loadFrame(idx) {
     if (idx < 0) idx = 0;
     try {
-      const data = await apiGet('annotation/frame', {
+      const data = await apiGet('frame', {
         session_id: state.session_id,
         project_name: state.project_name,
         idx: idx,
@@ -459,7 +459,7 @@
       }
 
       // Update image and frame info
-      els.img().src = `/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`;
+      els.img().src = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`);
       els.frameId().textContent = frame.frame_id ?? '-';
       els.frameFilename().textContent = frame.filename ?? '-';
       const ts = frame.timestamp;
@@ -643,7 +643,7 @@
       btnReindex.disabled = true;
       btnReindex.textContent = 'Reindexing...';
       try {
-        await apiPostNoBody('annotation/reindex');
+        await apiPostNoBody('reindex');
       } catch (e) {
         toast('Reindex failed');
       } finally {
