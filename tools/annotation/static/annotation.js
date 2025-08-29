@@ -4,6 +4,23 @@
 (function () {
   'use strict';
 
+  // Determine app base prefix (supports mounting under /annotation or other prefix)
+  const APP_BASE = (() => {
+    // If a global is provided, honor it
+    if (window.APP_BASE && typeof window.APP_BASE === 'string') return window.APP_BASE.replace(/\/$/, '');
+    try {
+      const path = window.location.pathname || '/';
+      // If served from /something/static/..., take the part before /static/
+      const idx = path.indexOf('/static/');
+      if (idx > 0) return path.substring(0, idx);
+      // Fallback: if path starts with /annotation, use it
+      if (path.startsWith('/annotation')) return '/annotation';
+    } catch {}
+    return '';
+  })();
+
+  function withBase(p) { return `${APP_BASE}${p}`; }
+
   // App state
   let state = {
     session_id: null,
@@ -54,7 +71,8 @@
   // API client
   async function apiGet(url, params = {}) {
     const usp = new URLSearchParams(params);
-    const res = await fetch(`${url}?${usp.toString()}`);
+    const full = url.startsWith('/') ? withBase(url) : url;
+    const res = await fetch(`${full}?${usp.toString()}`);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   }
@@ -94,7 +112,8 @@
   }
 
   async function apiPost(url, body) {
-    const res = await fetch(url, {
+    const full = url.startsWith('/') ? withBase(url) : url;
+    const res = await fetch(full, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -104,7 +123,8 @@
   }
 
   async function apiPostNoBody(url) {
-    const res = await fetch(url, { method: 'POST' });
+    const full = url.startsWith('/') ? withBase(url) : url;
+    const res = await fetch(full, { method: 'POST' });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   }
@@ -430,7 +450,7 @@
       }
 
       // Update image and frame info
-      els.img().src = `/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`;
+      els.img().src = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`);
       els.frameId().textContent = frame.frame_id ?? '-';
       els.frameFilename().textContent = frame.filename ?? '-';
       const ts = frame.timestamp;
@@ -597,9 +617,9 @@
     // Browser navigation basics
     window.addEventListener('popstate', (event) => {
       const st = event.state;
-      if (st && st.state === 'annotation' && st.session_id && st.project) {
+      if (st && st.state === 'annotation' && st.session && st.project) {
         // navigate without pushing a new history entry
-        selectSession(st.session_id, st.project, { pushHistory: false });
+        selectSession(st.session, st.project, { pushHistory: false });
       } else {
         showSessionSelector({ pushHistory: false });
       }
