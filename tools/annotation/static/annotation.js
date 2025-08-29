@@ -29,17 +29,6 @@
 
   function withBase(p) { return `${APP_BASE}${p}`; }
 
-  // Strict API base: always talk to /annotation/api when mounted under /annotation
-  const API_BASE = `${APP_BASE}/api`;
-  function toApi(url) {
-    // Accepts '/api/..', '/something', or 'something'; returns absolute API URL
-    if (/^https?:\/\//i.test(url)) return url;
-    let p = url || '';
-    if (p.startsWith('/')) p = p.slice(1);
-    if (p.startsWith('api/')) p = p.slice(4);
-    return `${API_BASE}/${p}`;
-  }
-
   // App state
   let state = {
     session_id: null,
@@ -90,7 +79,7 @@
   // API client
   async function apiGet(url, params = {}) {
     const usp = new URLSearchParams(params);
-    const full = toApi(url);
+    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
     const res = await fetch(`${full}?${usp.toString()}`);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
@@ -120,7 +109,7 @@
 
   async function fetchDatasetSessionSettings(datasetId, sessionId) {
     try {
-      const url = toApi(`datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`);
+      const url = `/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('settings fetch failed');
       const data = await res.json();
@@ -132,7 +121,7 @@
   }
 
   async function apiPost(url, body) {
-    const full = toApi(url);
+    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
     const res = await fetch(full, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -143,7 +132,7 @@
   }
 
   async function apiPostNoBody(url) {
-    const full = toApi(url);
+    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
     const res = await fetch(full, { method: 'POST' });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
@@ -151,22 +140,22 @@
 
   // Projects & Datasets API helpers (DB-backed)
   async function listProjects() {
-    return apiGet('projects');
+    return apiGet('annotation/projects');
   }
   async function createProject(name, description = '') {
-    return apiPost('projects', { name, description });
+    return apiPost('annotation/projects', { name, description });
   }
   async function listDatasets(projectId) {
-    return apiGet(`projects/${projectId}/datasets`);
+    return apiGet(`annotation/projects/${projectId}/datasets`);
   }
   async function createDataset(projectId, name, description = '', target_type_id = 2) {
-    return apiPost(`projects/${projectId}/datasets`, { name, description, target_type_id });
+    return apiPost(`annotation/projects/${projectId}/datasets`, { name, description, target_type_id });
   }
   async function enrollSession(datasetId, sessionId, settings = undefined) {
-    return apiPost(`datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
+    return apiPost(`annotation/datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
   }
   async function datasetProgress(datasetId) {
-    return apiGet(`datasets/${datasetId}/progress`);
+    return apiGet(`annotation/datasets/${datasetId}/progress`);
   }
 
   // Persistence helpers (localStorage per session/project)
@@ -398,7 +387,7 @@
   // Core flows
   async function loadSessions() {
     try {
-      const sessions = await apiGet('sessions');
+      const sessions = await apiGet('annotation/sessions');
       renderSessionList(sessions);
     } catch (e) {
       console.error(e);
@@ -451,7 +440,7 @@
   async function loadFrame(idx) {
     if (idx < 0) idx = 0;
     try {
-      const data = await apiGet('frame', {
+      const data = await apiGet('annotation/frame', {
         session_id: state.session_id,
         project_name: state.project_name,
         idx: idx,
@@ -470,7 +459,7 @@
       }
 
       // Update image and frame info
-      els.img().src = `${API_BASE}/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`;
+      els.img().src = `/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`;
       els.frameId().textContent = frame.frame_id ?? '-';
       els.frameFilename().textContent = frame.filename ?? '-';
       const ts = frame.timestamp;
@@ -654,7 +643,7 @@
       btnReindex.disabled = true;
       btnReindex.textContent = 'Reindexing...';
       try {
-        await apiPostNoBody('reindex');
+        await apiPostNoBody('annotation/reindex');
       } catch (e) {
         toast('Reindex failed');
       } finally {
