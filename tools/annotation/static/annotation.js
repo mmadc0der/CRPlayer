@@ -21,6 +21,17 @@
 
   function withBase(p) { return `${APP_BASE}${p}`; }
 
+  // Strict API base: always talk to /annotation/api when mounted under /annotation
+  const API_BASE = `${APP_BASE}/api`;
+  function toApi(url) {
+    // Accepts '/api/..', '/something', or 'something'; returns absolute API URL
+    if (/^https?:\/\//i.test(url)) return url;
+    let p = url || '';
+    if (p.startsWith('/')) p = p.slice(1);
+    if (p.startsWith('api/')) p = p.slice(4);
+    return `${API_BASE}/${p}`;
+  }
+
   // App state
   let state = {
     session_id: null,
@@ -71,7 +82,7 @@
   // API client
   async function apiGet(url, params = {}) {
     const usp = new URLSearchParams(params);
-    const full = url.startsWith('/') ? withBase(url) : url;
+    const full = toApi(url);
     const res = await fetch(`${full}?${usp.toString()}`);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
@@ -101,7 +112,7 @@
 
   async function fetchDatasetSessionSettings(datasetId, sessionId) {
     try {
-      const url = withBase(`/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`);
+      const url = toApi(`/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`);
       const res = await fetch(url);
       if (!res.ok) throw new Error('settings fetch failed');
       const data = await res.json();
@@ -113,7 +124,7 @@
   }
 
   async function apiPost(url, body) {
-    const full = url.startsWith('/') ? withBase(url) : url;
+    const full = toApi(url);
     const res = await fetch(full, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -124,7 +135,7 @@
   }
 
   async function apiPostNoBody(url) {
-    const full = url.startsWith('/') ? withBase(url) : url;
+    const full = toApi(url);
     const res = await fetch(full, { method: 'POST' });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
@@ -451,7 +462,7 @@
       }
 
       // Update image and frame info
-      els.img().src = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`);
+      els.img().src = `${API_BASE}/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`;
       els.frameId().textContent = frame.frame_id ?? '-';
       els.frameFilename().textContent = frame.filename ?? '-';
       const ts = frame.timestamp;
