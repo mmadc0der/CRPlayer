@@ -90,6 +90,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             init_db(conn)
             try:
                 pid = db_create_project(conn, name, description)
+                conn.commit()
                 return jsonify({'id': pid, 'name': name, 'description': description}), 201
             except sqlite3.IntegrityError:
                 # Unique constraint on projects.name; return existing
@@ -136,6 +137,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                     err = ErrorResponse(code='bad_request', message='target_type_id must be 0, 1, or 2')
                     return jsonify(err.dict()), 400
                 did = db_create_dataset(conn, project_id, name, description, ttid)
+                conn.commit()
                 return jsonify({'id': did, 'project_id': project_id, 'name': name, 'description': description, 'target_type_id': ttid}), 201
             except sqlite3.IntegrityError:
                 # Unique(project_id, name) exists: return existing entry as 200
