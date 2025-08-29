@@ -204,6 +204,11 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
     @bp.route('/api/frame', methods=['GET'])
     def get_frame():
         try:
+            try:
+                from flask import request as _rq
+                print(f"[api][frame] request.path={_rq.path} full_path={_rq.full_path} query_string={_rq.query_string}", flush=True)
+            except Exception:
+                pass
             q = FrameQuery(session_id=request.args.get('session_id', ''),
                            idx=int(request.args.get('idx', '-1')))
         except Exception as e:
