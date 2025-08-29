@@ -19,6 +19,7 @@ from dto import (
     SaveMultilabelRequest,
 )
 from db.connection import get_connection
+from db.connection import get_db_path
 from db.schema import init_db
 from db.indexer import reindex_sessions
 from db.projects import (
@@ -57,6 +58,10 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
         try:
             conn = get_connection()
             init_db(conn)
+            try:
+                print(f"[api][reindex] db_path={get_db_path()}", flush=True)
+            except Exception:
+                pass
             summary = reindex_sessions(conn, Path(session_manager.data_root))
             print(f"[api][reindex] {summary}", flush=True)
             return jsonify({
@@ -208,18 +213,34 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
         try:
             # Debug: log incoming params and DB frame count
             try:
-                print(f"[api][frame] session_id={q.session_id} idx={q.idx}", flush=True)
-                sid_db = session_manager.get_session_db_id(q.session_id)
+                sid = (q.session_id or '').strip()
+                print(f"[api][frame] session_id={sid} idx={q.idx}", flush=True)
+                sid_db = session_manager.get_session_db_id(sid)
                 if sid_db is not None:
                     conn = get_connection()
                     init_db(conn)
+                    try:
+                        print(f"[api][frame] db_path={get_db_path()}", flush=True)
+                    except Exception:
+                        pass
                     total = conn.execute("SELECT COUNT(1) FROM frames WHERE session_id = ?", (sid_db,)).fetchone()[0]
                     print(f"[api][frame] db_count={total}", flush=True)
                 else:
-                    print("[api][frame] session not in DB", flush=True)
+                    print("[api][frame] session not in DB; showing sample IDs:", flush=True)
+                    try:
+                        conn = get_connection()
+                        init_db(conn)
+                        try:
+                            print(f"[api][frame] db_path={get_db_path()}", flush=True)
+                        except Exception:
+                            pass
+                        sample = [r[0] for r in conn.execute("SELECT session_id FROM sessions ORDER BY id DESC LIMIT 5").fetchall()]
+                        print(f"[api][frame] known session_ids (latest 5): {sample}", flush=True)
+                    except Exception:
+                        pass
             except Exception:
                 pass
-            frame = session_service.get_frame_by_idx(q.session_id, q.idx)
+            frame = session_service.get_frame_by_idx(sid, q.idx)
             # Deprecated filesystem annotation removed; return only frame
             return jsonify({'frame': frame})
         except IndexError as e:

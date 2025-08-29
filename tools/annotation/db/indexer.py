@@ -96,6 +96,10 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
                 metadata_file = session_dir / 'metadata.json'
                 md = _load_json_stable(metadata_file) if metadata_file.exists() else {}
                 sid = md.get('session_id') or session_dir.name
+                try:
+                    sid = str(sid).strip()
+                except Exception:
+                    pass
                 session_map[sid] = session_dir
             except Exception:
                 continue

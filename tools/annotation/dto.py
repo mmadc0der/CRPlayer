@@ -14,10 +14,18 @@ class FrameQuery(BaseModel):
     session_id: str
     idx: int
 
+    @validator('session_id', pre=True)
+    def _trim_session_id(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
 
 class ImageQuery(BaseModel):
     session_id: str
     idx: int
+
+    @validator('session_id', pre=True)
+    def _trim_session_id(cls, v):
+        return v.strip() if isinstance(v, str) else v
 
 
 # ---------------- DB-backed annotation DTOs ----------------
@@ -35,6 +43,10 @@ class SaveRegressionRequest(BaseModel):
         if (v is None) and (values.get('frame_idx') is None):
             raise ValueError('Either frame_id or frame_idx must be provided')
         return v
+
+    @validator('session_id', pre=True)
+    def _trim_session_id(cls, v):
+        return v.strip() if isinstance(v, str) else v
 
 
 class SaveSingleLabelRequest(BaseModel):
@@ -71,3 +83,7 @@ class UpsertDatasetSessionSettingsRequest(BaseModel):
     dataset_id: int
     session_id: str
     settings: Dict[str, Any]
+
+    @validator('session_id', pre=True)
+    def _trim_session_id(cls, v):
+        return v.strip() if isinstance(v, str) else v

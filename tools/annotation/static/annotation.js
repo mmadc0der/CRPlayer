@@ -1,5 +1,5 @@
 // Game State Annotation Tool - Stateless Frontend
-// Uses: /api/sessions, /api/frame?session_path&project_name&idx, /api/image?session_path&idx, /api/save_annotation
+// Uses: /api/sessions, /api/frame?session_id&idx, /api/image?session_id&idx, /api/save_annotation
 
 (function () {
   'use strict';
