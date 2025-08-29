@@ -91,8 +91,11 @@
       const saved = localStorage.getItem(`dataset:${sessionId}`);
       if (saved) {
         const obj = JSON.parse(saved);
-        if (obj && obj.id) {
-          state.dataset_id = obj.id; state.dataset_name = obj.name || null; return obj;
+        if (obj && obj.id != null) {
+          const n = typeof obj.id === 'string' ? parseInt(obj.id, 10) : obj.id;
+          if (Number.isFinite(n) && n > 0) {
+            state.dataset_id = n; state.dataset_name = obj.name || null; return { id: n, name: state.dataset_name };
+          }
         }
       }
     } catch {}
@@ -102,14 +105,24 @@
     // After enrollment, datasetId will be last created/selected. We need to re-read from storage
     try {
       const saved2 = localStorage.getItem(`dataset:${sessionId}`);
-      if (saved2) return JSON.parse(saved2);
+      if (saved2) {
+        const obj2 = JSON.parse(saved2);
+        if (obj2 && obj2.id != null) {
+          const n2 = typeof obj2.id === 'string' ? parseInt(obj2.id, 10) : obj2.id;
+          if (Number.isFinite(n2) && n2 > 0) {
+            state.dataset_id = n2; state.dataset_name = obj2.name || null; return { id: n2, name: state.dataset_name };
+          }
+        }
+      }
     } catch {}
     return null;
   }
 
   async function fetchDatasetSessionSettings(datasetId, sessionId) {
     try {
-      if (!datasetId) return {};
+      const invalid = (v) => v == null || v === 'null' || v === 'undefined' || Number.isNaN(Number(v)) || Number(v) <= 0;
+      if (invalid(datasetId)) return {};
+      const dsid = Number(datasetId);
       const url = `/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`;
       const res = await fetch(withBase(url));
       if (!res.ok) throw new Error('settings fetch failed');
@@ -408,6 +421,13 @@
 
     // Ensure dataset is selected/enrolled and fetch settings
     await ensureDatasetSelected(session_id);
+    // If we still don't have a valid dataset, stop here and prompt user to enroll
+    if (!(Number.isFinite(Number(state.dataset_id)) && Number(state.dataset_id) > 0)) {
+      toast('Please enroll this session into a dataset first');
+      // keep session selector visible
+      showSessionSelector({ pushHistory: false });
+      return;
+    }
     const settings = await fetchDatasetSessionSettings(state.dataset_id, state.session_id);
     // Apply settings to categories/hotkeys if present
     if (settings && Array.isArray(settings.categories)) {
