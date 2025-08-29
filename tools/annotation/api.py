@@ -200,7 +200,6 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
     def get_frame():
         try:
             q = FrameQuery(session_id=request.args.get('session_id', ''),
-                           project_name=request.args.get('project_name', 'default'),
                            idx=int(request.args.get('idx', '-1')))
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid query parameters', details={'error': str(e)})

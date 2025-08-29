@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, validator
 
 
 class ErrorResponse(BaseModel):
@@ -12,7 +12,6 @@ class ErrorResponse(BaseModel):
 
 class FrameQuery(BaseModel):
     session_id: str
-    project_name: Optional[str] = Field(default='default')
     idx: int
 
 
