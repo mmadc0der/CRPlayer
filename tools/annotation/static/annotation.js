@@ -262,8 +262,9 @@
         if (!dsName) return;
         const dsDesc = prompt('Description (optional):') || '';
         const typeStr = prompt('Target type id (1=Regression, 2=SingleLabelClassification, 3=MultiLabelClassification):', '2') || '2';
-        const type = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
-        const createdDs = await createDataset(projectId, dsName, dsDesc, type);
+        const uiType = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
+        const dbType = uiType - 1; // Map 1..3 -> 0..2 per schema.target_types
+        const createdDs = await createDataset(projectId, dsName, dsDesc, dbType);
         datasetId = createdDs.id;
         // Persist selection
         state.dataset_id = datasetId;
