@@ -15,6 +15,14 @@
       if (idx > 0) return path.substring(0, idx);
       // Fallback: if path starts with /annotation, use it
       if (path.startsWith('/annotation')) return '/annotation';
+      // Extra heuristic: infer from script src (e.g., /annotation/static/annotation.js)
+      const script = document.currentScript || Array.from(document.getElementsByTagName('script')).find(s => (s.src||'').includes('/static/annotation.js'));
+      if (script && script.src) {
+        const u = new URL(script.src, window.location.origin);
+        const sIdx = u.pathname.indexOf('/static/');
+        if (sIdx > 0) return u.pathname.substring(0, sIdx);
+        if (u.pathname.startsWith('/annotation')) return '/annotation';
+      }
     } catch {}
     return '';
   })();
@@ -112,7 +120,7 @@
 
   async function fetchDatasetSessionSettings(datasetId, sessionId) {
     try {
-      const url = toApi(`/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`);
+      const url = toApi(`datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`);
       const res = await fetch(url);
       if (!res.ok) throw new Error('settings fetch failed');
       const data = await res.json();
@@ -143,22 +151,22 @@
 
   // Projects & Datasets API helpers (DB-backed)
   async function listProjects() {
-    return apiGet('/api/projects');
+    return apiGet('projects');
   }
   async function createProject(name, description = '') {
-    return apiPost('/api/projects', { name, description });
+    return apiPost('projects', { name, description });
   }
   async function listDatasets(projectId) {
-    return apiGet(`/api/projects/${projectId}/datasets`);
+    return apiGet(`projects/${projectId}/datasets`);
   }
   async function createDataset(projectId, name, description = '', target_type_id = 2) {
-    return apiPost(`/api/projects/${projectId}/datasets`, { name, description, target_type_id });
+    return apiPost(`projects/${projectId}/datasets`, { name, description, target_type_id });
   }
   async function enrollSession(datasetId, sessionId, settings = undefined) {
-    return apiPost(`/api/datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
+    return apiPost(`datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
   }
   async function datasetProgress(datasetId) {
-    return apiGet(`/api/datasets/${datasetId}/progress`);
+    return apiGet(`datasets/${datasetId}/progress`);
   }
 
   // Persistence helpers (localStorage per session/project)
@@ -390,7 +398,7 @@
   // Core flows
   async function loadSessions() {
     try {
-      const sessions = await apiGet('/api/sessions');
+      const sessions = await apiGet('sessions');
       renderSessionList(sessions);
     } catch (e) {
       console.error(e);
@@ -443,7 +451,7 @@
   async function loadFrame(idx) {
     if (idx < 0) idx = 0;
     try {
-      const data = await apiGet('/api/frame', {
+      const data = await apiGet('frame', {
         session_id: state.session_id,
         project_name: state.project_name,
         idx: idx,
@@ -515,7 +523,7 @@
         class_id: idx,
         // override_settings can be added in future
       };
-      const res = await apiPost('/api/annotations/single_label', payload);
+      const res = await apiPost('annotations/single_label', payload);
       if (res && (res.ok || res.saved || res.status === 'ok')) {
         state.savedCategoryForFrame = category;
         state.frameSaved = true;
@@ -646,7 +654,7 @@
       btnReindex.disabled = true;
       btnReindex.textContent = 'Reindexing...';
       try {
-        await apiPostNoBody('/api/reindex');
+        await apiPostNoBody('reindex');
       } catch (e) {
         toast('Reindex failed');
       } finally {
