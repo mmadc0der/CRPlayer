@@ -82,6 +82,7 @@
     const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
     const qs = usp.toString();
     const target = qs ? `${withBase(full)}?${qs}` : withBase(full);
+    console.log(target);
     const res = await fetch(target);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
