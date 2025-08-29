@@ -101,7 +101,8 @@
 
   async function fetchDatasetSessionSettings(datasetId, sessionId) {
     try {
-      const res = await fetch(`/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`);
+      const url = withBase(`/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`);
+      const res = await fetch(url);
       if (!res.ok) throw new Error('settings fetch failed');
       const data = await res.json();
       return data.settings || {};
