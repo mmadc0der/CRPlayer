@@ -62,10 +62,12 @@ def _derive_ts_ms(frame_entry: dict) -> Optional[int]:
 
 def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dict:
     """
-    Scan only data/raw for sessions and frames and populate the DB.
+    Scan data/raw for sessions and frames and populate the DB.
     Deterministic rules:
-      - Use session_id from metadata.json; session dir name is fallback only if missing.
-      - Use frame_id from each frame entry; frames without frame_id are skipped.
+      - Use session_id from metadata.json; fall back to session dir name if missing.
+      - Prefer frames listed in metadata.json and use their frame_id; frames without frame_id are skipped.
+      - If metadata has no frames list, enumerate files under <session>/frames (preferred) and <session> as frames.
+        In this case, use the filename as frame_id (stable identifier) and leave ts_ms NULL.
       - Timestamp field is strictly ts_ms (optional). Strings are coerced to int when possible.
     Metadata reads are stabilized to avoid mid-write inconsistencies.
     """
@@ -100,14 +102,36 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
         if session_db_id:
             inserted_sessions += 1
         frames = md.get('frames', [])
-        for fr in frames:
-            # Deterministic: require frame_id; derive nothing
-            frame_id = fr.get('frame_id')
-            if not frame_id:
-                continue
-            ts = _derive_ts_ms(fr)
-            upsert_frame(conn, session_db_id, str(frame_id), ts)
-            inserted_frames += 1
+        if frames and isinstance(frames, list):
+            for fr in frames:
+                # Deterministic: require frame_id from metadata; derive nothing else except ts
+                frame_id = fr.get('frame_id')
+                if not frame_id:
+                    continue
+                ts = _derive_ts_ms(fr)
+                upsert_frame(conn, session_db_id, str(frame_id), ts)
+                inserted_frames += 1
+        else:
+            # Filesystem fallback: enumerate frames by filename
+            candidates = []
+            frames_dir = sdir / 'frames'
+            exts = {'.png', '.jpg', '.jpeg', '.webp', '.bmp'}
+            try:
+                if frames_dir.exists():
+                    for p in sorted(frames_dir.iterdir()):
+                        if p.is_file() and p.suffix.lower() in exts:
+                            candidates.append(p.name)
+                else:
+                    # Fallback to session root
+                    for p in sorted(sdir.iterdir()):
+                        if p.is_file() and p.suffix.lower() in exts:
+                            candidates.append(p.name)
+            except Exception:
+                candidates = []
+            for fname in candidates:
+                # Use filename as stable frame_id
+                upsert_frame(conn, session_db_id, fname, None)
+                inserted_frames += 1
 
     conn.commit()
     if should_close:
