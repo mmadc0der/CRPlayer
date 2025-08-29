@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 import sqlite3
 
-from tools.annotation.db.connection import get_connection
-from tools.annotation.db.schema import init_db
+from db.connection import get_connection
+from db.schema import init_db
 
 
 class SessionManager:
