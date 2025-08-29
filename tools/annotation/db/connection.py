@@ -51,16 +51,12 @@ def get_db_path(custom_path: Optional[Path] = None) -> Path:
             # 3) detected repo root + default relative path
             base = _detect_repo_root()
             new_path = base / _DEFAULT_DB_REL
-            legacy_path = base / _LEGACY_DB_REL
             # Migrate legacy DB if found and new DB doesn't exist yet
             try:
-                if not new_path.exists() and legacy_path.exists():
+                if not new_path.exists():
                     new_path.parent.mkdir(parents=True, exist_ok=True)
-                    legacy_path.replace(new_path)
             except Exception:
-                # On failure to migrate, fall back to using legacy path in-place
-                if legacy_path.exists():
-                    new_path = legacy_path
+                pass
             path = new_path
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
