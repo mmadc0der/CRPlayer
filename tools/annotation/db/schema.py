@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS projects (
   id          INTEGER PRIMARY KEY,
   name        TEXT NOT NULL UNIQUE,
   description TEXT,
-  created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS datasets (
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS datasets (
   name             TEXT NOT NULL,
   description      TEXT,
   target_type_id   INTEGER NOT NULL REFERENCES target_types(id),
-  created_at       TEXT DEFAULT CURRENT_TIMESTAMP,
+  created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
   UNIQUE(project_id, name)
 );
 
@@ -72,8 +72,8 @@ CREATE TABLE IF NOT EXISTS annotations (
                CHECK (status IN ('unlabeled','labeled','skipped')),
   settings_json TEXT, -- free-form per-frame override settings
   CHECK (settings_json IS NULL OR json_valid(settings_json)),
-  created_at   TEXT DEFAULT CURRENT_TIMESTAMP,
-  updated_at   TEXT,
+  created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at   DATETIME,
   PRIMARY KEY (dataset_id, frame_id)
 )
 WITHOUT ROWID;
@@ -127,8 +127,8 @@ CREATE TABLE IF NOT EXISTS dataset_session_settings (
   session_id    INTEGER NOT NULL REFERENCES sessions(id)  ON DELETE CASCADE,
   settings_json TEXT,
   CHECK (settings_json IS NULL OR json_valid(settings_json)),
-  created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
-  updated_at    TEXT,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME,
   PRIMARY KEY (dataset_id, session_id)
 )
 WITHOUT ROWID;
