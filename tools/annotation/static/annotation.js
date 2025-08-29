@@ -8,12 +8,15 @@
   let state = {
     session_id: null,
     project_name: 'default',
+    dataset_id: null,
+    dataset_name: null,
     currentIdx: 0,
     totalFrames: 0,
     categories: [],
     hotkeys: {},
     savedCategoryForFrame: null,
     frameSaved: false,
+    settingsLoaded: false,
   };
 
   const els = {
@@ -56,6 +59,40 @@
     return res.json();
   }
 
+  async function ensureDatasetSelected(sessionId) {
+    // Try restore
+    try {
+      const saved = localStorage.getItem(`dataset:${sessionId}`);
+      if (saved) {
+        const obj = JSON.parse(saved);
+        if (obj && obj.id) {
+          state.dataset_id = obj.id; state.dataset_name = obj.name || null; return obj;
+        }
+      }
+    } catch {}
+
+    // Prompt choose or create project/dataset, and enroll idempotently
+    await startEnrollmentFlow(sessionId);
+    // After enrollment, datasetId will be last created/selected. We need to re-read from storage
+    try {
+      const saved2 = localStorage.getItem(`dataset:${sessionId}`);
+      if (saved2) return JSON.parse(saved2);
+    } catch {}
+    return null;
+  }
+
+  async function fetchDatasetSessionSettings(datasetId, sessionId) {
+    try {
+      const res = await fetch(`/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`);
+      if (!res.ok) throw new Error('settings fetch failed');
+      const data = await res.json();
+      return data.settings || {};
+    } catch (e) {
+      console.warn('No settings for dataset/session, using defaults');
+      return {};
+    }
+  }
+
   async function apiPost(url, body) {
     const res = await fetch(url, {
       method: 'POST',
@@ -88,6 +125,9 @@
   async function enrollSession(datasetId, sessionId, settings = undefined) {
     return apiPost(`/api/datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
   }
+  async function datasetProgress(datasetId) {
+    return apiGet(`/api/datasets/${datasetId}/progress`);
+  }
 
   // Persistence helpers (localStorage per session/project)
   function lsKey(prefix) {
@@ -118,6 +158,7 @@
     try {
       localStorage.setItem('currentSession', state.session_id || '');
       localStorage.setItem('currentProject', state.project_name || 'default');
+      if (state.dataset_id) localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
       localStorage.setItem('appState', 'annotation');
     } catch {}
   }
@@ -140,7 +181,7 @@
       `;
       const openBtn = div.querySelector('[data-action="open"]');
       const enrollBtn = div.querySelector('[data-action="enroll"]');
-      openBtn.addEventListener('click', () => selectSession(s.session_id));
+      openBtn.addEventListener('click', () => selectSession(s.session_id, 'default', { pushHistory: true, preload: s }));
       enrollBtn.addEventListener('click', () => startEnrollmentFlow(s.session_id));
       list.appendChild(div);
     });
@@ -181,10 +222,18 @@
         const type = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
         const createdDs = await createDataset(projectId, dsName, dsDesc, type);
         datasetId = createdDs.id;
+        // Persist selection
+        state.dataset_id = datasetId;
+        state.dataset_name = createdDs.name;
+        try { localStorage.setItem(`dataset:${sessionId}`, JSON.stringify({ id: datasetId, name: createdDs.name, target_type_id: createdDs.target_type_id })); } catch {}
       } else {
         const idx = parseInt(sel, 10) - 1;
         if (Number.isNaN(idx) || idx < 0 || idx >= datasets.length) return;
-        datasetId = datasets[idx].id;
+        const picked = datasets[idx];
+        datasetId = picked.id;
+        state.dataset_id = datasetId;
+        state.dataset_name = picked.name;
+        try { localStorage.setItem(`dataset:${sessionId}`, JSON.stringify({ id: datasetId, name: picked.name, target_type_id: picked.target_type_id })); } catch {}
       }
 
       // 3) Optional baseline settings JSON
@@ -201,6 +250,27 @@
     } catch (e) {
       console.error(e);
       toast('Enrollment failed');
+    }
+  }
+
+  async function refreshProgress() {
+    try {
+      if (!state.dataset_id) return;
+      const p = await datasetProgress(state.dataset_id);
+      const el = els.statsGrid();
+      if (!el) return;
+      el.innerHTML = '';
+      const mk = (label, value) => {
+        const d = document.createElement('div');
+        d.className = 'stat';
+        d.innerHTML = `<div class="stat__label">${label}</div><div class="stat__value">${value}</div>`;
+        return d;
+      };
+      el.appendChild(mk('Total', p.total ?? '-'));
+      el.appendChild(mk('Labeled', p.labeled ?? '-'));
+      el.appendChild(mk('Unlabeled', p.unlabeled ?? '-'));
+    } catch (e) {
+      console.warn('Failed to load progress');
     }
   }
 
@@ -300,8 +370,25 @@
     state.session_id = session_id;
     state.project_name = project_name;
     state.currentIdx = 0;
+    // Initialize totalFrames from preload if available
+    if (opts && opts.preload && typeof opts.preload.frames_count === 'number') {
+      state.totalFrames = opts.preload.frames_count;
+      try { localStorage.setItem(lsKey('totalFrames'), String(state.totalFrames)); } catch {}
+    }
 
-    loadCategoriesFromStorage();
+    // Ensure dataset is selected/enrolled and fetch settings
+    await ensureDatasetSelected(session_id);
+    const settings = await fetchDatasetSessionSettings(state.dataset_id, state.session_id);
+    // Apply settings to categories/hotkeys if present
+    if (settings && Array.isArray(settings.categories)) {
+      state.categories = settings.categories.slice();
+    } else {
+      loadCategoriesFromStorage();
+    }
+    if (settings && settings.hotkeys && typeof settings.hotkeys === 'object') {
+      state.hotkeys = settings.hotkeys;
+    }
+    state.settingsLoaded = true;
     renderCategories();
     renderDynamicShortcuts();
 
@@ -309,12 +396,15 @@
     els.sessionSelector().classList.add('hidden');
     els.annotationInterface().classList.remove('hidden');
     els.sessionInfo().classList.remove('hidden');
-    els.sessionName().textContent = `Session: ${session_id} · Project: ${project_name}`;
+    const dsText = state.dataset_name ? ` · Dataset: ${state.dataset_name} (#${state.dataset_id})` : (state.dataset_id ? ` · Dataset: #${state.dataset_id}` : '');
+    els.sessionName().textContent = `Session: ${session_id} · Project: ${project_name}${dsText}`;
 
     saveSessionSelection();
     if (opts && opts.pushHistory) {
       history.pushState({ state: 'annotation', session: session_id, project: project_name }, 'Annotation', '#annotation');
     }
+    // Update dataset progress panel
+    refreshProgress();
     await loadFrame(0);
   }
 
@@ -369,10 +459,46 @@
   }
 
   async function saveAnnotation() {
-    // DB-backed save endpoints are exposed under /api/annotations/* and require a dataset context.
-    // This UI does not yet collect dataset_id (will be implemented in F6). Prevent legacy call.
-    toast('Saving not yet wired to DB-backed API. Complete dataset setup first.');
-    return false;
+    // Save single-label annotation to DB-backed endpoint
+    if (!state.dataset_id) {
+      toast('Select a dataset first (use Enroll)');
+      return false;
+    }
+    const category = getSelectedCategory();
+    if (!category) {
+      toast('Pick a category');
+      return false;
+    }
+    // Map category -> class_id using settings.categories order
+    const idx = Array.isArray(state.categories) ? state.categories.indexOf(category) : -1;
+    if (idx < 0) {
+      toast('Category not in dataset settings');
+      return false;
+    }
+    try {
+      const payload = {
+        session_id: state.session_id,
+        dataset_id: state.dataset_id,
+        frame_idx: state.currentIdx,
+        class_id: idx,
+        // override_settings can be added in future
+      };
+      const res = await apiPost('/api/annotations/single_label', payload);
+      if (res && (res.ok || res.saved || res.status === 'ok')) {
+        state.savedCategoryForFrame = category;
+        state.frameSaved = true;
+        toast('Saved');
+        // Update progress after successful save
+        refreshProgress();
+        return true;
+      }
+      toast('Save failed');
+      return false;
+    } catch (e) {
+      console.error(e);
+      toast('Error while saving');
+      return false;
+    }
   }
 
   async function saveAndNext() {
