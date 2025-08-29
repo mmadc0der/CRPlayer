@@ -12,12 +12,10 @@ data/
 │   │   ├── metadata.json   # Session metadata
 │   │   └── status.json     # Processing status
 │   └── session_002/
-├── annotated/              # Annotated sessions ready for training
-│   ├── session_001/
-│   │   ├── frames/
-│   │   ├── annotations.json
-│   │   ├── metadata.json
-│   │   └── status.json
+├── annotated/              # Centralized annotations and related artifacts
+│   ├── annotated.db        # SQLite database storing all annotations and settings
+│   ├── sessions/           # (optional) derived per-session exports or caches
+│   └── README.md           # Notes about schema/usage (optional)
 ├── datasets/               # Organized training datasets
 │   ├── clash_royale_v1/
 │   │   ├── train/
