@@ -80,7 +80,9 @@
   async function apiGet(url, params = {}) {
     const usp = new URLSearchParams(params);
     const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const res = await fetch(`${withBase(full)}?${usp.toString()}`);
+    const qs = usp.toString();
+    const target = qs ? `${withBase(full)}?${qs}` : withBase(full);
+    const res = await fetch(target);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   }
