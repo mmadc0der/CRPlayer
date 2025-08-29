@@ -125,6 +125,11 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 return jsonify(err.dict()), 400
             conn = get_connection()
             init_db(conn)
+            # Ensure the parent project exists; otherwise, the insert will raise a FK error
+            proj_row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if not proj_row:
+                err = ErrorResponse(code='not_found', message='Project not found', details={'project_id': project_id})
+                return jsonify(err.dict()), 404
             try:
                 ttid = int(target_type_id)
                 if ttid not in (0, 1, 2):
