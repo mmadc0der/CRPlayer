@@ -100,6 +100,15 @@ class SessionManager:
             ),
             'projects': [],
         }
+
+    def get_session_db_id(self, session_id: str) -> Optional[int]:
+        """Return internal sessions.id for a given session_id string."""
+        conn = self._conn()
+        row = conn.execute(
+            "SELECT id FROM sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        return int(row[0]) if row else None
     
     def load_session(self, session_path: str) -> Dict[str, Any]:
         """Load session by path (read-only).

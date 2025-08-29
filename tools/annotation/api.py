@@ -229,23 +229,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             return jsonify(err.dict()), 400
 
         try:
-            info = session_manager.find_session_by_id(q.session_id)
-            if not info:
-                err = ErrorResponse(code='not_found', message='Session not found', details={'session_id': q.session_id})
-                return jsonify(err.dict()), 404
-            session_dir = Path(info['session_dir'])
-            frames = info['metadata'].get('frames', [])
-            if q.idx < 0 or q.idx >= len(frames):
-                err = ErrorResponse(code='not_found', message=f'frame_idx {q.idx} out of range')
-                return jsonify(err.dict()), 404
-            frame = frames[q.idx]
-            abs_path = resolve_frame_absolute_path(session_manager, session_dir, info['metadata']['session_id'], frame['filename'])
-            if not abs_path:
-                from pathlib import Path as _P
-                abs_path = resolve_frame_absolute_path(session_manager, session_dir, info['metadata']['session_id'], _P(frame['filename']).name)
-            if not abs_path or not abs_path.exists():
-                err = ErrorResponse(code='not_found', message='Image not found', details={'frame_idx': q.idx})
-                return jsonify(err.dict()), 404
+            abs_path, _frame = session_service.get_frame_for_image(q.session_id, q.idx)
             return send_file(abs_path)
         except FileNotFoundError as e:
             err = ErrorResponse(code='not_found', message=str(e))
