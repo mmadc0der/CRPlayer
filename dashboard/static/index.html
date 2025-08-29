@@ -178,12 +178,12 @@
     // Minimal API client for DB-backed endpoints used on dashboard
     const api = {
         async sessions() {
-            const res = await fetch('/api/sessions');
+            const res = await fetch('/annotation/api/sessions');
             if (!res.ok) throw new Error('Failed to fetch sessions');
             return res.json();
         },
         async reindex() {
-            const res = await fetch('/api/reindex', { method: 'POST' });
+            const res = await fetch('/annotation/api/reindex', { method: 'POST' });
             if (!res.ok) throw new Error('Failed to reindex');
             return res.json();
         }
