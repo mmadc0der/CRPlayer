@@ -728,9 +728,17 @@
         d.innerHTML = `<div class="stat__label">${label}</div><div class="stat__value">${value}</div>`;
         return d;
       };
-      el.appendChild(mk('Total', p.total ?? '-'));
-      el.appendChild(mk('Labeled', p.labeled ?? '-'));
-      el.appendChild(mk('Unlabeled', p.unlabeled ?? '-'));
+      const total = Number.isFinite(p.total) ? Number(p.total) : null;
+      const labeled = Number.isFinite(p.labeled) ? Number(p.labeled) : null;
+      const unlabeled = Number.isFinite(p.unlabeled) ? Number(p.unlabeled) : (total != null && labeled != null ? Math.max(0, total - labeled) : null);
+      const pct = total && total > 0 && labeled != null ? ((labeled / total) * 100) : null;
+
+      el.appendChild(mk('Total', total ?? '-'));
+      el.appendChild(mk('Labeled', labeled ?? '-'));
+      el.appendChild(mk('Unlabeled', unlabeled ?? '-'));
+      el.appendChild(mk('Percent', pct != null ? `${pct.toFixed(1)}%` : '-'));
+      if (state.dataset_name) el.appendChild(mk('Dataset', state.dataset_name));
+      if (state.session_id) el.appendChild(mk('Session', state.session_id));
     } catch (e) {
       console.warn('Failed to load progress');
     }

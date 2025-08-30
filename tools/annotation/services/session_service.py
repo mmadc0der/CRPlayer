@@ -29,7 +29,9 @@ class SessionService:
     def _get_frame_row_by_idx(self, session_id: str, idx: int) -> Tuple[str, Optional[int]]:
         """Return (frame_id, ts_ms) for the idx-th frame of a session using DB ordering.
 
-        Ordering is by frame_id to match deterministic indexer behavior.
+        Frames are ordered chronologically by timestamp when available, falling back to
+        frame_id for deterministic behavior. This makes index navigation reflect the
+        actual capture order.
         """
         if idx < 0:
             raise IndexError("frame_idx must be >= 0")
@@ -39,7 +41,8 @@ class SessionService:
         conn = get_connection()
         init_db(conn)
         row = conn.execute(
-            "SELECT frame_id, ts_ms FROM frames WHERE session_id = ? ORDER BY frame_id LIMIT 1 OFFSET ?",
+            "SELECT frame_id, ts_ms FROM frames WHERE session_id = ? "
+            "ORDER BY COALESCE(ts_ms, frame_id), frame_id LIMIT 1 OFFSET ?",
             (sid_db, int(idx)),
         ).fetchone()
         if not row:
