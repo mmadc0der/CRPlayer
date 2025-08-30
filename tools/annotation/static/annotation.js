@@ -32,10 +32,18 @@
   function openModal(id) {
     const m = getModal(id);
     if (!m) return;
+    try {
+      // Ensure modal is under <body> to avoid stacking context issues
+      if (m.parentElement !== document.body) {
+        document.body.appendChild(m);
+      }
+    } catch {}
     m.classList.remove('hidden');
     m.querySelectorAll('[data-modal-close]').forEach(btn => btn.onclick = () => closeModal(id));
     const backdrop = m.querySelector('.modal__backdrop');
     if (backdrop) backdrop.onclick = () => closeModal(id);
+    // Simple debug marker
+    try { m.setAttribute('data-opened', String(Date.now())); } catch {}
   }
   function closeModal(id) {
     const m = getModal(id);
