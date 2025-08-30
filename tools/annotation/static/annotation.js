@@ -160,8 +160,10 @@
       row.querySelector('[data-edit]').onclick = async () => {
         const newName = prompt('Dataset name', d.name) || d.name;
         const newDesc = prompt('Description (optional)', d.description || '') || '';
-        const newType = prompt('Target type (0=Regression,1=Single,2=Multi)', String(d.target_type_id)) || String(d.target_type_id);
-        const target_type_id = Math.max(0, Math.min(2, parseInt(newType, 10) || d.target_type_id));
+        const newType = prompt('Target type id (integer, e.g., 0=Regression, 1=Single-label, 2=Multi-label; others if backend supports)', String(d.target_type_id)) || String(d.target_type_id);
+        const parsedNewType = parseInt(newType, 10);
+        const normalizedType = Number.isNaN(parsedNewType) ? d.target_type_id : parsedNewType;
+        const target_type_id = normalizedType < 0 ? 0 : normalizedType;
         try {
           await apiPut(`datasets/${d.id}`, { name: newName, description: newDesc, target_type_id });
           await populateDatasetSelect(String(d.id));
@@ -574,8 +576,10 @@
         const dsName = prompt('New dataset name:');
         if (!dsName) return;
         const dsDesc = prompt('Description (optional):') || '';
-        const typeStr = prompt('Target type (enter 0=Regression, 1=Single-label, 2=Multi-label):', '1') || '1';
-        const targetTypeId = Math.max(0, Math.min(2, parseInt(typeStr, 10) || 1));
+        const typeStr = prompt('Target type id (integer, e.g., 0=Regression, 1=Single-label, 2=Multi-label; others if backend supports):', '1') || '1';
+        const parsedType = parseInt(typeStr, 10);
+        const normalizedType = Number.isNaN(parsedType) ? 1 : parsedType;
+        const targetTypeId = normalizedType < 0 ? 0 : normalizedType;
         const createdDs = await createDataset(projectId, dsName, dsDesc, targetTypeId);
         datasetId = createdDs.id;
         // Persist selection
