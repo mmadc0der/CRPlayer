@@ -61,9 +61,9 @@
     wrap.setAttribute('style', 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;');
     wrap.innerHTML = `
       <div class="modal__backdrop" style="position:absolute;inset:0;"></div>
-      <div class="modal__content" style="position:relative;max-width:520px">
+      <div class="modal__content" style="position:relative;max-width:720px;width:90vw;max-height:85vh;overflow:auto">
         <div class="modal__header"><h3>${title}</h3></div>
-        <div class="modal__body" style="display:flex;flex-direction:column;gap:8px">
+        <div class="modal__body" style="display:flex;flex-direction:column;gap:12px">
           <input class="input" id="ds-name" placeholder="Dataset name" value="${opts.name || ''}">
           <input class="input" id="ds-desc" placeholder="Description (optional)" value="${opts.description || ''}">
           <select class="input" id="ds-type"></select>
@@ -196,9 +196,12 @@
         } catch { toast('Update failed'); }
       };
       row.querySelector('[data-delete]').onclick = async () => {
-        if (!confirm(`Delete project '${p.name}'? (must have no datasets)`)) return;
+        if (!confirm(`Delete project '${p.name}'?`)) return;
+        let url = `projects/${p.id}`;
+        const force = confirm('Force delete and cascade all datasets and their annotations?');
+        if (force) url += '?force=1';
         try {
-          await apiDelete(`projects/${p.id}`);
+          await apiDelete(url);
           await populateProjectSelect();
           await renderProjectManager();
           toast('Project deleted');
@@ -268,8 +271,11 @@
       };
       row.querySelector('[data-delete]').onclick = async () => {
         if (!confirm(`Delete dataset '${d.name}'?`)) return;
+        let url = `datasets/${d.id}`;
+        const force = confirm('Force delete and cascade all annotations in this dataset?');
+        if (force) url += '?force=1';
         try {
-          await apiDelete(`datasets/${d.id}`);
+          await apiDelete(url);
           await populateDatasetSelect();
           await renderDatasetManager();
           toast('Dataset deleted');

@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, List
-from pydantic import BaseModel, validator
+from pydantic import BaseModel
+try:
+    # Pydantic v2
+    from pydantic import field_validator, model_validator  # type: ignore
+except Exception:  # pragma: no cover
+    # Fallback for v1 compatibility
+    from pydantic import validator as field_validator  # type: ignore
+    def model_validator(*args, **kwargs):  # type: ignore
+        def deco(fn):
+            return fn
+        return deco
 
 
 class ErrorResponse(BaseModel):
@@ -14,7 +24,7 @@ class FrameQuery(BaseModel):
     session_id: str
     idx: int
 
-    @validator('session_id', pre=True)
+    @field_validator('session_id', mode='before')
     def _trim_session_id(cls, v):
         return v.strip() if isinstance(v, str) else v
 
@@ -23,7 +33,7 @@ class ImageQuery(BaseModel):
     session_id: str
     idx: int
 
-    @validator('session_id', pre=True)
+    @field_validator('session_id', mode='before')
     def _trim_session_id(cls, v):
         return v.strip() if isinstance(v, str) else v
 
@@ -38,13 +48,13 @@ class SaveRegressionRequest(BaseModel):
     value: float
     override_settings: Optional[Dict[str, Any]] = None
 
-    @validator('frame_id', always=True)
-    def _validate_frame_id_or_idx(cls, v, values):
-        if (v is None) and (values.get('frame_idx') is None):
+    @model_validator(mode='after')
+    def _validate_frame_id_or_idx(self):
+        if (self.frame_id is None) and (self.frame_idx is None):
             raise ValueError('Either frame_id or frame_idx must be provided')
-        return v
+        return self
 
-    @validator('session_id', pre=True)
+    @field_validator('session_id', mode='before')
     def _trim_session_id(cls, v):
         return v.strip() if isinstance(v, str) else v
 
@@ -57,11 +67,11 @@ class SaveSingleLabelRequest(BaseModel):
     class_id: int
     override_settings: Optional[Dict[str, Any]] = None
 
-    @validator('frame_id', always=True)
-    def _validate_frame_id_or_idx(cls, v, values):
-        if (v is None) and (values.get('frame_idx') is None):
+    @model_validator(mode='after')
+    def _validate_frame_id_or_idx(self):
+        if (self.frame_id is None) and (self.frame_idx is None):
             raise ValueError('Either frame_id or frame_idx must be provided')
-        return v
+        return self
 
 
 class SaveMultilabelRequest(BaseModel):
@@ -72,11 +82,11 @@ class SaveMultilabelRequest(BaseModel):
     class_ids: List[int]
     override_settings: Optional[Dict[str, Any]] = None
 
-    @validator('frame_id', always=True)
-    def _validate_frame_id_or_idx(cls, v, values):
-        if (v is None) and (values.get('frame_idx') is None):
+    @model_validator(mode='after')
+    def _validate_frame_id_or_idx(self):
+        if (self.frame_id is None) and (self.frame_idx is None):
             raise ValueError('Either frame_id or frame_idx must be provided')
-        return v
+        return self
 
 
 class UpsertDatasetSessionSettingsRequest(BaseModel):
@@ -84,6 +94,6 @@ class UpsertDatasetSessionSettingsRequest(BaseModel):
     session_id: str
     settings: Dict[str, Any]
 
-    @validator('session_id', pre=True)
+    @field_validator('session_id', mode='before')
     def _trim_session_id(cls, v):
         return v.strip() if isinstance(v, str) else v

@@ -96,11 +96,14 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
         try:
             conn = get_connection()
             init_db(conn)
-            # Optionally, enforce no datasets under project before delete
-            cnt = conn.execute("SELECT COUNT(1) FROM datasets WHERE project_id = ?", (project_id,)).fetchone()[0]
-            if cnt:
-                err = ErrorResponse(code='conflict', message='Project has datasets; delete them first')
-                return jsonify(err.dict()), 409
+            # Optional force delete: when true, rely on FK ON DELETE CASCADE from datasets -> projects
+            force = str(request.args.get('force', '0')).lower() in ('1', 'true', 'yes')
+            if not force:
+                # Enforce no datasets under project before delete
+                cnt = conn.execute("SELECT COUNT(1) FROM datasets WHERE project_id = ?", (project_id,)).fetchone()[0]
+                if cnt:
+                    err = ErrorResponse(code='conflict', message='Project has datasets; delete them first')
+                    return jsonify(err.dict()), 409
             n = db_delete_project(conn, project_id)
             conn.commit()
             return jsonify({'deleted': int(n)})
@@ -256,10 +259,13 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
         try:
             conn = get_connection()
             init_db(conn)
-            cnt = conn.execute("SELECT COUNT(1) FROM annotations WHERE dataset_id = ?", (dataset_id,)).fetchone()[0]
-            if cnt:
-                err = ErrorResponse(code='conflict', message='Dataset has annotations; cannot delete')
-                return jsonify(err.dict()), 409
+            # Optional force delete: when true, rely on FK ON DELETE CASCADE from dependents -> datasets
+            force = str(request.args.get('force', '0')).lower() in ('1', 'true', 'yes')
+            if not force:
+                cnt = conn.execute("SELECT COUNT(1) FROM annotations WHERE dataset_id = ?", (dataset_id,)).fetchone()[0]
+                if cnt:
+                    err = ErrorResponse(code='conflict', message='Dataset has annotations; cannot delete')
+                    return jsonify(err.dict()), 409
             n = db_delete_dataset(conn, dataset_id)
             conn.commit()
             return jsonify({'deleted': int(n)})
