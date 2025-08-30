@@ -22,7 +22,11 @@
         <!-- Session Selector -->
         <div id="session-selector" class="selector">
             <h3 class="panel__title">Select Annotation Session</h3>
-            <div class="selector__controls" style="display:flex; gap:8px; margin:8px 0;">
+            <div class="selector__controls" style="display:flex; gap:8px; margin:8px 0; align-items:center; flex-wrap: wrap;">
+                <label style="color: var(--color-text-muted); font-size: 12px;">Project</label>
+                <select id="project-select" class="input" style="min-width: 200px;"></select>
+                <button id="manage-projects" class="btn">Manage</button>
+                <div style="flex:1 1 auto"></div>
                 <button id="refresh-sessions" class="btn">Refresh</button>
                 <button id="reindex-sessions" class="btn">Reindex</button>
             </div>

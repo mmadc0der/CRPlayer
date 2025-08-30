@@ -47,6 +47,7 @@
   const els = {
     sessionList: () => document.getElementById('session-list'),
     sessionSelector: () => document.getElementById('session-selector'),
+    projectSelect: () => document.getElementById('project-select'),
     annotationInterface: () => document.getElementById('annotation-interface'),
     sessionInfo: () => document.getElementById('session-info'),
     sessionName: () => document.getElementById('session-name'),
@@ -166,6 +167,7 @@
     return apiGet(`projects/${projectId}/datasets`);
   }
   async function createDataset(projectId, name, description = '', target_type_id = 2) {
+    // API.md: target_type_id: 1=Regression, 2=SingleLabelClassification, 3=MultiLabelClassification
     return apiPost(`projects/${projectId}/datasets`, { name, description, target_type_id });
   }
   async function enrollSession(datasetId, sessionId, settings = undefined) {
@@ -209,6 +211,32 @@
     } catch {}
   }
 
+  // Projects toolbar
+  async function populateProjectSelect(prefName = null) {
+    const select = els.projectSelect();
+    if (!select) return;
+    select.innerHTML = '';
+    let projects = [];
+    try { projects = await listProjects(); } catch { projects = []; }
+    // Fallback default option if none
+    if (!projects || projects.length === 0) {
+      const opt = document.createElement('option');
+      opt.value = 'default'; opt.textContent = 'default';
+      select.appendChild(opt);
+      state.project_name = 'default';
+      return;
+    }
+    projects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.name; opt.textContent = p.name; opt.dataset.projectId = p.id;
+      select.appendChild(opt);
+    });
+    // Choose preferred or saved project
+    const saved = prefName || (localStorage.getItem('currentProject') || 'default');
+    const match = Array.from(select.options).find(o => o.value === saved) || select.options[0];
+    if (match) { select.value = match.value; state.project_name = match.value; }
+  }
+
   // UI rendering
   function renderSessionList(sessions) {
     const list = els.sessionList();
@@ -227,7 +255,11 @@
       `;
       const openBtn = div.querySelector('[data-action="open"]');
       const enrollBtn = div.querySelector('[data-action="enroll"]');
-      openBtn.addEventListener('click', () => selectSession(s.session_id, 'default', { pushHistory: true, preload: s }));
+      openBtn.addEventListener('click', () => {
+        const sel = els.projectSelect();
+        const proj = sel && sel.value ? sel.value : state.project_name || 'default';
+        selectSession(s.session_id, proj, { pushHistory: true, preload: s });
+      });
       enrollBtn.addEventListener('click', () => startEnrollmentFlow(s.session_id));
       list.appendChild(div);
     });
@@ -238,10 +270,11 @@
 
   async function startEnrollmentFlow(sessionId) {
     try {
-      // 1) Choose or create Project
+      // 1) Choose or create Project (prefill with toolbar selection if available)
       const projects = await listProjects();
       const choices = projects.map((p, i) => `${i + 1}) ${p.name}`).join('\n');
-      let sel = prompt(`Select a project by number or type 'new' to create:\n${choices}`);
+      const toolbarSelected = (els.projectSelect() && els.projectSelect().value) ? els.projectSelect().value : state.project_name || 'default';
+      let sel = prompt(`Select a project by number or type 'new' to create:\n${choices}\n(Current: ${toolbarSelected})`);
       let projectId;
       if (sel && sel.toLowerCase() === 'new') {
         const name = prompt('New project name:');
@@ -249,6 +282,10 @@
         const desc = prompt('Description (optional):') || '';
         const created = await createProject(name, desc);
         projectId = created.id;
+        await populateProjectSelect(name);
+      } else if (!sel || sel.trim() === '') {
+        const found = projects.find(p => p.name === toolbarSelected) || projects[0];
+        projectId = found ? found.id : projects[0].id;
       } else {
         const idx = parseInt(sel, 10) - 1;
         if (Number.isNaN(idx) || idx < 0 || idx >= projects.length) return;
@@ -265,9 +302,8 @@
         if (!dsName) return;
         const dsDesc = prompt('Description (optional):') || '';
         const typeStr = prompt('Target type id (1=Regression, 2=SingleLabelClassification, 3=MultiLabelClassification):', '2') || '2';
-        const uiType = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
-        const dbType = uiType - 1; // Map 1..3 -> 0..2 per schema.target_types
-        const createdDs = await createDataset(projectId, dsName, dsDesc, dbType);
+        const targetTypeId = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
+        const createdDs = await createDataset(projectId, dsName, dsDesc, targetTypeId);
         datasetId = createdDs.id;
         // Persist selection
         state.dataset_id = datasetId;
@@ -467,6 +503,7 @@
     try {
       const data = await apiGet('frame', {
         session_id: state.session_id,
+        project_name: state.project_name,
         idx: idx,
       });
 
@@ -590,6 +627,34 @@
 
   // Event wiring
   function bindEvents() {
+    // Project selector
+    const ps = els.projectSelect();
+    if (ps) {
+      ps.addEventListener('change', () => {
+        state.project_name = ps.value || 'default';
+        try { localStorage.setItem('currentProject', state.project_name); } catch {}
+      });
+    }
+    const manageBtn = document.getElementById('manage-projects');
+    if (manageBtn) {
+      manageBtn.addEventListener('click', async () => {
+        try {
+          const action = prompt("Type 'new' to create a project or 'rename' to refresh list:", 'new');
+          if (action && action.toLowerCase() === 'new') {
+            const name = prompt('New project name:');
+            if (!name) return;
+            const desc = prompt('Description (optional):') || '';
+            await createProject(name, desc);
+            await populateProjectSelect(name);
+            toast('Project created');
+          } else {
+            await populateProjectSelect();
+          }
+        } catch {
+          toast('Project action failed');
+        }
+      });
+    }
     els.addCategoryBtn().addEventListener('click', () => {
       const input = els.newCategoryInput();
       const name = (input.value || '').trim();
@@ -679,6 +744,8 @@
   }
 
   async function init() {
+    // Populate projects first so toolbar has a value
+    await populateProjectSelect();
     bindEvents();
 
     // Always load sessions first so we can validate any saved selection
