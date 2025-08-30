@@ -169,7 +169,7 @@ body {
 .stat-label { font-size: 12px; color: var(--color-text-muted); margin-top: 4px; }
 
 /* Keyboard shortcuts */
-.shortcut { display: flex; align-items: center; justify-content: space-between; margin: 6px 0; }
+.shortcut { display: flex; align-items: center; justify-content: space-between; margin: 0; }
 .key {
   display: inline-block;
   padding: 2px 6px;
