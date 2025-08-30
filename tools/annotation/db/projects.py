@@ -20,8 +20,14 @@ def create_project(conn: sqlite3.Connection, name: str, description: Optional[st
 def list_datasets(conn: sqlite3.Connection, project_id: int) -> List[Dict[str, Any]]:
     cur = conn.execute(
         """
-        SELECT d.id, d.name, d.description, d.target_type_id, d.created_at
+        SELECT d.id,
+               d.name,
+               d.description,
+               d.target_type_id,
+               tt.name AS target_type_name,
+               d.created_at
         FROM datasets d
+        LEFT JOIN target_types tt ON tt.id = d.target_type_id
         WHERE d.project_id = ?
         ORDER BY d.id DESC
         """,
@@ -49,7 +55,18 @@ def create_dataset(
 
 def get_dataset(conn: sqlite3.Connection, dataset_id: int) -> Optional[Dict[str, Any]]:
     cur = conn.execute(
-        "SELECT id, project_id, name, description, target_type_id, created_at FROM datasets WHERE id = ?",
+        """
+        SELECT d.id,
+               d.project_id,
+               d.name,
+               d.description,
+               d.target_type_id,
+               tt.name AS target_type_name,
+               d.created_at
+        FROM datasets d
+        LEFT JOIN target_types tt ON tt.id = d.target_type_id
+        WHERE d.id = ?
+        """,
         (dataset_id,),
     )
     row = cur.fetchone()
@@ -71,9 +88,16 @@ def dataset_progress(conn: sqlite3.Connection, dataset_id: int) -> Dict[str, int
 def get_dataset_by_name(conn: sqlite3.Connection, project_id: int, name: str) -> Optional[Dict[str, Any]]:
     cur = conn.execute(
         """
-        SELECT id, project_id, name, description, target_type_id, created_at
-        FROM datasets
-        WHERE project_id = ? AND name = ?
+        SELECT d.id,
+               d.project_id,
+               d.name,
+               d.description,
+               d.target_type_id,
+               tt.name AS target_type_name,
+               d.created_at
+        FROM datasets d
+        LEFT JOIN target_types tt ON tt.id = d.target_type_id
+        WHERE d.project_id = ? AND d.name = ?
         """,
         (project_id, name),
     )

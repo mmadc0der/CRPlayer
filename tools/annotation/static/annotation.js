@@ -48,6 +48,7 @@
     sessionList: () => document.getElementById('session-list'),
     sessionSelector: () => document.getElementById('session-selector'),
     projectSelect: () => document.getElementById('project-select'),
+    datasetSelect: () => document.getElementById('dataset-select'),
     annotationInterface: () => document.getElementById('annotation-interface'),
     sessionInfo: () => document.getElementById('session-info'),
     sessionName: () => document.getElementById('session-name'),
@@ -90,6 +91,10 @@
   }
 
   async function ensureDatasetSelected(sessionId) {
+    // If dataset already chosen via toolbar, accept it
+    if (Number.isFinite(Number(state.dataset_id)) && Number(state.dataset_id) > 0) {
+      return { id: Number(state.dataset_id), name: state.dataset_name || null };
+    }
     // Try restore
     try {
       const saved = localStorage.getItem(`dataset:${sessionId}`);
@@ -166,8 +171,8 @@
   async function listDatasets(projectId) {
     return apiGet(`projects/${projectId}/datasets`);
   }
-  async function createDataset(projectId, name, description = '', target_type_id = 2) {
-    // API.md: target_type_id: 1=Regression, 2=SingleLabelClassification, 3=MultiLabelClassification
+  async function createDataset(projectId, name, description = '', target_type_id = 1) {
+    // DB schema target_types: 0=Regression, 1=SingleLabelClassification, 2=MultiLabelClassification
     return apiPost(`projects/${projectId}/datasets`, { name, description, target_type_id });
   }
   async function enrollSession(datasetId, sessionId, settings = undefined) {
@@ -237,6 +242,60 @@
     if (match) { select.value = match.value; state.project_name = match.value; }
   }
 
+  // Use backend-provided target_type_name; no frontend mapping to avoid drift
+
+  function getSelectedProjectId() {
+    const ps = els.projectSelect();
+    if (!ps) return null;
+    const opt = ps.selectedOptions && ps.selectedOptions[0];
+    if (!opt) return null;
+    const pid = parseInt(opt.dataset.projectId, 10);
+    return Number.isFinite(pid) ? pid : null;
+  }
+
+  async function populateDatasetSelect(prefId = null) {
+    const select = els.datasetSelect();
+    if (!select) return;
+    select.innerHTML = '';
+    const projectId = getSelectedProjectId();
+    if (!projectId) {
+      state.dataset_id = null;
+      state.dataset_name = null;
+      return;
+    }
+    let datasets = [];
+    try { datasets = await listDatasets(projectId); } catch { datasets = []; }
+    datasets.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = String(d.id);
+      const tname = d.target_type_name || `Type ${d.target_type_id}`;
+      opt.textContent = `${d.name} [${tname}]`;
+      opt.dataset.datasetName = d.name;
+      opt.dataset.targetTypeId = String(d.target_type_id);
+      select.appendChild(opt);
+    });
+    if (datasets.length > 0) {
+      let savedId = null;
+      try {
+        if (state.session_id) {
+          const saved = localStorage.getItem(`dataset:${state.session_id}`);
+          if (saved) {
+            const obj = JSON.parse(saved);
+            if (obj && obj.id != null) savedId = String(obj.id);
+          }
+        }
+      } catch {}
+      const targetVal = prefId || savedId || String(datasets[0].id);
+      select.value = targetVal;
+      const selOpt = select.selectedOptions[0];
+      state.dataset_id = Number(select.value);
+      state.dataset_name = selOpt ? (selOpt.dataset.datasetName || null) : null;
+    } else {
+      state.dataset_id = null;
+      state.dataset_name = null;
+    }
+  }
+
   // UI rendering
   function renderSessionList(sessions) {
     const list = els.sessionList();
@@ -258,6 +317,12 @@
       openBtn.addEventListener('click', () => {
         const sel = els.projectSelect();
         const proj = sel && sel.value ? sel.value : state.project_name || 'default';
+        // If user picked a dataset in toolbar, set it as active
+        const dsSel = els.datasetSelect();
+        if (dsSel && dsSel.value) {
+          state.dataset_id = Number(dsSel.value);
+          state.dataset_name = (dsSel.selectedOptions[0] && dsSel.selectedOptions[0].dataset.datasetName) || null;
+        }
         selectSession(s.session_id, proj, { pushHistory: true, preload: s });
       });
       enrollBtn.addEventListener('click', () => startEnrollmentFlow(s.session_id));
@@ -294,21 +359,26 @@
 
       // 2) Choose or create Dataset in selected Project
       const datasets = await listDatasets(projectId);
-      const dsChoices = datasets.map((d, i) => `${i + 1}) ${d.name} [type ${d.target_type_id}]`).join('\n');
+      const dsChoices = datasets.map((d, i) => {
+        const tname = d.target_type_name || `Type ${d.target_type_id}`;
+        return `${i + 1}) ${d.name} [${tname}]`;
+      }).join('\n');
       sel = prompt(`Select a dataset by number or type 'new' to create:\n${dsChoices || '(none yet)'}`);
       let datasetId;
       if (sel && sel.toLowerCase() === 'new') {
         const dsName = prompt('New dataset name:');
         if (!dsName) return;
         const dsDesc = prompt('Description (optional):') || '';
-        const typeStr = prompt('Target type id (1=Regression, 2=SingleLabelClassification, 3=MultiLabelClassification):', '2') || '2';
-        const targetTypeId = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
+        const typeStr = prompt('Target type (enter 0=Regression, 1=Single-label, 2=Multi-label):', '1') || '1';
+        const targetTypeId = Math.max(0, Math.min(2, parseInt(typeStr, 10) || 1));
         const createdDs = await createDataset(projectId, dsName, dsDesc, targetTypeId);
         datasetId = createdDs.id;
         // Persist selection
         state.dataset_id = datasetId;
         state.dataset_name = createdDs.name;
         try { localStorage.setItem(`dataset:${sessionId}`, JSON.stringify({ id: datasetId, name: createdDs.name, target_type_id: createdDs.target_type_id })); } catch {}
+        // update toolbar
+        await populateDatasetSelect(String(datasetId));
       } else {
         const idx = parseInt(sel, 10) - 1;
         if (Number.isNaN(idx) || idx < 0 || idx >= datasets.length) return;
@@ -317,6 +387,7 @@
         state.dataset_id = datasetId;
         state.dataset_name = picked.name;
         try { localStorage.setItem(`dataset:${sessionId}`, JSON.stringify({ id: datasetId, name: picked.name, target_type_id: picked.target_type_id })); } catch {}
+        await populateDatasetSelect(String(datasetId));
       }
 
       // 3) Optional baseline settings JSON
@@ -633,6 +704,7 @@
       ps.addEventListener('change', () => {
         state.project_name = ps.value || 'default';
         try { localStorage.setItem('currentProject', state.project_name); } catch {}
+        populateDatasetSelect();
       });
     }
     const manageBtn = document.getElementById('manage-projects');
@@ -652,6 +724,43 @@
           }
         } catch {
           toast('Project action failed');
+        }
+      });
+    }
+    // Dataset selector
+    const dsSel = els.datasetSelect();
+    if (dsSel) {
+      dsSel.addEventListener('change', () => {
+        const opt = dsSel.selectedOptions && dsSel.selectedOptions[0];
+        state.dataset_id = dsSel.value ? Number(dsSel.value) : null;
+        state.dataset_name = opt ? (opt.dataset.datasetName || null) : null;
+        if (state.session_id && state.dataset_id) {
+          try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
+        }
+        refreshProgress();
+      });
+    }
+    const dsManageBtn = document.getElementById('manage-datasets');
+    if (dsManageBtn) {
+      dsManageBtn.addEventListener('click', async () => {
+        try {
+          const projectId = getSelectedProjectId();
+          if (!projectId) { toast('Select a project first'); return; }
+          const action = prompt("Type 'new' to create a dataset or anything else to refresh list:", 'new');
+          if (action && action.toLowerCase() === 'new') {
+            const dsName = prompt('New dataset name:');
+            if (!dsName) return;
+            const dsDesc = prompt('Description (optional):') || '';
+            const typeStr = prompt('Target type (1=Regression, 2=Single-label, 3=Multi-label):', '2') || '2';
+            const targetTypeId = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
+            const created = await createDataset(projectId, dsName, dsDesc, targetTypeId);
+            await populateDatasetSelect(String(created.id));
+            toast('Dataset created');
+          } else {
+            await populateDatasetSelect();
+          }
+        } catch {
+          toast('Dataset action failed');
         }
       });
     }
@@ -746,6 +855,7 @@
   async function init() {
     // Populate projects first so toolbar has a value
     await populateProjectSelect();
+    await populateDatasetSelect();
     bindEvents();
 
     // Always load sessions first so we can validate any saved selection

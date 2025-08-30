@@ -144,6 +144,10 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                     return jsonify(err.dict()), 400
                 did = db_create_dataset(conn, project_id, name, description, ttid)
                 conn.commit()
+                # Fetch full dataset row to include target_type_name
+                created = db_get_dataset(conn, did)
+                if created:
+                    return jsonify(created), 201
                 return jsonify({'id': did, 'project_id': project_id, 'name': name, 'description': description, 'target_type_id': ttid}), 201
             except sqlite3.IntegrityError:
                 # Unique(project_id, name) exists: return existing entry as 200
