@@ -37,6 +37,7 @@ from db.projects import (
 )
 import sqlite3
 from db.datasets import enroll_session_frames as db_enroll_session_frames, list_labeled as db_list_labeled
+from db.classes import list_dataset_classes as db_list_dataset_classes, sync_dataset_classes as db_sync_dataset_classes
 
 
 def create_annotation_api(session_manager: SessionManager) -> Blueprint:
@@ -290,6 +291,16 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             if not d:
                 err = ErrorResponse(code='not_found', message='Dataset not found')
                 return jsonify(err.dict()), 404
+            # If baseline settings include categories, ensure dataset_classes exist in DB with stable ordering
+            try:
+                if isinstance(settings, dict):
+                    cats = settings.get('categories')
+                    if isinstance(cats, list) and len(cats) > 0:
+                        # Sync classes regardless of target type for forward-compat; safe no-op if duplicates
+                        db_sync_dataset_classes(conn, dataset_id, [str(c) for c in cats])
+            except Exception:
+                # Do not fail enrollment on class sync issues; continue
+                pass
             summary = db_enroll_session_frames(conn, dataset_id, session_id, settings)
             return jsonify({'ok': True, 'summary': summary})
         except ValueError as ve:
@@ -317,6 +328,22 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             return jsonify(rows)
         except Exception as e:
             err = ErrorResponse(code='labeled_error', message='Failed to list labeled items', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>/classes', methods=['GET'])
+    def api_list_dataset_classes(dataset_id: int):
+        try:
+            conn = get_connection()
+            init_db(conn)
+            # Ensure dataset exists
+            d = db_get_dataset(conn, dataset_id)
+            if not d:
+                err = ErrorResponse(code='not_found', message='Dataset not found')
+                return jsonify(err.dict()), 404
+            rows = db_list_dataset_classes(conn, dataset_id)
+            return jsonify(rows)
+        except Exception as e:
+            err = ErrorResponse(code='classes_error', message='Failed to list dataset classes', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
     @bp.route('/api/frame', methods=['GET'])

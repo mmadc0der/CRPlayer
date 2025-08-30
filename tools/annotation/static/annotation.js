@@ -338,6 +338,9 @@
     totalFrames: 0,
     categories: [],
     hotkeys: {},
+    // dataset class info from backend
+    datasetClasses: [], // [{id,name,idx}]
+    classIdByName: {}, // { name: id }
     savedCategoryForFrame: null,
     frameSaved: false,
     settingsLoaded: false,
@@ -500,6 +503,25 @@
   }
   async function datasetProgress(datasetId) {
     return apiGet(`datasets/${datasetId}/progress`);
+  }
+
+  async function listDatasetClasses(datasetId) {
+    if (!datasetId) return [];
+    return apiGet(`datasets/${datasetId}/classes`);
+  }
+
+  async function loadDatasetClasses(datasetId) {
+    try {
+      const rows = await listDatasetClasses(datasetId);
+      state.datasetClasses = Array.isArray(rows) ? rows : [];
+      const map = {};
+      state.datasetClasses.forEach(r => { if (r && typeof r.name === 'string') map[r.name] = r.id; });
+      state.classIdByName = map;
+    } catch (e) {
+      console.warn('Failed to load dataset classes');
+      state.datasetClasses = [];
+      state.classIdByName = {};
+    }
   }
 
   // Persistence helpers (localStorage per session/project)
@@ -717,6 +739,8 @@
 
       // 4) Enroll
       await enrollSession(datasetId, sessionId, settings);
+      // After enrollment, backend syncs dataset classes if categories were provided
+      await loadDatasetClasses(datasetId);
       toast('Session enrolled');
     } catch (e) {
       console.error(e);
@@ -871,6 +895,8 @@
     } else {
       loadCategoriesFromStorage();
     }
+    // Load dataset classes for mapping category -> class_id
+    await loadDatasetClasses(state.dataset_id);
     if (settings && settings.hotkeys && typeof settings.hotkeys === 'object') {
       state.hotkeys = settings.hotkeys;
     }
@@ -955,10 +981,10 @@
       toast('Pick a category');
       return false;
     }
-    // Map category -> class_id using settings.categories order
-    const idx = Array.isArray(state.categories) ? state.categories.indexOf(category) : -1;
-    if (idx < 0) {
-      toast('Category not in dataset settings');
+    // Map category -> class_id using backend-provided dataset classes
+    const classId = state.classIdByName ? state.classIdByName[category] : undefined;
+    if (!(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId)))) {
+      toast('Category not synced with dataset classes');
       return false;
     }
     try {
@@ -966,7 +992,7 @@
         session_id: state.session_id,
         dataset_id: state.dataset_id,
         frame_idx: state.currentIdx,
-        class_id: idx,
+        class_id: classId,
         // override_settings can be added in future
       };
       const res = await apiPost('annotations/single_label', payload);
@@ -1050,6 +1076,8 @@
           try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
         }
         refreshProgress();
+        // Reload dataset classes when dataset changes
+        if (state.dataset_id) loadDatasetClasses(state.dataset_id);
       });
     }
     const dsManageBtn = document.getElementById('manage-datasets');
