@@ -64,13 +64,20 @@ class SaveSingleLabelRequest(BaseModel):
     dataset_id: int
     frame_id: Optional[str] = None
     frame_idx: Optional[int] = None
-    class_id: int
+    class_id: Optional[int] = None
+    category_name: Optional[str] = None
     override_settings: Optional[Dict[str, Any]] = None
 
     @model_validator(mode='after')
     def _validate_frame_id_or_idx(self):
         if (self.frame_id is None) and (self.frame_idx is None):
             raise ValueError('Either frame_id or frame_idx must be provided')
+        return self
+
+    @model_validator(mode='after')
+    def _validate_class_or_category(self):
+        if self.class_id is None and (not self.category_name or not str(self.category_name).strip()):
+            raise ValueError('Either class_id or category_name must be provided')
         return self
 
 

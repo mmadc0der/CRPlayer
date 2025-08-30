@@ -499,7 +499,8 @@
     return apiGet('target_types');
   }
   async function enrollSession(datasetId, sessionId, settings = undefined) {
-    return apiPost(`datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
+    // New paradigm: backend enrollment no longer accepts/apply baseline settings
+    return apiPost(`datasets/${datasetId}/enroll_session`, { session_id: sessionId });
   }
   async function datasetProgress(datasetId) {
     return apiGet(`datasets/${datasetId}/progress`);
@@ -547,6 +548,15 @@
       localStorage.setItem(lsKey('categories'), JSON.stringify(state.categories));
       localStorage.setItem(lsKey('hotkeys'), JSON.stringify(state.hotkeys));
     } catch {}
+  }
+
+  // Persist dataset-session settings to backend
+  async function saveDatasetSessionSettings(datasetId, sessionId, settingsObj) {
+    try {
+      await apiPut(`datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`, { settings: settingsObj || {} });
+    } catch (e) {
+      // Non-fatal
+    }
   }
 
   function saveSessionSelection() {
@@ -729,18 +739,8 @@
         await populateDatasetSelect(String(datasetId));
       }
 
-      // 3) Optional baseline settings JSON
-      let settings = undefined;
-      const wantSettings = confirm('Provide baseline settings JSON for this dataset+session pair?');
-      if (wantSettings) {
-        const raw = prompt('Enter JSON (e.g., {"categories":["battle","menu"],"hotkeys":{}}):', '{}') || '{}';
-        try { settings = JSON.parse(raw); } catch { settings = undefined; }
-      }
-
-      // 4) Enroll
-      await enrollSession(datasetId, sessionId, settings);
-      // After enrollment, backend syncs dataset classes if categories were provided
-      await loadDatasetClasses(datasetId);
+      // 4) Enroll (no baseline settings sent)
+      await enrollSession(datasetId, sessionId);
       toast('Session enrolled');
     } catch (e) {
       console.error(e);
@@ -790,18 +790,20 @@
         </label>
         <div class="category__controls">
           <input type="text" class="input input--small" value="${state.hotkeys[cat] || ''}" placeholder="Key" maxlength="1" data-category="${cat}">
-          <button class="btn" data-remove="${cat}">Remove</button>
+          <button class="btn btn--small" data-remove="${cat}">Remove</button>
         </div>
       `;
       wrap.appendChild(row);
 
-      const input = row.querySelector('input.input');
-      input.addEventListener('input', (e) => {
-        const key = e.target.value.toLowerCase();
-        const category = e.target.dataset.category;
-        if (key) state.hotkeys[category] = key; else delete state.hotkeys[category];
-        renderDynamicShortcuts();
+      const input = row.querySelector('input[type="text"]');
+      input.addEventListener('input', () => {
+        const v = (input.value || '').trim().toLowerCase();
+        state.hotkeys[cat] = v;
         saveCategoriesToStorage();
+        // Persist to backend session settings
+        if (state.dataset_id && state.session_id) {
+          saveDatasetSessionSettings(state.dataset_id, state.session_id, { categories: state.categories, hotkeys: state.hotkeys }).catch(() => {});
+        }
       });
 
       const radio = row.querySelector('input[type="radio"]');
@@ -815,6 +817,10 @@
         saveCategoriesToStorage();
         renderCategories();
         renderDynamicShortcuts();
+        // Persist to backend session settings
+        if (state.dataset_id && state.session_id) {
+          saveDatasetSessionSettings(state.dataset_id, state.session_id, { categories: state.categories, hotkeys: state.hotkeys }).catch(() => {});
+        }
       });
     });
     highlightCategoryStates();
@@ -881,26 +887,25 @@
 
     // Ensure dataset is selected/enrolled and fetch settings
     await ensureDatasetSelected(session_id);
-    // If we still don't have a valid dataset, stop here and prompt user to enroll
-    if (!(Number.isFinite(Number(state.dataset_id)) && Number(state.dataset_id) > 0)) {
-      toast('Please enroll this session into a dataset first');
-      // keep session selector visible
-      showSessionSelector({ pushHistory: false });
-      return;
+    // Load dataset classes for mapping
+    if (state.dataset_id) {
+      await loadDatasetClasses(state.dataset_id).catch(() => {});
     }
-    const settings = await fetchDatasetSessionSettings(state.dataset_id, state.session_id);
-    // Apply settings to categories/hotkeys if present
-    if (settings && Array.isArray(settings.categories)) {
-      state.categories = settings.categories.slice();
-    } else {
+    // Load session settings from backend and apply
+    try {
+      const settings = await fetchDatasetSessionSettings(state.dataset_id, session_id);
+      if (settings && (Array.isArray(settings.categories) || settings.hotkeys)) {
+        if (Array.isArray(settings.categories)) state.categories = settings.categories;
+        if (settings.hotkeys && typeof settings.hotkeys === 'object') state.hotkeys = settings.hotkeys;
+        state.settingsLoaded = true;
+        saveCategoriesToStorage();
+      } else {
+        // Fallback to local defaults if backend has nothing yet
+        loadCategoriesFromStorage();
+      }
+    } catch {
       loadCategoriesFromStorage();
     }
-    // Load dataset classes for mapping category -> class_id
-    await loadDatasetClasses(state.dataset_id);
-    if (settings && settings.hotkeys && typeof settings.hotkeys === 'object') {
-      state.hotkeys = settings.hotkeys;
-    }
-    state.settingsLoaded = true;
     renderCategories();
     renderDynamicShortcuts();
 
@@ -983,16 +988,15 @@
     }
     // Map category -> class_id using backend-provided dataset classes
     const classId = state.classIdByName ? state.classIdByName[category] : undefined;
-    if (!(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId)))) {
-      toast('Category not synced with dataset classes');
-      return false;
-    }
     try {
       const payload = {
         session_id: state.session_id,
         dataset_id: state.dataset_id,
         frame_idx: state.currentIdx,
-        class_id: classId,
+        // New paradigm: allow backend to create class on demand if unknown
+        ...(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId))
+          ? { class_id: classId }
+          : { category_name: category }),
         // override_settings can be added in future
       };
       const res = await apiPost('annotations/single_label', payload);
@@ -1000,6 +1004,10 @@
         state.savedCategoryForFrame = category;
         state.frameSaved = true;
         toast('Saved');
+        // If we saved using category_name, refresh classes mapping now that backend may have created it
+        if (!(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId)))) {
+          await loadDatasetClasses(state.dataset_id);
+        }
         // Update progress after successful save
         refreshProgress();
         return true;
@@ -1077,7 +1085,29 @@
         }
         refreshProgress();
         // Reload dataset classes when dataset changes
-        if (state.dataset_id) loadDatasetClasses(state.dataset_id);
+        if (state.dataset_id) {
+          loadDatasetClasses(state.dataset_id);
+          // Fetch and apply dataset-session settings for the new dataset
+          fetchDatasetSessionSettings(state.dataset_id, state.session_id)
+            .then((settings) => {
+              if (settings && (Array.isArray(settings.categories) || settings.hotkeys)) {
+                if (Array.isArray(settings.categories)) state.categories = settings.categories;
+                if (settings.hotkeys && typeof settings.hotkeys === 'object') state.hotkeys = settings.hotkeys;
+                state.settingsLoaded = true;
+                saveCategoriesToStorage();
+              } else {
+                // Fallback to local defaults if backend has nothing yet
+                loadCategoriesFromStorage();
+              }
+            })
+            .catch(() => {
+              loadCategoriesFromStorage();
+            })
+            .finally(() => {
+              renderCategories();
+              renderDynamicShortcuts();
+            });
+        }
       });
     }
     const dsManageBtn = document.getElementById('manage-datasets');
@@ -1096,6 +1126,10 @@
         saveCategoriesToStorage();
         renderCategories();
         renderDynamicShortcuts();
+        // Persist to backend session settings
+        if (state.dataset_id && state.session_id) {
+          saveDatasetSessionSettings(state.dataset_id, state.session_id, { categories: state.categories, hotkeys: state.hotkeys }).catch(() => {});
+        }
       }
       input.value = '';
     });
