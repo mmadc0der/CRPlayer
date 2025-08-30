@@ -191,6 +191,7 @@
         try {
           await apiPut(`projects/${p.id}`, { name: newName, description: newDesc });
           await populateProjectSelect(newName);
+          await populateDatasetSelect();
           await renderProjectManager();
           toast('Project updated');
         } catch { toast('Update failed'); }
@@ -203,6 +204,7 @@
         try {
           await apiDelete(url);
           await populateProjectSelect();
+          await populateDatasetSelect();
           await renderProjectManager();
           toast('Project deleted');
         } catch (e) { toast('Delete failed'); }
@@ -217,6 +219,7 @@
       try {
         await createProject(name, desc);
         await populateProjectSelect(name);
+        await populateDatasetSelect();
         await renderProjectManager();
         toast('Project created');
       } catch { toast('Create failed'); }
