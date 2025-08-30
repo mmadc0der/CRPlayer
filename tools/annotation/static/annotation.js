@@ -50,6 +50,53 @@
     if (m) m.classList.add('hidden');
   }
 
+  // Helper: modal picker for target types (returns Promise<number|null>)
+  async function chooseTargetType(defaultId = 1) {
+    try {
+      const types = await listTargetTypes();
+      if (!Array.isArray(types) || types.length === 0) return null;
+      // Build transient modal
+      const wrap = document.createElement('div');
+      wrap.className = 'modal';
+      wrap.innerHTML = `
+        <div class="modal__backdrop"></div>
+        <div class="modal__content" style="max-width:420px">
+          <div class="modal__header"><h3>Select Target Type</h3></div>
+          <div class="modal__body">
+            <select id="tt-select" class="input" style="width:100%"></select>
+          </div>
+          <div class="modal__footer" style="display:flex;gap:8px;justify-content:flex-end">
+            <button class="btn" id="tt-cancel">Cancel</button>
+            <button class="btn btn--primary" id="tt-ok">OK</button>
+          </div>
+        </div>`;
+      document.body.appendChild(wrap);
+      const sel = wrap.querySelector('#tt-select');
+      types.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = String(t.id);
+        opt.textContent = t.name || `Type ${t.id}`;
+        sel.appendChild(opt);
+      });
+      sel.value = String(defaultId);
+      wrap.classList.remove('hidden');
+      // Return promise for selection
+      return await new Promise((resolve) => {
+        const cleanup = () => { try { document.body.removeChild(wrap); } catch {} };
+        wrap.querySelector('#tt-cancel').onclick = () => { cleanup(); resolve(null); };
+        wrap.querySelector('#tt-ok').onclick = () => {
+          const v = parseInt(sel.value, 10);
+          cleanup();
+          resolve(Number.isFinite(v) ? v : null);
+        };
+        const backdrop = wrap.querySelector('.modal__backdrop');
+        if (backdrop) backdrop.onclick = () => { cleanup(); resolve(null); };
+      });
+    } catch {
+      return null;
+    }
+  }
+
   // Project Management UI
   async function renderProjectManager() {
     const body = document.getElementById('project-modal-body');
@@ -130,14 +177,25 @@
     form.innerHTML = `
       <input class="input m-input" id="dm-name" placeholder="Dataset name">
       <input class="input m-input" id="dm-desc" placeholder="Description (optional)">
-      <select class="input" id="dm-type">
-        <option value="1">Single-label Classification</option>
-        <option value="2">Multi-label Classification</option>
-        <option value="0">Regression</option>
-      </select>
+      <select class="input" id="dm-type"></select>
       <button class="btn" id="dm-create">Create</button>
     `;
     body.appendChild(form);
+    // Populate target types dynamically
+    try {
+      const types = await listTargetTypes();
+      const typeSel = form.querySelector('#dm-type');
+      typeSel.innerHTML = '';
+      types.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = String(t.id);
+        opt.textContent = t.name || `Type ${t.id}`;
+        typeSel.appendChild(opt);
+      });
+      // prefer SingleLabel (1) if present, else first
+      const preferred = types.find(t => String(t.id) === '1');
+      typeSel.value = preferred ? '1' : (types[0] ? String(types[0].id) : '1');
+    } catch {}
     const listWrap = document.createElement('div');
     listWrap.className = 'm-list';
     body.appendChild(listWrap);
@@ -158,18 +216,50 @@
         </div>
       `;
       row.querySelector('[data-edit]').onclick = async () => {
-        const newName = prompt('Dataset name', d.name) || d.name;
-        const newDesc = prompt('Description (optional)', d.description || '') || '';
-        const newType = prompt('Target type id (integer, e.g., 0=Regression, 1=Single-label, 2=Multi-label; others if backend supports)', String(d.target_type_id)) || String(d.target_type_id);
-        const parsedNewType = parseInt(newType, 10);
-        const normalizedType = Number.isNaN(parsedNewType) ? d.target_type_id : parsedNewType;
-        const target_type_id = normalizedType < 0 ? 0 : normalizedType;
-        try {
-          await apiPut(`datasets/${d.id}`, { name: newName, description: newDesc, target_type_id });
-          await populateDatasetSelect(String(d.id));
-          await renderDatasetManager();
-          toast('Dataset updated');
-        } catch { toast('Update failed'); }
+        // Build inline modal with inputs and dropdown for types
+        const types = await listTargetTypes().catch(() => []);
+        const wrap = document.createElement('div');
+        wrap.className = 'modal';
+        wrap.innerHTML = `
+          <div class="modal__backdrop"></div>
+          <div class="modal__content" style="max-width:520px">
+            <div class="modal__header"><h3>Edit Dataset</h3></div>
+            <div class="modal__body" style="display:flex;flex-direction:column;gap:8px">
+              <input class="input" id="ed-name" placeholder="Dataset name" value="${d.name}">
+              <input class="input" id="ed-desc" placeholder="Description (optional)" value="${d.description || ''}">
+              <select class="input" id="ed-type"></select>
+            </div>
+            <div class="modal__footer" style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn" id="ed-cancel">Cancel</button>
+              <button class="btn btn--primary" id="ed-save">Save</button>
+            </div>
+          </div>`;
+        document.body.appendChild(wrap);
+        const typeSel = wrap.querySelector('#ed-type');
+        typeSel.innerHTML = '';
+        types.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = String(t.id);
+          opt.textContent = t.name || `Type ${t.id}`;
+          typeSel.appendChild(opt);
+        });
+        typeSel.value = String(d.target_type_id);
+        wrap.classList.remove('hidden');
+        const cleanup = () => { try { document.body.removeChild(wrap); } catch {} };
+        wrap.querySelector('#ed-cancel').onclick = cleanup;
+        wrap.querySelector('.modal__backdrop').onclick = cleanup;
+        wrap.querySelector('#ed-save').onclick = async () => {
+          const newName = wrap.querySelector('#ed-name').value || d.name;
+          const newDesc = wrap.querySelector('#ed-desc').value || '';
+          const target_type_id = parseInt(typeSel.value, 10);
+          cleanup();
+          try {
+            await apiPut(`datasets/${d.id}`, { name: newName, description: newDesc, target_type_id });
+            await populateDatasetSelect(String(d.id));
+            await renderDatasetManager();
+            toast('Dataset updated');
+          } catch { toast('Update failed'); }
+        };
       };
       row.querySelector('[data-delete]').onclick = async () => {
         if (!confirm(`Delete dataset '${d.name}'?`)) return;
@@ -382,6 +472,9 @@
     // DB schema target_types: 0=Regression, 1=SingleLabelClassification, 2=MultiLabelClassification
     return apiPost(`projects/${projectId}/datasets`, { name, description, target_type_id });
   }
+  async function listTargetTypes() {
+    return apiGet('target_types');
+  }
   async function enrollSession(datasetId, sessionId, settings = undefined) {
     return apiPost(`datasets/${datasetId}/enroll_session`, { session_id: sessionId, settings });
   }
@@ -576,10 +669,9 @@
         const dsName = prompt('New dataset name:');
         if (!dsName) return;
         const dsDesc = prompt('Description (optional):') || '';
-        const typeStr = prompt('Target type id (integer, e.g., 0=Regression, 1=Single-label, 2=Multi-label; others if backend supports):', '1') || '1';
-        const parsedType = parseInt(typeStr, 10);
-        const normalizedType = Number.isNaN(parsedType) ? 1 : parsedType;
-        const targetTypeId = normalizedType < 0 ? 0 : normalizedType;
+        const pickedType = await chooseTargetType(1);
+        if (pickedType == null) return;
+        const targetTypeId = pickedType;
         const createdDs = await createDataset(projectId, dsName, dsDesc, targetTypeId);
         datasetId = createdDs.id;
         // Persist selection

@@ -47,6 +47,17 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
     dataset_service = DatasetService(session_manager)
     settings_service = SettingsService()
 
+    @bp.route('/api/target_types', methods=['GET'])
+    def api_list_target_types():
+        try:
+            conn = get_connection()
+            init_db(conn)
+            rows = conn.execute("SELECT id, name FROM target_types ORDER BY id").fetchall()
+            return jsonify([{'id': int(r['id']), 'name': r['name']} for r in rows])
+        except Exception as e:
+            err = ErrorResponse(code='target_types_error', message='Failed to list target types', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
     @bp.route('/api/sessions', methods=['GET'])
     def discover_sessions():
         try:
@@ -184,8 +195,10 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 return jsonify(err.dict()), 404
             try:
                 ttid = int(target_type_id)
-                if ttid not in (0, 1, 2):
-                    err = ErrorResponse(code='bad_request', message='target_type_id must be 0, 1, or 2')
+                # Validate target type exists in DB
+                exists = conn.execute("SELECT 1 FROM target_types WHERE id = ?", (ttid,)).fetchone()
+                if not exists:
+                    err = ErrorResponse(code='bad_request', message='unknown target_type_id', details={'target_type_id': ttid})
                     return jsonify(err.dict()), 400
                 did = db_create_dataset(conn, project_id, name, description, ttid)
                 conn.commit()
@@ -214,8 +227,12 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             ttid_val = None
             if ttid is not None:
                 ttid_val = int(ttid)
-                if ttid_val not in (0, 1, 2):
-                    err = ErrorResponse(code='bad_request', message='target_type_id must be 0, 1, or 2')
+                # Validate target type exists in DB
+                conn = get_connection()
+                init_db(conn)
+                tt_exists = conn.execute("SELECT 1 FROM target_types WHERE id = ?", (ttid_val,)).fetchone()
+                if not tt_exists:
+                    err = ErrorResponse(code='bad_request', message='unknown target_type_id', details={'target_type_id': ttid_val})
                     return jsonify(err.dict()), 400
             conn = get_connection()
             init_db(conn)
