@@ -150,7 +150,7 @@ body {
 
 .note { width: 100%; min-height: 84px; resize: vertical; }
 
-.actions { display: grid; gap: var(--space-2); }
+.actions { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); }
 
 /* Stats grid */
 .stats-grid {
