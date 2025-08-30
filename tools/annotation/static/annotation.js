@@ -50,6 +50,56 @@
     if (m) m.classList.add('hidden');
   }
 
+  // Helper: full dataset modal to enter name/desc and pick target type
+  // Returns Promise<{ name: string, description: string, target_type_id: number }|null>
+  async function showDatasetModal(opts = { title: 'Create Dataset', name: '', description: '', target_type_id: 1 }) {
+    const types = await listTargetTypes().catch(() => []);
+    if (!Array.isArray(types) || types.length === 0) return null;
+    const title = opts.title || 'Create Dataset';
+    const wrap = document.createElement('div');
+    wrap.className = 'modal';
+    wrap.innerHTML = `
+      <div class="modal__backdrop"></div>
+      <div class="modal__content" style="max-width:520px">
+        <div class="modal__header"><h3>${title}</h3></div>
+        <div class="modal__body" style="display:flex;flex-direction:column;gap:8px">
+          <input class="input" id="ds-name" placeholder="Dataset name" value="${opts.name || ''}">
+          <input class="input" id="ds-desc" placeholder="Description (optional)" value="${opts.description || ''}">
+          <select class="input" id="ds-type"></select>
+        </div>
+        <div class="modal__footer" style="display:flex;gap:8px;justify-content:flex-end">
+          <button class="btn" id="ds-cancel">Cancel</button>
+          <button class="btn btn--primary" id="ds-save">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const typeSel = wrap.querySelector('#ds-type');
+    typeSel.innerHTML = '';
+    types.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = String(t.id);
+      opt.textContent = t.name || `Type ${t.id}`;
+      typeSel.appendChild(opt);
+    });
+    const preferred = (opts.target_type_id != null) ? String(opts.target_type_id) : (types.find(t => String(t.id) === '1') ? '1' : String(types[0].id));
+    typeSel.value = preferred;
+    wrap.classList.remove('hidden');
+    return await new Promise((resolve) => {
+      const cleanup = () => { try { document.body.removeChild(wrap); } catch {} };
+      const cancel = () => { cleanup(); resolve(null); };
+      wrap.querySelector('#ds-cancel').onclick = cancel;
+      const backdrop = wrap.querySelector('.modal__backdrop');
+      if (backdrop) backdrop.onclick = cancel;
+      wrap.querySelector('#ds-save').onclick = () => {
+        const name = (wrap.querySelector('#ds-name').value || '').trim();
+        const description = (wrap.querySelector('#ds-desc').value || '').trim();
+        const ttid = parseInt(typeSel.value, 10);
+        cleanup();
+        resolve({ name, description, target_type_id: ttid });
+      };
+    });
+  }
+
   // Helper: modal picker for target types (returns Promise<number|null>)
   async function chooseTargetType(defaultId = 1) {
     try {
@@ -177,25 +227,9 @@
     form.innerHTML = `
       <input class="input m-input" id="dm-name" placeholder="Dataset name">
       <input class="input m-input" id="dm-desc" placeholder="Description (optional)">
-      <select class="input" id="dm-type"></select>
       <button class="btn" id="dm-create">Create</button>
     `;
     body.appendChild(form);
-    // Populate target types dynamically
-    try {
-      const types = await listTargetTypes();
-      const typeSel = form.querySelector('#dm-type');
-      typeSel.innerHTML = '';
-      types.forEach(t => {
-        const opt = document.createElement('option');
-        opt.value = String(t.id);
-        opt.textContent = t.name || `Type ${t.id}`;
-        typeSel.appendChild(opt);
-      });
-      // prefer SingleLabel (1) if present, else first
-      const preferred = types.find(t => String(t.id) === '1');
-      typeSel.value = preferred ? '1' : (types[0] ? String(types[0].id) : '1');
-    } catch {}
     const listWrap = document.createElement('div');
     listWrap.className = 'm-list';
     body.appendChild(listWrap);
@@ -216,50 +250,15 @@
         </div>
       `;
       row.querySelector('[data-edit]').onclick = async () => {
-        // Build inline modal with inputs and dropdown for types
-        const types = await listTargetTypes().catch(() => []);
-        const wrap = document.createElement('div');
-        wrap.className = 'modal';
-        wrap.innerHTML = `
-          <div class="modal__backdrop"></div>
-          <div class="modal__content" style="max-width:520px">
-            <div class="modal__header"><h3>Edit Dataset</h3></div>
-            <div class="modal__body" style="display:flex;flex-direction:column;gap:8px">
-              <input class="input" id="ed-name" placeholder="Dataset name" value="${d.name}">
-              <input class="input" id="ed-desc" placeholder="Description (optional)" value="${d.description || ''}">
-              <select class="input" id="ed-type"></select>
-            </div>
-            <div class="modal__footer" style="display:flex;gap:8px;justify-content:flex-end">
-              <button class="btn" id="ed-cancel">Cancel</button>
-              <button class="btn btn--primary" id="ed-save">Save</button>
-            </div>
-          </div>`;
-        document.body.appendChild(wrap);
-        const typeSel = wrap.querySelector('#ed-type');
-        typeSel.innerHTML = '';
-        types.forEach(t => {
-          const opt = document.createElement('option');
-          opt.value = String(t.id);
-          opt.textContent = t.name || `Type ${t.id}`;
-          typeSel.appendChild(opt);
-        });
-        typeSel.value = String(d.target_type_id);
-        wrap.classList.remove('hidden');
-        const cleanup = () => { try { document.body.removeChild(wrap); } catch {} };
-        wrap.querySelector('#ed-cancel').onclick = cleanup;
-        wrap.querySelector('.modal__backdrop').onclick = cleanup;
-        wrap.querySelector('#ed-save').onclick = async () => {
-          const newName = wrap.querySelector('#ed-name').value || d.name;
-          const newDesc = wrap.querySelector('#ed-desc').value || '';
-          const target_type_id = parseInt(typeSel.value, 10);
-          cleanup();
-          try {
-            await apiPut(`datasets/${d.id}`, { name: newName, description: newDesc, target_type_id });
-            await populateDatasetSelect(String(d.id));
-            await renderDatasetManager();
-            toast('Dataset updated');
-          } catch { toast('Update failed'); }
-        };
+        const result = await showDatasetModal({ title: 'Edit Dataset', name: d.name, description: d.description || '', target_type_id: d.target_type_id });
+        if (!result) return;
+        const { name: newName, description: newDesc, target_type_id } = result;
+        try {
+          await apiPut(`datasets/${d.id}`, { name: newName || d.name, description: newDesc || '', target_type_id });
+          await populateDatasetSelect(String(d.id));
+          await renderDatasetManager();
+          toast('Dataset updated');
+        } catch { toast('Update failed'); }
       };
       row.querySelector('[data-delete]').onclick = async () => {
         if (!confirm(`Delete dataset '${d.name}'?`)) return;
@@ -293,12 +292,18 @@
     });
     // Create handler
     form.querySelector('#dm-create').onclick = async () => {
-      const name = (form.querySelector('#dm-name').value || '').trim();
-      const desc = (form.querySelector('#dm-desc').value || '').trim();
-      const type = parseInt(form.querySelector('#dm-type').value, 10);
+      const defaults = {
+        title: 'Create Dataset',
+        name: (form.querySelector('#dm-name').value || '').trim(),
+        description: (form.querySelector('#dm-desc').value || '').trim(),
+        target_type_id: 1,
+      };
+      const result = await showDatasetModal(defaults);
+      if (!result) return;
+      const { name, description, target_type_id } = result;
       if (!name) { toast('Name required'); return; }
       try {
-        const created = await createDataset(projectId, name, desc, type);
+        const created = await createDataset(projectId, name, description, target_type_id);
         await populateDatasetSelect(String(created.id));
         await renderDatasetManager();
         toast('Dataset created');
@@ -666,13 +671,9 @@
       sel = prompt(`Select a dataset by number or type 'new' to create:\n${dsChoices || '(none yet)'}`);
       let datasetId;
       if (sel && sel.toLowerCase() === 'new') {
-        const dsName = prompt('New dataset name:');
-        if (!dsName) return;
-        const dsDesc = prompt('Description (optional):') || '';
-        const pickedType = await chooseTargetType(1);
-        if (pickedType == null) return;
-        const targetTypeId = pickedType;
-        const createdDs = await createDataset(projectId, dsName, dsDesc, targetTypeId);
+        const modalRes = await showDatasetModal({ title: 'Create Dataset', name: '', description: '', target_type_id: 1 });
+        if (!modalRes) return;
+        const createdDs = await createDataset(projectId, modalRes.name, modalRes.description, modalRes.target_type_id);
         datasetId = createdDs.id;
         // Persist selection
         state.dataset_id = datasetId;
