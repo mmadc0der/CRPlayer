@@ -15,6 +15,39 @@
                 <div class="progress-bar">
                     <div class="progress-fill" id="progress-fill"></div>
                 </div>
+    <!-- Project Management Modal -->
+    <div id="project-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
+        <div class="modal__backdrop"></div>
+        <div class="modal__window">
+            <div class="modal__header">
+                <h3 id="project-modal-title">Manage Projects</h3>
+                <button class="modal__close" data-modal-close>×</button>
+            </div>
+            <div class="modal__body" id="project-modal-body">
+                <!-- Filled by JS -->
+            </div>
+            <div class="modal__footer">
+                <button class="btn" data-modal-close>Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dataset Management Modal -->
+    <div id="dataset-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="dataset-modal-title">
+        <div class="modal__backdrop"></div>
+        <div class="modal__window">
+            <div class="modal__header">
+                <h3 id="dataset-modal-title">Manage Datasets</h3>
+                <button class="modal__close" data-modal-close>×</button>
+            </div>
+            <div class="modal__body" id="dataset-modal-body">
+                <!-- Filled by JS -->
+            </div>
+            <div class="modal__footer">
+                <button class="btn" data-modal-close>Close</button>
+            </div>
+        </div>
+    </div>
                 <p id="progress-text">0% complete</p>
             </div>
         </div>
@@ -31,7 +64,6 @@
                 <select id="dataset-select" class="input" style="min-width: 220px;"></select>
                 <button id="manage-datasets" class="btn">Manage</button>
                 <div style="flex:1 1 auto"></div>
-                <button id="refresh-sessions" class="btn">Refresh</button>
                 <button id="reindex-sessions" class="btn">Reindex</button>
             </div>
             <div id="session-list" class="selector__list">

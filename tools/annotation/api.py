@@ -25,11 +25,15 @@ from db.indexer import reindex_sessions
 from db.projects import (
     list_projects as db_list_projects,
     create_project as db_create_project,
+    update_project as db_update_project,
+    delete_project as db_delete_project,
     list_datasets as db_list_datasets,
     create_dataset as db_create_dataset,
     get_dataset as db_get_dataset,
     dataset_progress as db_dataset_progress,
     get_dataset_by_name as db_get_dataset_by_name,
+    update_dataset as db_update_dataset,
+    delete_dataset as db_delete_dataset,
 )
 import sqlite3
 from db.datasets import enroll_session_frames as db_enroll_session_frames, list_labeled as db_list_labeled
@@ -50,6 +54,47 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             return jsonify(sessions)
         except Exception as e:
             err = ErrorResponse(code='sessions_error', message='Failed to discover sessions', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/projects/<int:project_id>', methods=['PUT'])
+    def api_update_project(project_id: int):
+        try:
+            payload = request.get_json(force=True) or {}
+            name = payload.get('name')
+            description = payload.get('description')
+            conn = get_connection()
+            init_db(conn)
+            # ensure exists
+            exists = conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone()
+            if not exists:
+                err = ErrorResponse(code='not_found', message='Project not found')
+                return jsonify(err.dict()), 404
+            db_update_project(conn, project_id, name, description)
+            conn.commit()
+            row = conn.execute("SELECT id, name, description, created_at FROM projects WHERE id = ?", (project_id,)).fetchone()
+            return jsonify(dict(row))
+        except sqlite3.IntegrityError as e:
+            err = ErrorResponse(code='conflict', message='Project name already exists', details={'error': str(e)})
+            return jsonify(err.dict()), 409
+        except Exception as e:
+            err = ErrorResponse(code='update_project_error', message='Failed to update project', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/projects/<int:project_id>', methods=['DELETE'])
+    def api_delete_project(project_id: int):
+        try:
+            conn = get_connection()
+            init_db(conn)
+            # Optionally, enforce no datasets under project before delete
+            cnt = conn.execute("SELECT COUNT(1) FROM datasets WHERE project_id = ?", (project_id,)).fetchone()[0]
+            if cnt:
+                err = ErrorResponse(code='conflict', message='Project has datasets; delete them first')
+                return jsonify(err.dict()), 409
+            n = db_delete_project(conn, project_id)
+            conn.commit()
+            return jsonify({'deleted': int(n)})
+        except Exception as e:
+            err = ErrorResponse(code='delete_project_error', message='Failed to delete project', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
     @bp.route('/api/reindex', methods=['POST'])
@@ -157,6 +202,52 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 raise
         except Exception as e:
             err = ErrorResponse(code='create_dataset_error', message='Failed to create dataset', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>', methods=['PUT'])
+    def api_update_dataset(dataset_id: int):
+        try:
+            payload = request.get_json(force=True) or {}
+            name = payload.get('name')
+            description = payload.get('description')
+            ttid = payload.get('target_type_id')
+            ttid_val = None
+            if ttid is not None:
+                ttid_val = int(ttid)
+                if ttid_val not in (0, 1, 2):
+                    err = ErrorResponse(code='bad_request', message='target_type_id must be 0, 1, or 2')
+                    return jsonify(err.dict()), 400
+            conn = get_connection()
+            init_db(conn)
+            existing = db_get_dataset(conn, dataset_id)
+            if not existing:
+                err = ErrorResponse(code='not_found', message='Dataset not found')
+                return jsonify(err.dict()), 404
+            db_update_dataset(conn, dataset_id, name=name, description=description, target_type_id=ttid_val)
+            conn.commit()
+            updated = db_get_dataset(conn, dataset_id)
+            return jsonify(updated)
+        except sqlite3.IntegrityError as e:
+            err = ErrorResponse(code='conflict', message='Dataset name already exists in project', details={'error': str(e)})
+            return jsonify(err.dict()), 409
+        except Exception as e:
+            err = ErrorResponse(code='update_dataset_error', message='Failed to update dataset', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>', methods=['DELETE'])
+    def api_delete_dataset(dataset_id: int):
+        try:
+            conn = get_connection()
+            init_db(conn)
+            cnt = conn.execute("SELECT COUNT(1) FROM annotations WHERE dataset_id = ?", (dataset_id,)).fetchone()[0]
+            if cnt:
+                err = ErrorResponse(code='conflict', message='Dataset has annotations; cannot delete')
+                return jsonify(err.dict()), 409
+            n = db_delete_dataset(conn, dataset_id)
+            conn.commit()
+            return jsonify({'deleted': int(n)})
+        except Exception as e:
+            err = ErrorResponse(code='delete_dataset_error', message='Failed to delete dataset', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
     # Enroll session frames into dataset (creates annotations rows with status=unlabeled)

@@ -27,6 +27,185 @@
     return '';
   })();
 
+  // Modal helpers
+  function getModal(id) { return document.getElementById(id); }
+  function openModal(id) {
+    const m = getModal(id);
+    if (!m) return;
+    m.classList.remove('hidden');
+    m.querySelectorAll('[data-modal-close]').forEach(btn => btn.onclick = () => closeModal(id));
+    const backdrop = m.querySelector('.modal__backdrop');
+    if (backdrop) backdrop.onclick = () => closeModal(id);
+  }
+  function closeModal(id) {
+    const m = getModal(id);
+    if (m) m.classList.add('hidden');
+  }
+
+  // Project Management UI
+  async function renderProjectManager() {
+    const body = document.getElementById('project-modal-body');
+    if (!body) return;
+    body.innerHTML = '';
+    // Create form
+    const form = document.createElement('div');
+    form.className = 'm-row';
+    form.innerHTML = `
+      <input class="input m-input" id="pm-name" placeholder="Project name">
+      <input class="input m-input" id="pm-desc" placeholder="Description (optional)">
+      <button class="btn" id="pm-create">Create</button>
+    `;
+    body.appendChild(form);
+    const listWrap = document.createElement('div');
+    listWrap.className = 'm-list';
+    body.appendChild(listWrap);
+    const projects = await listProjects().catch(() => []);
+    projects.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'm-item';
+      row.innerHTML = `
+        <div>
+          <div class="m-item__title">${p.name}</div>
+          <div class="m-item__meta">${p.description || ''}</div>
+        </div>
+        <div class="m-row">
+          <button class="btn" data-edit>Rename</button>
+          <button class="btn" data-delete>Delete</button>
+        </div>
+      `;
+      // actions
+      row.querySelector('[data-edit]').onclick = async () => {
+        const newName = prompt('New project name', p.name) || p.name;
+        const newDesc = prompt('Description (optional)', p.description || '') || '';
+        try {
+          await apiPut(`projects/${p.id}`, { name: newName, description: newDesc });
+          await populateProjectSelect(newName);
+          await renderProjectManager();
+          toast('Project updated');
+        } catch { toast('Update failed'); }
+      };
+      row.querySelector('[data-delete]').onclick = async () => {
+        if (!confirm(`Delete project '${p.name}'? (must have no datasets)`)) return;
+        try {
+          await apiDelete(`projects/${p.id}`);
+          await populateProjectSelect();
+          await renderProjectManager();
+          toast('Project deleted');
+        } catch (e) { toast('Delete failed'); }
+      };
+      listWrap.appendChild(row);
+    });
+    // Create handler
+    form.querySelector('#pm-create').onclick = async () => {
+      const name = (form.querySelector('#pm-name').value || '').trim();
+      const desc = (form.querySelector('#pm-desc').value || '').trim();
+      if (!name) { toast('Name required'); return; }
+      try {
+        await createProject(name, desc);
+        await populateProjectSelect(name);
+        await renderProjectManager();
+        toast('Project created');
+      } catch { toast('Create failed'); }
+    };
+  }
+
+  // Dataset Management UI
+  async function renderDatasetManager() {
+    const body = document.getElementById('dataset-modal-body');
+    if (!body) return;
+    body.innerHTML = '';
+    const projectId = getSelectedProjectId();
+    if (!projectId) { body.innerHTML = '<div class="m-item__meta">Select a project first.</div>'; return; }
+    // Create form
+    const form = document.createElement('div');
+    form.className = 'm-row';
+    form.innerHTML = `
+      <input class="input m-input" id="dm-name" placeholder="Dataset name">
+      <input class="input m-input" id="dm-desc" placeholder="Description (optional)">
+      <select class="input" id="dm-type">
+        <option value="1">Single-label Classification</option>
+        <option value="2">Multi-label Classification</option>
+        <option value="0">Regression</option>
+      </select>
+      <button class="btn" id="dm-create">Create</button>
+    `;
+    body.appendChild(form);
+    const listWrap = document.createElement('div');
+    listWrap.className = 'm-list';
+    body.appendChild(listWrap);
+    const datasets = await listDatasets(projectId).catch(() => []);
+    datasets.forEach(d => {
+      const row = document.createElement('div');
+      row.className = 'm-item';
+      const typeLabel = d.target_type_name || `Type ${d.target_type_id}`;
+      row.innerHTML = `
+        <div>
+          <div class="m-item__title">${d.name}</div>
+          <div class="m-item__meta">${d.description || ''} · ${typeLabel}</div>
+        </div>
+        <div class="m-row">
+          <button class="btn" data-edit>Edit</button>
+          <button class="btn" data-delete>Delete</button>
+          <button class="btn" data-select>Select</button>
+        </div>
+      `;
+      row.querySelector('[data-edit]').onclick = async () => {
+        const newName = prompt('Dataset name', d.name) || d.name;
+        const newDesc = prompt('Description (optional)', d.description || '') || '';
+        const newType = prompt('Target type (0=Regression,1=Single,2=Multi)', String(d.target_type_id)) || String(d.target_type_id);
+        const target_type_id = Math.max(0, Math.min(2, parseInt(newType, 10) || d.target_type_id));
+        try {
+          await apiPut(`datasets/${d.id}`, { name: newName, description: newDesc, target_type_id });
+          await populateDatasetSelect(String(d.id));
+          await renderDatasetManager();
+          toast('Dataset updated');
+        } catch { toast('Update failed'); }
+      };
+      row.querySelector('[data-delete]').onclick = async () => {
+        if (!confirm(`Delete dataset '${d.name}'?`)) return;
+        try {
+          await apiDelete(`datasets/${d.id}`);
+          await populateDatasetSelect();
+          await renderDatasetManager();
+          toast('Dataset deleted');
+        } catch { toast('Delete failed'); }
+      };
+      row.querySelector('[data-select]').onclick = async () => {
+        // Select this dataset in toolbar
+        const dsSel = els.datasetSelect();
+        if (dsSel) {
+          dsSel.value = String(d.id);
+          const opt = Array.from(dsSel.options).find(o => o.value === String(d.id));
+          state.dataset_id = d.id;
+          state.dataset_name = d.name;
+          if (opt) {
+            state.dataset_name = opt.dataset.datasetName || d.name;
+          }
+          if (state.session_id && state.dataset_id) {
+            try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
+          }
+          refreshProgress();
+          closeModal('dataset-modal');
+          toast('Dataset selected');
+        }
+      };
+      listWrap.appendChild(row);
+    });
+    // Create handler
+    form.querySelector('#dm-create').onclick = async () => {
+      const name = (form.querySelector('#dm-name').value || '').trim();
+      const desc = (form.querySelector('#dm-desc').value || '').trim();
+      const type = parseInt(form.querySelector('#dm-type').value, 10);
+      if (!name) { toast('Name required'); return; }
+      try {
+        const created = await createDataset(projectId, name, desc, type);
+        await populateDatasetSelect(String(created.id));
+        await renderDatasetManager();
+        toast('Dataset created');
+      } catch { toast('Create failed'); }
+    };
+  }
+
   function withBase(p) { return `${APP_BASE}${p}`; }
 
   // App state
@@ -86,6 +265,24 @@
     const target = qs ? `${withBase(full)}?${qs}` : withBase(full);
     console.log(target);
     const res = await fetch(target);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  }
+
+  async function apiPut(url, body) {
+    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
+    const res = await fetch(withBase(full), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  }
+
+  async function apiDelete(url) {
+    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
+    const res = await fetch(withBase(full), { method: 'DELETE' });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   }
@@ -710,21 +907,8 @@
     const manageBtn = document.getElementById('manage-projects');
     if (manageBtn) {
       manageBtn.addEventListener('click', async () => {
-        try {
-          const action = prompt("Type 'new' to create a project or 'rename' to refresh list:", 'new');
-          if (action && action.toLowerCase() === 'new') {
-            const name = prompt('New project name:');
-            if (!name) return;
-            const desc = prompt('Description (optional):') || '';
-            await createProject(name, desc);
-            await populateProjectSelect(name);
-            toast('Project created');
-          } else {
-            await populateProjectSelect();
-          }
-        } catch {
-          toast('Project action failed');
-        }
+        await renderProjectManager();
+        openModal('project-modal');
       });
     }
     // Dataset selector
@@ -743,25 +927,8 @@
     const dsManageBtn = document.getElementById('manage-datasets');
     if (dsManageBtn) {
       dsManageBtn.addEventListener('click', async () => {
-        try {
-          const projectId = getSelectedProjectId();
-          if (!projectId) { toast('Select a project first'); return; }
-          const action = prompt("Type 'new' to create a dataset or anything else to refresh list:", 'new');
-          if (action && action.toLowerCase() === 'new') {
-            const dsName = prompt('New dataset name:');
-            if (!dsName) return;
-            const dsDesc = prompt('Description (optional):') || '';
-            const typeStr = prompt('Target type (1=Regression, 2=Single-label, 3=Multi-label):', '2') || '2';
-            const targetTypeId = Math.max(1, Math.min(3, parseInt(typeStr, 10) || 2));
-            const created = await createDataset(projectId, dsName, dsDesc, targetTypeId);
-            await populateDatasetSelect(String(created.id));
-            toast('Dataset created');
-          } else {
-            await populateDatasetSelect();
-          }
-        } catch {
-          toast('Dataset action failed');
-        }
+        await renderDatasetManager();
+        openModal('dataset-modal');
       });
     }
     els.addCategoryBtn().addEventListener('click', () => {
