@@ -58,9 +58,10 @@
     const title = opts.title || 'Create Dataset';
     const wrap = document.createElement('div');
     wrap.className = 'modal';
+    wrap.setAttribute('style', 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;');
     wrap.innerHTML = `
-      <div class="modal__backdrop"></div>
-      <div class="modal__content" style="max-width:520px">
+      <div class="modal__backdrop" style="position:absolute;inset:0;"></div>
+      <div class="modal__content" style="position:relative;max-width:520px">
         <div class="modal__header"><h3>${title}</h3></div>
         <div class="modal__body" style="display:flex;flex-direction:column;gap:8px">
           <input class="input" id="ds-name" placeholder="Dataset name" value="${opts.name || ''}">
@@ -84,6 +85,8 @@
     const preferred = (opts.target_type_id != null) ? String(opts.target_type_id) : (types.find(t => String(t.id) === '1') ? '1' : String(types[0].id));
     typeSel.value = preferred;
     wrap.classList.remove('hidden');
+    const contentEl = wrap.querySelector('.modal__content');
+    if (contentEl) contentEl.addEventListener('click', (e) => e.stopPropagation());
     return await new Promise((resolve) => {
       const cleanup = () => { try { document.body.removeChild(wrap); } catch {} };
       const cancel = () => { cleanup(); resolve(null); };
@@ -108,9 +111,10 @@
       // Build transient modal
       const wrap = document.createElement('div');
       wrap.className = 'modal';
+      wrap.setAttribute('style', 'position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;');
       wrap.innerHTML = `
-        <div class="modal__backdrop"></div>
-        <div class="modal__content" style="max-width:420px">
+        <div class="modal__backdrop" style="position:absolute;inset:0;"></div>
+        <div class="modal__content" style="position:relative;max-width:420px">
           <div class="modal__header"><h3>Select Target Type</h3></div>
           <div class="modal__body">
             <select id="tt-select" class="input" style="width:100%"></select>
@@ -130,6 +134,8 @@
       });
       sel.value = String(defaultId);
       wrap.classList.remove('hidden');
+      const contentEl = wrap.querySelector('.modal__content');
+      if (contentEl) contentEl.addEventListener('click', (e) => e.stopPropagation());
       // Return promise for selection
       return await new Promise((resolve) => {
         const cleanup = () => { try { document.body.removeChild(wrap); } catch {} };
