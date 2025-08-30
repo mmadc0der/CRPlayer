@@ -37,7 +37,11 @@ from db.projects import (
 )
 import sqlite3
 from db.datasets import enroll_session_frames as db_enroll_session_frames, list_labeled as db_list_labeled
-from db.classes import list_dataset_classes as db_list_dataset_classes, sync_dataset_classes as db_sync_dataset_classes
+from db.classes import (
+    list_dataset_classes as db_list_dataset_classes,
+    sync_dataset_classes as db_sync_dataset_classes,
+    get_or_create_dataset_class as db_get_or_create_dataset_class,
+)
 
 
 def create_annotation_api(session_manager: SessionManager) -> Blueprint:
@@ -178,6 +182,20 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             return jsonify(db_list_datasets(conn, project_id))
         except Exception as e:
             err = ErrorResponse(code='datasets_error', message='Failed to list datasets', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>', methods=['GET'])
+    def api_get_dataset(dataset_id: int):
+        try:
+            conn = get_connection()
+            init_db(conn)
+            d = db_get_dataset(conn, dataset_id)
+            if not d:
+                err = ErrorResponse(code='not_found', message='Dataset not found')
+                return jsonify(err.dict()), 404
+            return jsonify(d)
+        except Exception as e:
+            err = ErrorResponse(code='dataset_error', message='Failed to get dataset', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
     @bp.route('/api/projects/<int:project_id>/datasets', methods=['POST'])
@@ -461,11 +479,25 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             if frame_id is None and payload.frame_idx is not None:
                 frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
                 frame_id = str(frame['frame_id'])
+            # Resolve class_id if only category_name was provided
+            class_id = payload.class_id
+            if class_id is None and payload.category_name:
+                try:
+                    conn = get_connection()
+                    init_db(conn)
+                    cls = db_get_or_create_dataset_class(conn, int(payload.dataset_id), str(payload.category_name))
+                    conn.commit()
+                    class_id = int(cls['id'])
+                except Exception as _:
+                    class_id = None
+            if class_id is None:
+                err = ErrorResponse(code='bad_request', message='class_id or category_name must resolve to a class')
+                return jsonify(err.dict()), 400
             res = annotation_service.save_single_label(
                 session_id=payload.session_id,
                 dataset_id=payload.dataset_id,
                 frame_id=str(frame_id),
-                class_id=payload.class_id,
+                class_id=int(class_id),
                 override_settings=payload.override_settings,
             )
             return jsonify(res)
@@ -485,11 +517,34 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             if frame_id is None and payload.frame_idx is not None:
                 frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
                 frame_id = str(frame['frame_id'])
+            # Resolve any provided category_names into class_ids
+            class_ids = list(payload.class_ids or [])
+            if getattr(payload, 'category_names', None):
+                try:
+                    conn = get_connection()
+                    init_db(conn)
+                    for nm in payload.category_names or []:
+                        if not nm:
+                            continue
+                        cls = db_get_or_create_dataset_class(conn, int(payload.dataset_id), str(nm))
+                        class_ids.append(int(cls['id']))
+                    # Deduplicate while preserving order
+                    seen = set()
+                    dedup: list[int] = []
+                    for cid in class_ids:
+                        if cid in seen:
+                            continue
+                        seen.add(cid)
+                        dedup.append(int(cid))
+                    class_ids = dedup
+                    conn.commit()
+                except Exception:
+                    pass
             res = annotation_service.save_multilabel(
                 session_id=payload.session_id,
                 dataset_id=payload.dataset_id,
                 frame_id=str(frame_id),
-                class_ids=payload.class_ids,
+                class_ids=class_ids,
                 override_settings=payload.override_settings,
             )
             return jsonify(res)

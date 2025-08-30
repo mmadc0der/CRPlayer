@@ -87,6 +87,7 @@ class SaveMultilabelRequest(BaseModel):
     frame_id: Optional[str] = None
     frame_idx: Optional[int] = None
     class_ids: List[int]
+    category_names: Optional[List[str]] = None
     override_settings: Optional[Dict[str, Any]] = None
 
     @model_validator(mode='after')

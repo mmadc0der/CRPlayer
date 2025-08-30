@@ -71,6 +71,20 @@ class AnnotationService:
         conn = self._conn()
         sid, fid = self._resolve_ids(conn, session_id, frame_id)
         ensure_membership(conn, dataset_id, fid)
+        # Optional: enforce bounds if provided in effective settings
+        try:
+            eff = self._settings.get_effective_settings(dataset_id, session_id, frame_db_id=fid)
+            reg = eff.get('regression') if isinstance(eff, dict) else None
+            if isinstance(reg, dict):
+                vmin = reg.get('min')
+                vmax = reg.get('max')
+                if vmin is not None and value < float(vmin):
+                    raise ValueError(f"regression value {value} < min {vmin}")
+                if vmax is not None and value > float(vmax):
+                    raise ValueError(f"regression value {value} > max {vmax}")
+        except Exception:
+            # Do not fail on settings retrieval errors; only enforce when valid bounds are present
+            pass
         upsert_regression(conn, dataset_id, fid, float(value))
         if override_settings is not None:
             repo_set_annotation_frame_settings(conn, dataset_id, fid, override_settings)
