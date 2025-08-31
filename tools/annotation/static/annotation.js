@@ -787,13 +787,16 @@ if (!select) return;
 select.innerHTML = '';
 let projects = [];
 try { projects = await listProjects(); } catch { projects = []; }
-// Fallback default option if none
+// No projects: prompt user to create the first one via modal
 if (!projects || projects.length === 0) {
-  const opt = document.createElement('option');
-  opt.value = '0'; opt.textContent = 'default'; opt.dataset.projectId = '0'; opt.dataset.projectName = 'default';
-  select.appendChild(opt);
-  state.project_id = 0;
-  state.project_name = 'default';
+  state.project_id = null;
+  state.project_name = null;
+  // Keep selector empty and open project creation modal
+  try {
+    await renderProjectManager();
+    openModal('project-modal');
+    toast('Create your first project');
+  } catch {}
   return;
 }
 projects.forEach(p => {
