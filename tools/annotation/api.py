@@ -366,7 +366,53 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
         try:
             conn = get_connection()
             init_db(conn)
-            return jsonify(db_dataset_progress(conn, dataset_id))
+            # Base progress
+            base = db_dataset_progress(conn, dataset_id)
+            # Enrich with dataset meta
+            d = db_get_dataset(conn, dataset_id)
+            name = d.get('name') if d else None
+            try:
+                row = conn.execute("SELECT COUNT(1) FROM dataset_classes WHERE dataset_id = ?", (dataset_id,)).fetchone()
+                classes_count = int(row[0]) if row and row[0] is not None else 0
+            except Exception:
+                classes_count = 0
+            # Per-session breakdown
+            sess_rows = conn.execute(
+                """
+                SELECT s.session_id AS session_id,
+                       COUNT(1) AS total,
+                       SUM(CASE WHEN a.status = 'labeled' THEN 1 ELSE 0 END) AS labeled
+                FROM annotations a
+                JOIN frames f   ON f.id = a.frame_id
+                JOIN sessions s ON s.id = f.session_id
+                WHERE a.dataset_id = ?
+                GROUP BY s.session_id
+                ORDER BY s.session_id
+                """,
+                (dataset_id,),
+            ).fetchall()
+            sessions = []
+            for r in sess_rows or []:
+                sid = str(r['session_id'] if isinstance(r, dict) else r[0])
+                total = int(r['total'] if isinstance(r, dict) else r[1])
+                labeled = int((r['labeled'] if isinstance(r, dict) else r[2]) or 0)
+                sessions.append({
+                    'session_id': sid,
+                    'total': total,
+                    'labeled': labeled,
+                    'unlabeled': int(max(0, total - labeled)),
+                })
+            out = {
+                # Back-compat keys
+                'total': int(base.get('total') or 0),
+                'labeled': int(base.get('labeled') or base.get('annotated') or 0),
+                'unlabeled': int(max(0, int(base.get('total') or 0) - int(base.get('labeled') or base.get('annotated') or 0))),
+                # Enriched
+                'name': name,
+                'classes_count': int(classes_count),
+                'sessions': sessions,
+            }
+            return jsonify(out)
         except Exception as e:
             err = ErrorResponse(code='progress_error', message='Failed to get dataset progress', details={'error': str(e)})
             return jsonify(err.dict()), 500
@@ -376,7 +422,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
         """Aggregate progress across all datasets under a project.
 
         Returns:
-          { total, labeled, unlabeled }
+          { total, labeled, unlabeled, datasets?: [ { id, name, classes_count, total, labeled, unlabeled } ] }
         """
         try:
             conn = get_connection()
@@ -402,11 +448,35 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             ).fetchone()
             total = int(total_row[0] if total_row and total_row[0] is not None else 0)
             labeled = int(labeled_row[0] if labeled_row and labeled_row[0] is not None else 0)
-            return jsonify({
+            result = {
                 'total': total,
                 'labeled': labeled,
                 'unlabeled': int(max(0, total - labeled)),
-            })
+            }
+            # Enrich with per-dataset summaries
+            try:
+                ds_list = db_list_datasets(conn, project_id)
+                datasets = []
+                for d in ds_list:
+                    did = int(d['id'])
+                    prog = db_dataset_progress(conn, did)
+                    try:
+                        row = conn.execute("SELECT COUNT(1) FROM dataset_classes WHERE dataset_id = ?", (did,)).fetchone()
+                        classes_count = int(row[0]) if row and row[0] is not None else 0
+                    except Exception:
+                        classes_count = 0
+                    datasets.append({
+                        'id': did,
+                        'name': d.get('name'),
+                        'classes_count': classes_count,
+                        'total': int(prog.get('total') or 0),
+                        'labeled': int(prog.get('labeled') or prog.get('annotated') or 0),
+                        'unlabeled': int(max(0, int(prog.get('total') or 0) - int(prog.get('labeled') or prog.get('annotated') or 0))),
+                    })
+                result['datasets'] = datasets
+            except Exception:
+                pass
+            return jsonify(result)
         except Exception as e:
             err = ErrorResponse(code='progress_error', message='Failed to get project progress', details={'error': str(e)})
             return jsonify(err.dict()), 500

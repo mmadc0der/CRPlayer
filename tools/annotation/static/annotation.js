@@ -31,46 +31,95 @@
   async function refreshStats() {
     const grid = document.getElementById('stats-grid');
     if (!grid) return;
+    const req = ++statsRequestEpoch; // mark this invocation as the latest
     grid.innerHTML = '';
 
-    // Always try dataset progress when dataset selected
-    let ds = null;
-    if (state.dataset_id) {
-      try { ds = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/progress`); } catch {}
-    }
-    // Project-level progress if we know selected project
-    let pj = null;
-    if (state.project_id != null) {
-      try { pj = await apiGet(`projects/${encodeURIComponent(state.project_id)}/progress`); } catch {}
-    }
+    // Fetch project + dataset stats in parallel
+    const fetches = [];
+    const hasProject = state.project_id != null;
+    const hasDataset = !!state.dataset_id;
+    if (hasProject) fetches.push(apiGet(`projects/${encodeURIComponent(state.project_id)}/progress`).catch(() => null)); else fetches.push(Promise.resolve(null));
+    if (hasDataset) fetches.push(apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/progress`).catch(() => null)); else fetches.push(Promise.resolve(null));
+    const [pj, ds] = await Promise.all(fetches);
 
-    const items = [];
-    if (ds && typeof ds === 'object') {
-      const labeled = typeof ds.labeled === 'number' ? ds.labeled : (typeof ds.annotated === 'number' ? ds.annotated : 0);
-      const total = typeof ds.total === 'number' ? ds.total : 0;
-      const pct = total > 0 ? (labeled / total) * 100 : 0;
-      items.push({ title: 'Dataset Labeled', value: `${labeled}/${total}`, subtitle: `${pct.toFixed(1)}%` });
-    }
-    if (pj && typeof pj === 'object') {
-      const labeled = typeof pj.labeled === 'number' ? pj.labeled : 0;
-      const total = typeof pj.total === 'number' ? pj.total : 0;
-      const pct = total > 0 ? (labeled / total) * 100 : 0;
-      items.push({ title: 'Project Labeled', value: `${labeled}/${total}`, subtitle: `${pct.toFixed(1)}%` });
-    }
+    // Drop stale responses to avoid duplicate rendering
+    if (req !== statsRequestEpoch) return;
 
-    if (items.length === 0) {
-      grid.innerHTML = '<div class="selector__meta">No stats yet</div>';
-      return;
-    }
-    items.forEach(it => {
+    // Helper to build a stat card
+    const addCard = (title, value, subtitle = '') => {
       const card = document.createElement('div');
       card.className = 'stat-item';
-      const h = document.createElement('div'); h.style.fontSize = '12px'; h.style.color = 'var(--color-text-muted)'; h.textContent = it.title;
-      const v = document.createElement('div'); v.style.fontSize = '22px'; v.style.fontWeight = '600'; v.textContent = it.value;
-      const s = document.createElement('div'); s.style.marginTop = '4px'; s.style.color = 'var(--color-text-muted)'; s.textContent = it.subtitle;
+      const h = document.createElement('div'); h.style.fontSize = '12px'; h.style.color = 'var(--color-text-muted)'; h.textContent = title;
+      const v = document.createElement('div'); v.style.fontSize = '22px'; v.style.fontWeight = '600'; v.textContent = value;
+      const s = document.createElement('div'); s.style.marginTop = '4px'; s.style.color = 'var(--color-text-muted)'; s.textContent = subtitle;
       card.appendChild(h); card.appendChild(v); card.appendChild(s);
       grid.appendChild(card);
-    });
+    };
+
+    // Project summary
+    if (pj && typeof pj === 'object') {
+      const pTotal = typeof pj.total === 'number' ? pj.total : 0;
+      const pLabeled = typeof pj.labeled === 'number' ? pj.labeled : 0;
+      const pRem = Math.max(0, pTotal - pLabeled);
+      const pPct = pTotal > 0 ? (pLabeled / pTotal) * 100 : 0;
+      addCard('Project Labeled', `${pLabeled}/${pTotal}`, `${pPct.toFixed(1)}%`);
+      addCard('Project Remaining', `${pRem}`, 'frames');
+    }
+
+    // Per-dataset cards for this project (if provided by backend)
+    if (pj && Array.isArray(pj.datasets) && pj.datasets.length > 0) {
+      pj.datasets.forEach(dsum => {
+        const dTotal = typeof dsum.total === 'number' ? dsum.total : 0;
+        const dLabeled = typeof dsum.labeled === 'number' ? dsum.labeled : 0;
+        const dRem = Math.max(0, dTotal - dLabeled);
+        const dPct = dTotal > 0 ? (dLabeled / dTotal) * 100 : 0;
+        const title = `Dataset: ${dsum.name || dsum.id}`;
+        const subtitle = `Remaining ${dRem} • Classes ${Number(dsum.classes_count || 0)}`;
+        addCard(title, `${dLabeled}/${dTotal}`, `${dPct.toFixed(1)}% · ${subtitle}`);
+      });
+    }
+
+    // Selected dataset session breakdown (table)
+    if (ds && typeof ds === 'object') {
+      const dTotal = typeof ds.total === 'number' ? ds.total : 0;
+      const dLabeled = typeof ds.labeled === 'number' ? ds.labeled : (typeof ds.annotated === 'number' ? ds.annotated : 0);
+      const dRem = Math.max(0, dTotal - dLabeled);
+      const title = document.createElement('div');
+      title.className = 'selector__meta';
+      title.textContent = `Dataset: ${ds.name || state.dataset_name || state.dataset_id}`;
+      grid.appendChild(title);
+
+      const table = document.createElement('div');
+      table.style.display = 'grid';
+      table.style.gridTemplateColumns = '1fr repeat(3, auto)';
+      table.style.gap = '6px 12px';
+      table.style.alignItems = 'center';
+      const header = ['Session', 'Labeled', 'Total', 'Remaining'];
+      header.forEach((h, i) => {
+        const el = document.createElement('div');
+        el.style.fontWeight = '600';
+        el.style.color = 'var(--color-text-muted)';
+        el.textContent = h;
+        table.appendChild(el);
+      });
+      // First row: dataset total
+      const dsRow = [ 'Dataset total', String(dLabeled), String(dTotal), String(dRem) ];
+      dsRow.forEach((t) => { const el = document.createElement('div'); el.textContent = t; table.appendChild(el); });
+      // Following rows: per session
+      const sessions = Array.isArray(ds.sessions) ? ds.sessions : [];
+      sessions.forEach(s => {
+        const sL = typeof s.labeled === 'number' ? s.labeled : 0;
+        const sT = typeof s.total === 'number' ? s.total : 0;
+        const sR = Math.max(0, sT - sL);
+        const row = [ String(s.session_id || ''), String(sL), String(sT), String(sR) ];
+        row.forEach((t) => { const el = document.createElement('div'); el.textContent = t; table.appendChild(el); });
+      });
+      grid.appendChild(table);
+    }
+
+    if ((!pj || typeof pj !== 'object') && (!ds || typeof ds !== 'object')) {
+      grid.innerHTML = '<div class="selector__meta">No stats yet</div>';
+    }
   }
 
   // ---------- Core helpers (API, selectors, state) ----------
@@ -179,6 +228,8 @@
     const sid = state.session_id ? String(state.session_id) : 'global';
     return `annot:${sid}:${k}`;
   }
+  // Guard to avoid duplicate stats rendering from overlapping calls
+  let statsRequestEpoch = 0;
 
   function toast(msg) {
     try { console.log('[toast]', msg); } catch {}
