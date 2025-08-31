@@ -63,6 +63,39 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             err = ErrorResponse(code='target_types_error', message='Failed to list target types', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
+    # -------------------- Read annotation for a frame --------------------
+    @bp.route('/api/annotations/frame', methods=['GET'])
+    def api_get_annotation_for_frame():
+        """Return annotation info for a given frame (by session + idx) within a dataset.
+
+        Query params:
+          - session_id: external session identifier
+          - dataset_id: dataset numeric ID
+          - idx: zero-based frame index within the session
+        Response includes unified annotation row with effective_settings merged
+        from dataset-session settings and per-frame override settings.
+        """
+        try:
+            session_id = request.args.get('session_id', '')
+            dataset_id = int(request.args.get('dataset_id', '0'))
+            idx = int(request.args.get('idx', '-1'))
+            if not session_id or dataset_id <= 0 or idx < 0:
+                err = ErrorResponse(code='bad_request', message='session_id, dataset_id and idx are required')
+                return jsonify(err.dict()), 400
+        except Exception as e:
+            err = ErrorResponse(code='bad_request', message='Invalid query parameters', details={'error': str(e)})
+            return jsonify(err.dict()), 400
+
+        try:
+            # Resolve frame_id from idx
+            frame = session_service.get_frame_by_idx(session_id, idx)
+            frame_id = str(frame['frame_id'])
+            ann = annotation_service.get_annotation_db(session_id, dataset_id, frame_id)
+            return jsonify({'annotation': ann})
+        except Exception as e:
+            err = ErrorResponse(code='annotation_error', message='Failed to fetch annotation', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
     @bp.route('/api/sessions', methods=['GET'])
     def discover_sessions():
         try:

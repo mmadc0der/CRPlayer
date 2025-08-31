@@ -1501,7 +1501,21 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
 
       state.currentIdx = idx;
       const frame = data.frame || {};
-      const ann = data.annotation || {};
+      // Fetch annotation/effective settings for this frame so we can load notes
+      let ann = {};
+      try {
+        if (state.dataset_id) {
+          const annResp = await apiGet('annotations/frame', {
+            session_id: state.session_id,
+            dataset_id: state.dataset_id,
+            idx: idx,
+          });
+          if (annResp && annResp.annotation) ann = annResp.annotation;
+        }
+      } catch (e) {
+        // Non-fatal; continue without annotation payload
+        console.warn('Annotation fetch failed', e);
+      }
 
       // Compute total frames only once from first frame request (we don't have a stats endpoint)
       // We can infer totalFrames from last session discovery payload later; for now keep it if already set
@@ -1538,7 +1552,13 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
           });
         }
       }
-      const notesVal = ann?.notes || ann?.annotations?.notes || '';
+      let notesVal = '';
+      // Prefer effective_settings.notes; fallback to legacy override_settings.notes if present
+      if (ann && ann.effective_settings && typeof ann.effective_settings.notes === 'string') {
+        notesVal = ann.effective_settings.notes;
+      } else if (ann && ann.override_settings && typeof ann.override_settings.notes === 'string') {
+        notesVal = ann.override_settings.notes;
+      }
       els.notes().value = notesVal;
 
       // Navigation UI text and buttons
