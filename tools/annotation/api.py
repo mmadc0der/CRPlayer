@@ -341,15 +341,25 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
     # Enrollments inspection helpers
     @bp.route('/api/datasets/<int:dataset_id>/enrollments', methods=['GET'])
     def api_list_enrollments(dataset_id: int):
-        """Return list of session_ids enrolled in the dataset (based on annotations rows)."""
+        """Return list of external session_ids enrolled in the dataset.
+
+        We infer enrollment from presence of rows in annotations for frames belonging
+        to a session within the given dataset. The annotations table does not carry
+        a session_id column, so we join through frames -> sessions.
+        """
         try:
             conn = get_connection()
             init_db(conn)
             rows = conn.execute(
-                "SELECT DISTINCT session_id FROM annotations WHERE dataset_id = ?",
+                """
+                SELECT DISTINCT s.session_id
+                FROM annotations a
+                JOIN frames f   ON f.id = a.frame_id
+                JOIN sessions s ON s.id = f.session_id
+                WHERE a.dataset_id = ?
+                """,
                 (dataset_id,),
             ).fetchall()
-            # session_id column is stored as text (original session_id), normalize to string
             out = [str(r[0]) for r in rows if r and r[0] is not None]
             return jsonify(out)
         except Exception as e:

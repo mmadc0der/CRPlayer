@@ -23,6 +23,9 @@
         if (sIdx > 0) return u.pathname.substring(0, sIdx);
         if (u.pathname.startsWith('/annotation')) return '/annotation';
       }
+    } catch {}
+    return '';
+  })();
 
   // ---------- Multi-label UI ----------
   function renderMultilabelPanel() {
@@ -148,9 +151,27 @@
       return false;
     }
   }
+
+  // Simple cookie helpers for persistence across reloads (complementing localStorage)
+  function setCookie(name, value, days = 365) {
+    try {
+      const d = new Date();
+      d.setTime(d.getTime() + (days*24*60*60*1000));
+      const expires = 'expires=' + d.toUTCString();
+      document.cookie = `${encodeURIComponent(name)}=${encodeURIComponent(value)};${expires};path=/`;
     } catch {}
-    return '';
-  })();
+  }
+  function getCookie(name) {
+    try {
+      const key = encodeURIComponent(name) + '=';
+      const ca = document.cookie.split(';');
+      for (let c of ca) {
+        while (c.charAt(0) === ' ') c = c.substring(1);
+        if (c.indexOf(key) === 0) return decodeURIComponent(c.substring(key.length, c.length));
+      }
+    } catch {}
+    return null;
+  }
 
   // Modal helpers
   function getModal(id) { return document.getElementById(id); }
@@ -776,9 +797,11 @@
       select.appendChild(opt);
     });
     // Choose preferred or saved project
-    const saved = prefName || (localStorage.getItem('currentProject') || 'default');
+    const saved = prefName || (localStorage.getItem('currentProject') || getCookie('currentProject') || 'default');
     const match = Array.from(select.options).find(o => o.value === saved) || select.options[0];
     if (match) { select.value = match.value; state.project_name = match.value; }
+    // Persist to cookies when selected
+    try { setCookie('currentProject', state.project_name); } catch {}
   }
 
   // Use backend-provided target_type_name; no frontend mapping to avoid drift
@@ -824,7 +847,10 @@
           }
         }
       } catch {}
-      const targetVal = prefId || savedId || String(datasets[0].id);
+      // Fallback to cookie if no per-session saved dataset
+      let cookieId = getCookie && getCookie('currentDatasetId');
+      if (cookieId && !datasets.some(d => String(d.id) === String(cookieId))) cookieId = null;
+      const targetVal = prefId || savedId || cookieId || String(datasets[0].id);
       select.value = targetVal;
       const selOpt = select.selectedOptions[0];
       state.dataset_id = Number(select.value);
@@ -832,6 +858,10 @@
     } else {
       state.dataset_id = null;
       state.dataset_name = null;
+    }
+    // Persist to cookies when selected
+    if (state.dataset_id) {
+      try { setCookie('currentDatasetId', String(state.dataset_id)); } catch {}
     }
   }
 
@@ -859,20 +889,36 @@
       `;
       // Card click behavior
       div.addEventListener('click', async () => {
+        const sel = els.projectSelect();
+        const proj = sel && sel.value ? sel.value : state.project_name || 'default';
+        const dsSel = els.datasetSelect();
+        if (dsSel && dsSel.value) {
+          state.dataset_id = Number(dsSel.value);
+          state.dataset_name = (dsSel.selectedOptions[0] && dsSel.selectedOptions[0].dataset.datasetName) || null;
+        }
         if (isEnrolled) {
-          const sel = els.projectSelect();
-          const proj = sel && sel.value ? sel.value : state.project_name || 'default';
-          const dsSel = els.datasetSelect();
-          if (dsSel && dsSel.value) {
-            state.dataset_id = Number(dsSel.value);
-            state.dataset_name = (dsSel.selectedOptions[0] && dsSel.selectedOptions[0].dataset.datasetName) || null;
-          }
           selectSession(s.session_id, proj, { pushHistory: true, preload: s });
-        } else {
-          if (confirm('This session is not enrolled in the selected dataset. Enroll it now?')) {
-            await startEnrollmentFlow(s.session_id);
-            await loadSessions();
-          }
+          return;
+        }
+        // Auto-enroll with currently selected dataset (no popups)
+        if (!state.dataset_id) {
+          toast('Select a dataset first');
+          return;
+        }
+        try {
+          await enrollSession(state.dataset_id, s.session_id);
+          // Persist selection
+          try {
+            localStorage.setItem(`dataset:${s.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
+            setCookie('currentProject', proj);
+            setCookie('currentDatasetId', String(state.dataset_id));
+          } catch {}
+          await loadSessions();
+          // Auto-open after enrollment
+          selectSession(s.session_id, proj, { pushHistory: true, preload: s });
+        } catch (e) {
+          console.error(e);
+          toast('Enrollment failed');
         }
       });
       list.appendChild(div);
@@ -1263,69 +1309,34 @@
     if (ps) {
       ps.addEventListener('change', async () => {
         state.project_name = ps.value || 'default';
-        try { localStorage.setItem('currentProject', state.project_name); } catch {}
+        try { localStorage.setItem('currentProject', state.project_name); setCookie('currentProject', state.project_name); } catch {}
         await populateDatasetSelect();
         // Refresh sessions to reflect enrollments for datasets under new project
         await loadSessions();
       });
     }
-    const manageBtn = document.getElementById('manage-projects');
-    if (manageBtn) {
-      manageBtn.addEventListener('click', async () => {
-        await renderProjectManager();
-        openModal('project-modal');
-      });
-    }
     // Dataset selector
-    const dsSel = els.datasetSelect();
-    if (dsSel) {
-      dsSel.addEventListener('change', () => {
-        const opt = dsSel.selectedOptions && dsSel.selectedOptions[0];
-        state.dataset_id = dsSel.value ? Number(dsSel.value) : null;
-        state.dataset_name = opt ? (opt.dataset.datasetName || null) : null;
-        if (state.session_id && state.dataset_id) {
-          try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
-        }
+    const ds = els.datasetSelect();
+    if (ds) {
+      ds.addEventListener('change', async () => {
+        const sel = ds.selectedOptions[0];
+        state.dataset_id = Number(ds.value);
+        state.dataset_name = sel ? (sel.dataset.datasetName || null) : null;
+        // Persist selection for this session (if any) and globally to cookies
+        try {
+          if (state.session_id && state.dataset_id) {
+            localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
+          }
+          if (state.dataset_id) setCookie('currentDatasetId', String(state.dataset_id));
+        } catch {}
+        // Load dataset details and classes and update UI mode
+        const details = await fetchDatasetDetails(state.dataset_id);
+        state.target_type_name = details ? details.target_type_name : null;
+        await loadDatasetClasses(state.dataset_id);
+        applyModeVisibility();
         refreshProgress();
-        // Reload dataset classes when dataset changes
-        if (state.dataset_id) {
-          loadDatasetClasses(state.dataset_id);
-          // Parallel: fetch dataset details to know target type and fetch session settings
-          Promise.all([
-            fetchDatasetDetails(state.dataset_id),
-            fetchDatasetSessionSettings(state.dataset_id, state.session_id)
-          ])
-            .then(([dataset, settings]) => {
-              if (dataset && dataset.target_type_name) {
-                state.target_type_name = dataset.target_type_name;
-              }
-              // Apply settings
-              if (settings && (Array.isArray(settings.categories) || settings.hotkeys)) {
-                if (Array.isArray(settings.categories)) state.categories = settings.categories;
-                if (settings.hotkeys && typeof settings.hotkeys === 'object') state.hotkeys = settings.hotkeys;
-                state.settingsLoaded = true;
-                saveCategoriesToStorage();
-              } else {
-                // Fallback to local defaults if backend has nothing yet
-                loadCategoriesFromStorage();
-              }
-              // If Regression, clear categories/hotkeys to avoid stale UI bleed-through
-              if (state.target_type_name === 'Regression') {
-                state.categories = [];
-                state.hotkeys = {};
-              }
-            })
-            .catch(() => {
-              loadCategoriesFromStorage();
-            })
-            .finally(() => {
-              renderCategories();
-              renderDynamicShortcuts();
-              applyModeVisibility();
-              // Update session list rendering for the selected dataset's enrollments
-              loadSessions();
-            });
-        }
+        // Refresh session list highlighting with new enrollment set
+        await loadSessions();
       });
     }
     const dsManageBtn = document.getElementById('manage-datasets');
