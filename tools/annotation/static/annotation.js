@@ -1131,7 +1131,8 @@
       const wrapDiv = document.createElement('div');
       wrapDiv.style.display = 'flex';
       wrapDiv.style.alignItems = 'center';
-      wrapDiv.style.gap = 'var(--space-2)';
+      wrapDiv.style.gap = 'var(--space-1)';
+      wrapDiv.style.marginBottom = '0';
       const input = document.createElement('input');
       input.type = 'text';
       input.placeholder = 'key';
