@@ -45,7 +45,14 @@
       item.style.display = 'flex';
       item.style.alignItems = 'center';
       item.style.gap = '8px';
-      item.innerHTML = `<input type="checkbox" id="${id}" data-class-id="${r.id}"><span>${r.name}</span>`;
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = id;
+      input.setAttribute('data-class-id', String(r.id));
+      const span = document.createElement('span');
+      span.textContent = String(r.name || '');
+      item.appendChild(input);
+      item.appendChild(span);
       grid.appendChild(item);
     });
     list.appendChild(grid);
@@ -243,12 +250,30 @@
     m.querySelectorAll('[data-modal-close]').forEach(btn => btn.onclick = () => closeModal(id));
     const backdrop = m.querySelector('.modal__backdrop');
     if (backdrop) backdrop.onclick = () => closeModal(id);
+    // Close on Escape and prevent body scroll while modal is open
+    const onKey = (ev) => { if (ev.key === 'Escape') closeModal(id); };
+    try { m._onKey = onKey; } catch {}
+    document.addEventListener('keydown', onKey);
+    try { document.body.classList.add('no-scroll'); } catch {}
     // Simple debug marker
     try { m.setAttribute('data-opened', String(Date.now())); } catch {}
   }
   function closeModal(id) {
     const m = getModal(id);
-    if (m) m.classList.add('hidden');
+    if (m) {
+      m.classList.add('hidden');
+      // Remove key listener if we added one
+      const onKey = m._onKey;
+      if (onKey) {
+        document.removeEventListener('keydown', onKey);
+        try { delete m._onKey; } catch {}
+      }
+    }
+    // If no other visible modals, restore body scroll
+    try {
+      const anyOpen = Array.from(document.querySelectorAll('.modal')).some(el => !el.classList.contains('hidden'));
+      if (!anyOpen) document.body.classList.remove('no-scroll');
+    } catch {}
   }
 
   // Helper: full dataset modal to enter name/desc and pick target type
@@ -362,11 +387,23 @@
     // Create form
     const form = document.createElement('div');
     form.className = 'm-row';
-    form.innerHTML = `
-      <input class="input m-input" id="pm-name" placeholder="Project name">
-      <input class="input m-input" id="pm-desc" placeholder="Description (optional)">
-      <button class="btn" id="pm-create">Create</button>
-    `;
+    {
+      const name = document.createElement('input');
+      name.className = 'input m-input';
+      name.id = 'pm-name';
+      name.placeholder = 'Project name';
+      const desc = document.createElement('input');
+      desc.className = 'input m-input';
+      desc.id = 'pm-desc';
+      desc.placeholder = 'Description (optional)';
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.id = 'pm-create';
+      btn.textContent = 'Create';
+      form.appendChild(name);
+      form.appendChild(desc);
+      form.appendChild(btn);
+    }
     body.appendChild(form);
     const listWrap = document.createElement('div');
     listWrap.className = 'm-list';
@@ -375,24 +412,51 @@
     projects.forEach(p => {
       const row = document.createElement('div');
       row.className = 'm-item';
-      row.innerHTML = `
-        <div>
-          <div class="m-item__title">${p.name}</div>
-          <div class="m-item__meta">${p.description || ''}</div>
-        </div>
-        <div class="m-row">
-          <button class="btn" data-edit>Rename</button>
-          <button class="btn" data-delete>Delete</button>
-        </div>
-      `;
-      // actions
+      const left = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'm-item__title';
+      title.textContent = String(p.name || '');
+      const meta = document.createElement('div');
+      meta.className = 'm-item__meta';
+      meta.textContent = String(p.description || '');
+      left.appendChild(title);
+      left.appendChild(meta);
+      const right = document.createElement('div');
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.setAttribute('data-select', '');
+      btn.textContent = 'Use';
+      right.appendChild(btn);
+      row.appendChild(left);
+      row.appendChild(right);
+      row.querySelector('[data-select]').onclick = async () => {
+        try {
+          const sel = els.projectSelect();
+          if (sel) {
+            sel.value = String(p.id);
+            const opt = Array.from(sel.options).find(o => o.value === String(p.id));
+            state.project_id = p.id;
+            state.project_name = p.name;
+            if (opt) {
+              state.project_name = opt.dataset.projectName || p.name;
+            }
+            if (state.session_id && state.project_id) {
+              try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
+            }
+            // Update project-driven UI and sessions
+            await populateDatasetSelect();
+            await loadSessions();
+            closeModal('project-modal');
+            toast('Project selected');
+          }
+        } catch {}
+      };
       row.querySelector('[data-edit]').onclick = async () => {
         const newName = prompt('New project name', p.name) || p.name;
         const newDesc = prompt('Description (optional)', p.description || '') || '';
         try {
           await apiPut(`projects/${p.id}`, { name: newName, description: newDesc });
           await populateProjectSelect(newName);
-          await populateDatasetSelect();
           await renderProjectManager();
           toast('Project updated');
         } catch { toast('Update failed'); }
@@ -418,7 +482,7 @@
       const desc = (form.querySelector('#pm-desc').value || '').trim();
       if (!name) { toast('Name required'); return; }
       try {
-        await createProject(name, desc);
+        const created = await createProject(name, desc);
         await populateProjectSelect(name);
         await populateDatasetSelect();
         await renderProjectManager();
@@ -427,7 +491,6 @@
       } catch { toast('Create failed'); }
     };
   }
-  ;
 
   // Dataset Management UI
   async function renderDatasetManager() {
@@ -439,11 +502,23 @@
     // Create form
     const form = document.createElement('div');
     form.className = 'm-row';
-    form.innerHTML = `
-      <input class="input m-input" id="dm-name" placeholder="Dataset name">
-      <input class="input m-input" id="dm-desc" placeholder="Description (optional)">
-      <button class="btn" id="dm-create">Create</button>
-    `;
+    {
+      const name = document.createElement('input');
+      name.className = 'input m-input';
+      name.id = 'dm-name';
+      name.placeholder = 'Dataset name';
+      const desc = document.createElement('input');
+      desc.className = 'input m-input';
+      desc.id = 'dm-desc';
+      desc.placeholder = 'Description (optional)';
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.id = 'dm-create';
+      btn.textContent = 'Create';
+      form.appendChild(name);
+      form.appendChild(desc);
+      form.appendChild(btn);
+    }
     body.appendChild(form);
     const listWrap = document.createElement('div');
     listWrap.className = 'm-list';
@@ -453,17 +528,50 @@
       const row = document.createElement('div');
       row.className = 'm-item';
       const typeLabel = d.target_type_name || `Type ${d.target_type_id}`;
-      row.innerHTML = `
-        <div>
-          <div class="m-item__title">${d.name}</div>
-          <div class="m-item__meta">${d.description || ''} · ${typeLabel}</div>
-        </div>
-        <div class="m-row">
-          <button class="btn" data-edit>Edit</button>
-          <button class="btn" data-delete>Delete</button>
-          <button class="btn" data-select>Select</button>
-        </div>
-      `;
+      const left = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'm-item__title';
+      title.textContent = String(d.name || '');
+      const meta = document.createElement('div');
+      meta.className = 'm-item__meta';
+      meta.textContent = `${String(d.description || '')} · ${String(typeLabel)}`;
+      left.appendChild(title);
+      left.appendChild(meta);
+      const right = document.createElement('div');
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.setAttribute('data-select', '');
+      btn.textContent = 'Select';
+      right.appendChild(btn);
+      row.appendChild(left);
+      row.appendChild(right);
+      row.querySelector('[data-select]').onclick = async () => {
+        const dsId = d.id;
+        const dsName = d.name;
+        const sel = els.datasetSelect();
+        if (sel) {
+          sel.value = String(dsId);
+          const opt = Array.from(sel.options).find(o => o.value === String(dsId));
+          state.dataset_id = dsId;
+          state.dataset_name = dsName;
+          if (opt) {
+            state.dataset_name = opt.dataset.datasetName || dsName;
+          }
+          if (state.session_id && state.dataset_id) {
+            try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
+          }
+          // Update dataset-driven UI and sessions
+          const details = await fetchDatasetDetails(state.dataset_id);
+          state.target_type_name = details ? details.target_type_name : null;
+          state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
+          await loadDatasetClasses(state.dataset_id);
+          applyModeVisibility();
+          refreshProgress();
+          await loadSessions();
+          closeModal('dataset-modal');
+          toast('Dataset selected');
+        }
+      };
       row.querySelector('[data-edit]').onclick = async () => {
         const result = await showDatasetModal({ title: 'Edit Dataset', name: d.name, description: d.description || '', target_type_id: d.target_type_id });
         if (!result) return;
@@ -500,32 +608,6 @@
           toast('Dataset deleted');
         } catch { toast('Delete failed'); }
       };
-      row.querySelector('[data-select]').onclick = async () => {
-        // Select this dataset in toolbar
-        const dsSel = els.datasetSelect();
-        if (dsSel) {
-          dsSel.value = String(d.id);
-          const opt = Array.from(dsSel.options).find(o => o.value === String(d.id));
-          state.dataset_id = d.id;
-          state.dataset_name = d.name;
-          if (opt) {
-            state.dataset_name = opt.dataset.datasetName || d.name;
-          }
-          if (state.session_id && state.dataset_id) {
-            try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
-          }
-          // Update dataset-driven UI and sessions
-          const details = await fetchDatasetDetails(state.dataset_id);
-          state.target_type_name = details ? details.target_type_name : null;
-          state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
-          await loadDatasetClasses(state.dataset_id);
-          applyModeVisibility();
-          refreshProgress();
-          await loadSessions();
-          closeModal('dataset-modal');
-          toast('Dataset selected');
-        }
-      };
       listWrap.appendChild(row);
     });
     // Create handler
@@ -559,581 +641,6 @@
     };
   }
 
-  function withBase(p) { return `${APP_BASE}${p}`; }
-
-  // App state
-  let state = {
-    session_id: null,
-    project_id: null,
-    project_name: 'default',
-    dataset_id: null,
-    dataset_name: null,
-    target_type_id: null,
-    target_type_name: null,
-    currentIdx: 0,
-    totalFrames: 0,
-    categories: [],
-    hotkeys: {},
-    // dataset class info from backend
-    datasetClasses: [], // [{id,name,idx}]
-    classIdByName: {}, // { name: id }
-    savedCategoryForFrame: null,
-    frameSaved: false,
-    settingsLoaded: false,
-    // Regression settings (persisted per dataset-session)
-    regressionMin: null,
-    regressionMax: null,
-    regressionShortcuts: [],
-  };
-  
-  // Abort controller for in-flight frame fetches
-  let frameRequestController = null;
-
-  const els = {
-    sessionList: () => document.getElementById('session-list'),
-    sessionSelector: () => document.getElementById('session-selector'),
-    projectSelect: () => document.getElementById('project-select'),
-    datasetSelect: () => document.getElementById('dataset-select'),
-    annotationInterface: () => document.getElementById('annotation-interface'),
-    sessionInfo: () => document.getElementById('session-info'),
-    sessionName: () => document.getElementById('session-name'),
-    progressFill: () => document.getElementById('progress-fill'),
-    progressText: () => document.getElementById('progress-text'),
-
-    img: () => document.getElementById('frame-image'),
-    frameId: () => document.getElementById('frame-id'),
-    frameFilename: () => document.getElementById('frame-filename'),
-    frameTimestamp: () => document.getElementById('frame-timestamp'),
-
-    firstBtn: () => document.getElementById('first-btn'),
-    prevBtn: () => document.getElementById('prev-btn'),
-    nextBtn: () => document.getElementById('next-btn'),
-    lastBtn: () => document.getElementById('last-btn'),
-    frameInput: () => document.getElementById('frame-input'),
-
-    categoryList: () => document.getElementById('category-list'),
-    newCategoryInput: () => document.getElementById('new-category-input'),
-    addCategoryBtn: () => document.getElementById('add-category-btn'),
-    notes: () => document.getElementById('notes-input'),
-
-    saveBtn: () => document.getElementById('save-btn'),
-    saveNextBtn: () => document.getElementById('save-next-btn'),
-    skipBtn: () => document.getElementById('skip-btn'),
-    statsGrid: () => document.getElementById('stats-grid'),
-    dynamicShortcuts: () => document.getElementById('dynamic-shortcuts'),
-  };
-
-  // Simple debounce helper
-  function debounce(fn, wait = 300) {
-    let t = null;
-    return (...args) => {
-      if (t) clearTimeout(t);
-      t = setTimeout(() => fn(...args), wait);
-    };
-  }
-
-  // API client
-  async function apiGet(url, params = {}) {
-    const usp = new URLSearchParams(params);
-    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const qs = usp.toString();
-    const target = qs ? `${withBase(full)}?${qs}` : withBase(full);
-    const res = await fetch(target);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
-  }
-
-  // API GET with AbortController signal
-  async function apiGetWithSignal(url, params = {}, signal) {
-    const usp = new URLSearchParams(params);
-    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const qs = usp.toString();
-    const target = qs ? `${withBase(full)}?${qs}` : withBase(full);
-    const res = await fetch(target, { signal });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
-  }
-
-  async function apiPut(url, body) {
-    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const res = await fetch(withBase(full), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body || {}),
-    });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
-  }
-
-  async function apiDelete(url) {
-    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const res = await fetch(withBase(full), { method: 'DELETE' });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
-  }
-
-  async function apiPost(url, body) {
-    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const res = await fetch(withBase(full), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
-  }
-
-  async function apiPostNoBody(url) {
-    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
-    const res = await fetch(withBase(full), { method: 'POST' });
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-    return res.json();
-  }
-
-  // Projects & Datasets API helpers (DB-backed)
-  async function listProjects() {
-    return apiGet('projects');
-  }
-  async function createProject(name, description = '') {
-    return apiPost('projects', { name, description });
-  }
-  async function listDatasets(projectId) {
-    return apiGet(`projects/${projectId}/datasets`);
-  }
-  async function createDataset(projectId, name, description = '', target_type_id = 1) {
-    // DB schema target_types: 0=Regression, 1=SingleLabelClassification, 2=MultiLabelClassification
-    return apiPost(`projects/${projectId}/datasets`, { name, description, target_type_id });
-  }
-  async function listTargetTypes() {
-    return apiGet('target_types');
-  }
-  async function enrollSession(datasetId, sessionId, settings = undefined) {
-    // New paradigm: backend enrollment no longer accepts/apply baseline settings
-    return apiPost(`datasets/${datasetId}/enroll_session`, { session_id: sessionId });
-  }
-  async function datasetProgress(datasetId) {
-    return apiGet(`datasets/${datasetId}/progress`);
-  }
-
-  async function fetchDatasetDetails(datasetId) {
-    const invalid = (v) => v == null || v === 'null' || v === 'undefined' || Number.isNaN(Number(v)) || Number(v) <= 0;
-    if (invalid(datasetId)) return null;
-    return apiGet(`datasets/${datasetId}`);
-  }
-
-  // Enrollment helpers
-  async function listDatasetEnrollments(datasetId) {
-    const invalid = (v) => v == null || v === 'null' || v === 'undefined' || Number.isNaN(Number(v)) || Number(v) <= 0;
-    if (invalid(datasetId)) return [];
-    // Returns an array of session_ids enrolled in this dataset
-    return apiGet(`datasets/${datasetId}/enrollments`).catch(() => []);
-  }
-
-  // --- Mode toggle scaffolding ---
-  function ensureModePanels() {
-    // Only need a regression panel container; MultiLabel reuses #category-list
-    const container = document.getElementById('categories-container');
-    if (!container) return;
-    if (!document.getElementById('regression-panel')) {
-      const rg = document.createElement('div');
-      rg.id = 'regression-panel';
-      rg.className = 'hidden';
-      container.appendChild(rg);
-    }
-  }
-
-  function applyModeVisibility() {
-    ensureModePanels();
-    const tid = (typeof state.target_type_id === 'number') ? state.target_type_id : null;
-    const tname = state.target_type_name;
-    // Schema: 0=Regression, 1=SingleLabelClassification, 2=MultiLabelClassification
-    const isRegr = (tid === 0) || (tname === 'Regression');
-    const isSingle = (tid === 1) || (!tid && (tname === 'SingleLabelClassification' || !tname));
-    const isMulti = (tid === 2) || (tname === 'MultiLabelClassification');
-
-    const catList = els.categoryList && els.categoryList();
-    const addBtn = els.addCategoryBtn && els.addCategoryBtn();
-    const newCat = els.newCategoryInput && els.newCategoryInput();
-    const shortcuts = els.dynamicShortcuts && els.dynamicShortcuts();
-    const rgPanel = document.getElementById('regression-panel');
-
-    // Keep core controls visible across modes; styling/behavior will change per mode
-    [catList, newCat, addBtn].forEach(el => { if (el) el.classList.remove('hidden'); });
-
-    // Show/hide mode-specific areas
-    if (rgPanel) { if (isRegr) rgPanel.classList.remove('hidden'); else rgPanel.classList.add('hidden'); }
-    
-    // Helper: Set the Categories section header text
-    function setCategoriesHeader(text) {
-      const container = document.getElementById('categories-container');
-      if (!container) return;
-      const section = container.closest('.panel__section');
-      if (!section) return;
-      const h3 = section.querySelector('h3.panel__title');
-      if (h3) h3.textContent = text;
-    }
-    
-    // Render dynamic contents for panels when visible
-    if (isSingle) {
-      setCategoriesHeader('Categories');
-      configureAddControlsForMode('Single');
-      if (typeof renderCategories === 'function') renderCategories();
-    }
-    if (isMulti) {
-      // Categories header remains "Categories" and input stays text
-      setCategoriesHeader('Categories');
-      configureAddControlsForMode('MultiLabel');
-      renderMultilabelPanel();
-    }
-    if (isRegr) {
-      setCategoriesHeader('Shortcuts');
-      configureAddControlsForMode('Regression');
-      renderRegressionPanel();
-      renderRegressionShortcuts();
-    }
-  }
-
-  async function listDatasetClasses(datasetId) {
-    if (!datasetId) return [];
-    return apiGet(`datasets/${datasetId}/classes`);
-  }
-
-  async function loadDatasetClasses(datasetId) {
-    try {
-      const rows = await listDatasetClasses(datasetId);
-      state.datasetClasses = Array.isArray(rows) ? rows : [];
-      const map = {};
-      state.datasetClasses.forEach(r => { if (r && typeof r.name === 'string') map[r.name] = r.id; });
-      state.classIdByName = map;
-    } catch (e) {
-      console.warn('Failed to load dataset classes');
-      state.datasetClasses = [];
-      state.classIdByName = {};
-    }
-  }
-
-  // Persistence helpers (localStorage per session/project)
-  function lsKey(prefix) {
-    if (!state.session_id) return `${prefix}:none`;
-    return `${prefix}:${state.session_id}:${state.project_name}`;
-  }
-
-  function loadCategoriesFromStorage() {
-    try {
-      const cats = localStorage.getItem(lsKey('categories'));
-      const hotkeys = localStorage.getItem(lsKey('hotkeys'));
-      state.categories = cats ? JSON.parse(cats) : ['battle', 'menu', 'loading', 'other'];
-      state.hotkeys = hotkeys ? JSON.parse(hotkeys) : {};
-    } catch {
-      state.categories = ['battle', 'menu', 'loading', 'other'];
-      state.hotkeys = {};
-    }
-  }
-
-  function saveCategoriesToStorage() {
-    try {
-      localStorage.setItem(lsKey('categories'), JSON.stringify(state.categories));
-      localStorage.setItem(lsKey('hotkeys'), JSON.stringify(state.hotkeys));
-    } catch {}
-  }
-
-  // ----- Regression shortcuts (simple persistence and rendering) -----
-  function loadRegressionShortcuts() {
-    try {
-      const s = localStorage.getItem(lsKey('regression_shortcuts'));
-      let data = s ? JSON.parse(s) : [];
-      // Migrate from [number] -> [{value, key:null}]
-      if (Array.isArray(data) && (data.length === 0 || typeof data[0] !== 'object')) {
-        data = data.map(v => ({ value: v, key: null }));
-      }
-      // If state already has a value from settings, prefer it; else use storage
-      if (!Array.isArray(state.regressionShortcuts) || state.regressionShortcuts.length === 0) {
-        state.regressionShortcuts = Array.isArray(data) ? data : [];
-      }
-    } catch { state.regressionShortcuts = []; }
-  }
-  function saveRegressionShortcuts() {
-    try { localStorage.setItem(lsKey('regression_shortcuts'), JSON.stringify(state.regressionShortcuts || [])); } catch {}
-    if (state.dataset_id && state.session_id) {
-      const minV = (state.regressionMin != null) ? state.regressionMin : undefined;
-      const maxV = (state.regressionMax != null) ? state.regressionMax : undefined;
-      debouncedSaveSettings();
-    }
-  }
-  function renderRegressionShortcuts() {
-    const list = els.categoryList && els.categoryList();
-    if (!list) return;
-    // Replace existing list with category-style items
-    list.innerHTML = '';
-    const items = (state.regressionShortcuts || []);
-    items.forEach((item, idx) => {
-      const v = item?.value;
-      const keyVal = item?.key ?? '';
-      const row = document.createElement('div');
-      row.className = 'category category--clickable';
-      row.tabIndex = 0; // focusable for keyboard activation
-      row.title = 'Click to apply value';
-
-      const left = document.createElement('div');
-      left.style.display = 'flex';
-      left.style.alignItems = 'center';
-      left.style.gap = '8px';
-      const valText = document.createElement('span');
-      valText.textContent = String(v);
-      left.appendChild(valText);
-
-      const right = document.createElement('div');
-      right.style.display = 'flex';
-      right.style.alignItems = 'center';
-      right.style.gap = '8px';
-      const keyInput = document.createElement('input');
-      keyInput.className = 'input input--small';
-      keyInput.placeholder = 'Key';
-      keyInput.value = keyVal;
-      keyInput.addEventListener('input', () => {
-        state.regressionShortcuts[idx].key = keyInput.value;
-        saveRegressionShortcuts();
-      });
-      const del = document.createElement('button');
-      del.className = 'btn';
-      del.textContent = 'Delete';
-      del.addEventListener('click', () => {
-        state.regressionShortcuts.splice(idx, 1);
-        saveRegressionShortcuts();
-        renderRegressionShortcuts();
-      });
-      right.appendChild(keyInput);
-      right.appendChild(del);
-
-      row.appendChild(left);
-      row.appendChild(right);
-      function applyValue() {
-        const rg = document.getElementById('regression-panel');
-        if (!rg) return;
-        const range = rg.querySelector('#regression-input');
-        const number = rg.querySelector('#regression-number');
-        if (Number.isFinite(v)) {
-          if (number) number.value = String(v);
-          if (range) range.value = String(v);
-        }
-      }
-      row.addEventListener('click', (e) => {
-        // Ignore clicks on interactive controls
-        if (e.target.closest('input, button')) return;
-        applyValue();
-      });
-      row.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          // Avoid triggering click on buttons/inputs
-          if (document.activeElement === row) {
-            e.preventDefault();
-            applyValue();
-          }
-        }
-      });
-      list.appendChild(row);
-    });
-  }
-
-  // ----- Context-aware Add and input controls -----
-  function configureAddControlsForMode(mode) {
-    const input = els.newCategoryInput && els.newCategoryInput();
-    const btn = els.addCategoryBtn && els.addCategoryBtn();
-    if (!input || !btn) return;
-    if (mode === 'Regression') {
-      // number input for shortcuts
-      input.setAttribute('type', 'number');
-      input.classList.add('input');
-      input.placeholder = 'Add new shortcut...';
-      loadRegressionShortcuts();
-      btn.onclick = () => {
-        const raw = input.value.trim();
-        if (raw === '') { toast('Enter a number'); return; }
-        const n = Number(raw);
-        if (!Number.isFinite(n)) { toast('Invalid number'); return; }
-        state.regressionShortcuts = state.regressionShortcuts || [];
-        const exists = state.regressionShortcuts.some(x => (typeof x === 'object' ? x.value === n : x === n));
-        if (!exists) state.regressionShortcuts.push({ value: n, key: '' });
-        saveRegressionShortcuts();
-        renderRegressionShortcuts();
-        input.value = '';
-      };
-    } else {
-      // Single/MultiLabel: text input for categories
-      input.setAttribute('type', 'text');
-      input.classList.add('input');
-      input.placeholder = 'Add new category...';
-      btn.onclick = () => {
-        const name = (input.value || '').trim();
-        if (!name) { toast('Name required'); return; }
-        if (!state.categories.includes(name)) state.categories.push(name);
-        saveCategoriesToStorage();
-        renderCategories();
-        renderDynamicShortcuts();
-        // Persist to backend session settings
-        if (state.dataset_id && state.session_id) {
-          debouncedSaveSettings();
-        }
-      };
-    }
-  }
-
-  // Persist dataset-session settings to backend
-  async function saveDatasetSessionSettings(datasetId, sessionId, settingsObj) {
-    try {
-      await apiPut(`datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`, { settings: settingsObj || {} });
-    } catch (e) {
-      // Non-fatal
-    }
-  }
-
-  function saveSessionSelection() {
-    try {
-      localStorage.setItem('currentSession', state.session_id || '');
-      localStorage.setItem('currentProjectId', state.project_id || '');
-      localStorage.setItem('currentProject', state.project_name || 'default');
-      if (state.dataset_id) {
-        localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
-      }
-      localStorage.setItem('appState', 'annotation');
-    } catch {}
-  }
-
-  // Debounced settings saver
-  const debouncedSaveSettings = debounce(saveSettings, 300);
-  function saveSettings() {
-    if (state.dataset_id && state.session_id) {
-      saveDatasetSessionSettings(state.dataset_id, state.session_id, {
-        categories: state.categories,
-        hotkeys: state.hotkeys,
-        regression: {
-          min: state.regressionMin,
-          max: state.regressionMax,
-          shortcuts: state.regressionShortcuts,
-        },
-      }).catch(() => {});
-    }
-  }
-
-// Projects toolbar
-async function populateProjectSelect(pref = null) {
-const select = els.projectSelect();
-if (!select) return;
-select.innerHTML = '';
-let projects = [];
-try { projects = await listProjects(); } catch { projects = []; }
-// No projects: prompt user to create the first one via modal
-if (!projects || projects.length === 0) {
-  state.project_id = null;
-  state.project_name = null;
-  // Keep selector empty and open project creation modal
-  try {
-    await renderProjectManager();
-    openModal('project-modal');
-    toast('Create your first project');
-  } catch {}
-  return;
-}
-projects.forEach(p => {
-  const opt = document.createElement('option');
-  opt.value = String(p.id);
-  opt.textContent = p.name;
-  opt.dataset.projectId = String(p.id);
-  opt.dataset.projectName = p.name;
-  select.appendChild(opt);
-});
-// Choose preferred or saved project (prefer ID)
-const savedId = (pref && /^\d+$/.test(String(pref))) ? String(pref)
-               : (localStorage.getItem('currentProjectId') || getCookie('currentProjectId') || null);
-let chosen = null;
-if (savedId) {
-  chosen = Array.from(select.options).find(o => String(o.value) === String(savedId));
-}
-if (!chosen) {
-  const savedName = (pref && !/^\d+$/.test(String(pref))) ? String(pref)
-                  : (localStorage.getItem('currentProject') || getCookie('currentProject') || null);
-  if (savedName) chosen = Array.from(select.options).find(o => (o.dataset.projectName === savedName));
-}
-if (!chosen) chosen = select.options[0];
-if (chosen) {
-  select.value = chosen.value;
-  const opt = chosen;
-  state.project_id = parseInt(opt.dataset.projectId, 10);
-  state.project_name = opt.dataset.projectName || opt.textContent || 'default';
-}
-// Persist selection
-try { setCookie('currentProjectId', String(state.project_id)); setCookie('currentProject', state.project_name); } catch {}
-}
-
-  function getSelectedProjectId() {
-    const ps = els.projectSelect();
-    if (!ps) return null;
-    const opt = ps.selectedOptions && ps.selectedOptions[0];
-    if (!opt) return null;
-    const pid = parseInt(opt.dataset.projectId || ps.value, 10);
-    return Number.isFinite(pid) ? pid : null;
-  }
-
-  async function populateDatasetSelect(prefId = null) {
-    const select = els.datasetSelect();
-    if (!select) return;
-    select.innerHTML = '';
-    const projectId = getSelectedProjectId();
-    if (!projectId) {
-      state.dataset_id = null;
-      state.dataset_name = null;
-      return;
-    }
-    let datasets = [];
-    try { datasets = await listDatasets(projectId); } catch { datasets = []; }
-    datasets.forEach(d => {
-      const opt = document.createElement('option');
-      opt.value = String(d.id);
-      const tname = d.target_type_name || `Type ${d.target_type_id}`;
-      opt.textContent = `${d.name} [${tname}]`;
-      opt.dataset.datasetName = d.name;
-      opt.dataset.targetTypeId = String(d.target_type_id);
-      select.appendChild(opt);
-    });
-    if (datasets.length > 0) {
-      let savedId = null;
-      try {
-        if (state.session_id) {
-          const saved = localStorage.getItem(`dataset:${state.session_id}`);
-          if (saved) {
-            const obj = JSON.parse(saved);
-            if (obj && obj.id != null) savedId = String(obj.id);
-          }
-        }
-      } catch {}
-      // Fallback to cookie if no per-session saved dataset
-      let cookieId = getCookie && getCookie('currentDatasetId');
-      if (cookieId && !datasets.some(d => String(d.id) === String(cookieId))) cookieId = null;
-      const targetVal = prefId || savedId || cookieId || String(datasets[0].id);
-      select.value = targetVal;
-      const selOpt = select.selectedOptions[0];
-      state.dataset_id = Number(select.value);
-      state.dataset_name = selOpt ? (selOpt.dataset.datasetName || null) : null;
-      state.target_type_id = selOpt && selOpt.dataset && selOpt.dataset.targetTypeId != null ? Number(selOpt.dataset.targetTypeId) : null;
-      // When auto-selected, also refresh dataset details and UI mode and sessions
-      try { setCookie('currentDatasetId', String(state.dataset_id)); } catch {}
-      const details = await fetchDatasetDetails(state.dataset_id);
-      state.target_type_name = details ? details.target_type_name : null;
-      state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
-      await loadDatasetClasses(state.dataset_id);
-      applyModeVisibility();
-      refreshProgress();
-      await loadSessions();
-    } else {
-      state.dataset_id = null;
-      state.dataset_name = null;
-    }
-    // Persist to cookies when selected
-    if (state.dataset_id) {
-      try { setCookie('currentDatasetId', String(state.dataset_id)); } catch {}
-    }
-  }
-
   // UI rendering
   function renderSessionList(sessions, enrolledSet = null) {
     const list = els.sessionList();
@@ -1150,29 +657,25 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       // Make the entire card actionable
       div.style.cursor = 'pointer';
       const hint = isEnrolled ? 'Click to open' : 'Not enrolled — click to enroll';
-      div.innerHTML = `
-        <h4>${s.session_id}</h4>
-        <div class="selector__meta">Game: ${s.game_name || '-'} · Frames: ${s.frames_count || '-'}</div>
-        <div class="selector__meta">Started: ${s.start_time ? new Date(s.start_time).toLocaleString() : '-'}</div>
-        <div class="selector__meta" style="margin-top:6px;color:${isEnrolled ? '#15803d' : '#6b7280'}">${hint}</div>
-      `;
-      // Card click behavior
-      div.addEventListener('click', async () => {
-        const sel = els.projectSelect();
-        let projName = state.project_name || 'default';
-        let projId = state.project_id || null;
-        if (sel && sel.selectedOptions && sel.selectedOptions[0]) {
-          const opt = sel.selectedOptions[0];
-          projName = opt.dataset.projectName || opt.textContent || projName;
-          projId = parseInt(opt.dataset.projectId || sel.value, 10);
-        }
-        const dsSel = els.datasetSelect();
-        if (dsSel && dsSel.value) {
-          state.dataset_id = Number(dsSel.value);
-          state.dataset_name = (dsSel.selectedOptions[0] && dsSel.selectedOptions[0].dataset.datasetName) || null;
-        }
+      const h4 = document.createElement('h4');
+      h4.textContent = String(s.session_id || '');
+      const meta1 = document.createElement('div');
+      meta1.className = 'selector__meta';
+      meta1.textContent = `Game: ${String(s.game_name || '-') } · Frames: ${String(s.frames_count || '-')}`;
+      const meta2 = document.createElement('div');
+      meta2.className = 'selector__meta';
+      meta2.textContent = `Started: ${s.start_time ? new Date(s.start_time).toLocaleString() : '-'}`;
+      const meta3 = document.createElement('div');
+      meta3.className = 'selector__meta';
+      meta3.textContent = hint;
+      div.appendChild(h4);
+      div.appendChild(meta1);
+      div.appendChild(meta2);
+      div.appendChild(meta3);
+      // Click behavior
+      div.onclick = async () => {
         if (isEnrolled) {
-          selectSession(s.session_id, projName, { pushHistory: true, preload: s });
+          selectSession(s.session_id, state.project_name, { pushHistory: true, preload: s });
           return;
         }
         // Auto-enroll with currently selected dataset (no popups)
@@ -1185,18 +688,18 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
           // Persist selection
           try {
             localStorage.setItem(`dataset:${s.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
-            setCookie('currentProject', projName);
-            if (projId != null) setCookie('currentProjectId', String(projId));
+            setCookie('currentProject', state.project_name);
+            if (state.project_id != null) setCookie('currentProjectId', String(state.project_id));
             setCookie('currentDatasetId', String(state.dataset_id));
           } catch {}
           await loadSessions();
           // Auto-open after enrollment
-          selectSession(s.session_id, projName, { pushHistory: true, preload: s });
+          selectSession(s.session_id, state.project_name, { pushHistory: true, preload: s });
         } catch (e) {
           console.error(e);
           toast('Enrollment failed');
         }
-      });
+      };
       list.appendChild(div);
     });
     if (sessions.length === 0) {
@@ -1204,150 +707,61 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
     }
   }
 
-  async function startEnrollmentFlow(sessionId) {
-    try {
-      // 1) Choose or create Project (prefill with toolbar selection if available)
-      const projects = await listProjects();
-      const choices = projects.map((p, i) => `${i + 1}) ${p.name}`).join('\n');
-      const toolbarSelected = (els.projectSelect() && els.projectSelect().value) ? els.projectSelect().value : state.project_name || 'default';
-      let sel = prompt(`Select a project by number or type 'new' to create:\n${choices}\n(Current: ${toolbarSelected})`);
-      let projectId;
-      if (sel && sel.toLowerCase() === 'new') {
-        const name = prompt('New project name:');
-        if (!name) return;
-        const desc = prompt('Description (optional):') || '';
-        const created = await createProject(name, desc);
-        projectId = created.id;
-        await populateProjectSelect(name);
-      } else if (!sel || sel.trim() === '') {
-        const found = projects.find(p => p.name === toolbarSelected) || projects[0];
-        projectId = found ? found.id : projects[0].id;
-      } else {
-        const idx = parseInt(sel, 10) - 1;
-        if (Number.isNaN(idx) || idx < 0 || idx >= projects.length) return;
-        projectId = projects[idx].id;
-      }
-
-      // 2) Choose or create Dataset in selected Project
-      const datasets = await listDatasets(projectId);
-      const dsChoices = datasets.map((d, i) => {
-        const tname = d.target_type_name || `Type ${d.target_type_id}`;
-        return `${i + 1}) ${d.name} [${tname}]`;
-      }).join('\n');
-      sel = prompt(`Select a dataset by number or type 'new' to create:\n${dsChoices || '(none yet)'}`);
-      let datasetId;
-      if (sel && sel.toLowerCase() === 'new') {
-        const modalRes = await showDatasetModal({ title: 'Create Dataset', name: '', description: '', target_type_id: 1 });
-        if (!modalRes) return;
-        const createdDs = await createDataset(projectId, modalRes.name, modalRes.description, modalRes.target_type_id);
-        datasetId = createdDs.id;
-        // Persist selection
-        state.dataset_id = datasetId;
-        state.dataset_name = createdDs.name;
-        try { localStorage.setItem(`dataset:${sessionId}`, JSON.stringify({ id: datasetId, name: createdDs.name, target_type_id: createdDs.target_type_id })); } catch {}
-        // update toolbar
-        await populateDatasetSelect(String(datasetId));
-      } else {
-        const idx = parseInt(sel, 10) - 1;
-        if (Number.isNaN(idx) || idx < 0 || idx >= datasets.length) return;
-        const picked = datasets[idx];
-        datasetId = picked.id;
-        state.dataset_id = datasetId;
-        state.dataset_name = picked.name;
-        try { localStorage.setItem(`dataset:${sessionId}`, JSON.stringify({ id: datasetId, name: picked.name, target_type_id: picked.target_type_id })); } catch {}
-        await populateDatasetSelect(String(datasetId));
-      }
-
-      // 4) Enroll (no baseline settings sent)
-      await enrollSession(datasetId, sessionId);
-      toast('Session enrolled');
-    } catch (e) {
-      console.error(e);
-      toast('Enrollment failed');
-    }
-  }
-
-  async function refreshProgress() {
-    try {
-      if (!state.dataset_id) return;
-      const p = await datasetProgress(state.dataset_id);
-      const el = els.statsGrid();
-      if (!el) return;
-      el.innerHTML = '';
-      const mk = (label, value) => {
-        const d = document.createElement('div');
-        d.className = 'stat-item';
-        const lab = document.createElement('div');
-        lab.className = 'stat__label';
-        lab.textContent = String(label);
-        const val = document.createElement('div');
-        val.className = 'stat__value';
-        val.textContent = String(value);
-        d.appendChild(lab);
-        d.appendChild(val);
-        return d;
-      };
-      const total = Number.isFinite(p.total) ? Number(p.total) : null;
-      const labeled = Number.isFinite(p.labeled) ? Number(p.labeled) : null;
-      const unlabeled = Number.isFinite(p.unlabeled) ? Number(p.unlabeled) : (total != null && labeled != null ? Math.max(0, total - labeled) : null);
-      const pct = total && total > 0 && labeled != null ? ((labeled / total) * 100) : null;
-
-      el.appendChild(mk('Total', total ?? '-'));
-      el.appendChild(mk('Labeled', labeled ?? '-'));
-      el.appendChild(mk('Unlabeled', unlabeled ?? '-'));
-      el.appendChild(mk('Percent', pct != null ? `${pct.toFixed(1)}%` : '-'));
-      if (state.dataset_name) el.appendChild(mk('Dataset', state.dataset_name));
-      if (state.session_id) el.appendChild(mk('Session', state.session_id));
-      // Also update the header progress bar/text when we have totals
-      if (total != null && labeled != null) {
-        try { updateProgress(labeled, total); } catch {}
-      }
-    } catch (e) {
-      console.warn('Failed to load progress');
-    }
-  }
-
   function renderCategories() {
-    const wrap = els.categoryList();
-    wrap.innerHTML = '';
-    state.categories.forEach((cat) => {
+    const list = els.categoryList && els.categoryList();
+    if (!list) return;
+    list.innerHTML = '';
+    const cats = Array.isArray(state.categories) ? state.categories : [];
+    cats.forEach((cat) => {
       const row = document.createElement('div');
       row.className = 'category';
-      row.innerHTML = `
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-          <input type="radio" name="category" value="${cat}">
-          <span>${cat}</span>
-        </label>
-        <div class="category__controls">
-          <input type="text" class="input input--small" value="${state.hotkeys[cat] || ''}" placeholder="Key" maxlength="1" data-category="${cat}">
-          <button class="btn btn--small" data-remove="${cat}">Remove</button>
-        </div>
-      `;
-      wrap.appendChild(row);
 
-      const input = row.querySelector('input[type="text"]');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = 'category';
+      radio.value = String(cat);
+
+      const title = document.createElement('span');
+      title.textContent = String(cat);
+
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = 'hotkey';
+      input.value = (state.hotkeys && state.hotkeys[cat]) ? String(state.hotkeys[cat]) : '';
+      input.style.marginLeft = '8px';
+      input.style.width = '64px';
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'btn btn--sm';
+      removeBtn.setAttribute('data-remove', String(cat));
+      removeBtn.textContent = 'Remove';
+      removeBtn.style.marginLeft = '8px';
+
+      row.appendChild(radio);
+      row.appendChild(title);
+      row.appendChild(input);
+      row.appendChild(removeBtn);
+      list.appendChild(row);
+
       input.addEventListener('input', () => {
         const v = (input.value || '').trim().toLowerCase();
+        if (!state.hotkeys) state.hotkeys = {};
         state.hotkeys[cat] = v;
         saveCategoriesToStorage();
-        // Persist to backend session settings
         if (state.dataset_id && state.session_id) {
           debouncedSaveSettings();
         }
       });
 
-      const radio = row.querySelector('input[type="radio"]');
       radio.addEventListener('change', () => { state.frameSaved = false; highlightCategoryStates(); });
 
-      const removeBtn = row.querySelector('button[data-remove]');
       removeBtn.addEventListener('click', () => {
         const name = removeBtn.getAttribute('data-remove');
-        state.categories = state.categories.filter((c) => c !== name);
-        delete state.hotkeys[name];
+        state.categories = (state.categories || []).filter((c) => c !== name);
+        if (state.hotkeys) delete state.hotkeys[name];
         saveCategoriesToStorage();
         renderCategories();
         renderDynamicShortcuts();
-        // Persist to backend session settings
         if (state.dataset_id && state.session_id) {
           debouncedSaveSettings();
         }
@@ -1362,7 +776,15 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
     Object.entries(state.hotkeys).forEach(([cat, key]) => {
       const row = document.createElement('div');
       row.className = 'shortcut';
-      row.innerHTML = `<span>${cat}</span><span><span class="key">${key.toUpperCase()}</span></span>`;
+      const left = document.createElement('span');
+      left.textContent = String(cat);
+      const right = document.createElement('span');
+      const keySpan = document.createElement('span');
+      keySpan.className = 'key';
+      keySpan.textContent = String(key || '').toUpperCase();
+      right.appendChild(keySpan);
+      row.appendChild(left);
+      row.appendChild(right);
       el.appendChild(row);
     });
   }
@@ -1562,15 +984,30 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       els.nextBtn().disabled = state.totalFrames ? idx >= state.totalFrames - 1 : false;
       els.lastBtn().disabled = state.totalFrames ? idx >= state.totalFrames - 1 : false;
 
+      // Prefetch next frame image to speed up forward navigation
+      try {
+        const nextIdx = (typeof state.totalFrames === 'number' && state.totalFrames > 0)
+          ? Math.min(idx + 1, state.totalFrames - 1)
+          : idx + 1;
+        if (nextIdx > idx) {
+          const paramsNext = {
+            session_id: state.session_id,
+            idx: nextIdx,
+          };
+          const prefetchUrl = withBase(`/api/image?${new URLSearchParams(paramsNext).toString()}`);
+          const img = new Image();
+          img.src = prefetchUrl;
+        }
+      } catch {}
+
       // We cannot compute progress without totals; leave as-is
     } catch (e) {
-    // Swallow aborts (user navigated quickly)
-    if (e && (e.name === 'AbortError' || String(e.message || '').includes('AbortError'))) return;
-    console.error(e);
-    toast('Failed to load frame');
+      // Swallow aborts (user navigated quickly)
+      if (e && (e.name === 'AbortError' || String(e.message || '').includes('AbortError'))) return;
+      console.error(e);
+      toast('Failed to load frame');
+    }
   }
-}
-  
 
   async function saveAnnotation() {
     const t = state.target_type_name;
