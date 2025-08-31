@@ -107,9 +107,9 @@
       <input id="regression-number" class="input" type="number" min="0" max="100" step="1" value="0" style="width:96px">
       <div style="grid-column: 1 / -1; display:flex; gap:12px; align-items:center;">
         <label>Min</label>
-        <input id="regression-min" class="input" type="number" value="0" style="width:96px">
+        <input id="regression-min" class="input" type="number" value="0" style="width:100%">
         <label>Max</label>
-        <input id="regression-max" class="input" type="number" value="100" style="width:96px">
+        <input id="regression-max" class="input" type="number" value="100" style="width:100%">
       </div>
     `;
     rg.innerHTML = header;
