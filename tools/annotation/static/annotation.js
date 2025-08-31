@@ -114,12 +114,24 @@
     const maxEl = rg.querySelector('#regression-max');
     if (range && number && minEl && maxEl) {
       const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
-      const syncNumber = () => { number.value = range.value; };
-      const syncRange = () => { range.value = number.value; };
+      const clearShortcutSelection = () => {
+        document.querySelectorAll('input[name="reg-shortcut"]').forEach(r => { r.checked = false; });
+      };
+      const setStepForBounds = (minV, maxV) => {
+        const span = Math.abs(maxV - minV);
+        let step = 1;
+        if (span <= 1) step = 0.01;
+        if (span <= 0.1) step = 0.001;
+        range.step = String(step);
+        number.step = String(step);
+      };
+      const syncNumber = () => { number.value = range.value; clearShortcutSelection(); };
+      const syncRange = () => { range.value = number.value; clearShortcutSelection(); };
       const syncBounds = () => {
         let minV = parseFloat(minEl.value); if (!Number.isFinite(minV)) minV = 0;
         let maxV = parseFloat(maxEl.value); if (!Number.isFinite(maxV)) maxV = 100;
         if (maxV < minV) { const t = minV; minV = maxV; maxV = t; minEl.value = String(minV); maxEl.value = String(maxV); }
+        setStepForBounds(minV, maxV);
         range.min = String(minV); range.max = String(maxV);
         number.min = String(minV); number.max = String(maxV);
         const cur = parseFloat(number.value);
@@ -844,18 +856,47 @@
     chips.style.display = 'flex';
     chips.style.flexWrap = 'wrap';
     chips.style.gap = '6px';
+    const groupName = 'reg-shortcut';
     (state.regressionShortcuts || []).forEach(val => {
-      const chip = document.createElement('span');
-      chip.className = 'badge';
-      chip.textContent = String(val);
-      chip.title = 'Click to remove';
-      chip.style.cursor = 'pointer';
-      chip.addEventListener('click', () => {
-        state.regressionShortcuts = (state.regressionShortcuts || []).filter(v => v !== val);
+      const id = `reg-shortcut-${String(val).replace(/[^a-zA-Z0-9_-]/g,'_')}`;
+      const label = document.createElement('label');
+      label.className = 'badge badge--selectable';
+      label.setAttribute('for', id);
+      label.title = 'Left click: select | Right click: remove';
+
+      const input = document.createElement('input');
+      input.type = 'radio';
+      input.name = groupName;
+      input.id = id;
+      input.value = String(val);
+      input.style.display = 'none';
+
+      const text = document.createElement('span');
+      text.textContent = String(val);
+
+      input.addEventListener('change', () => {
+        const rg = document.getElementById('regression-panel');
+        if (!rg) return;
+        const range = rg.querySelector('#regression-input');
+        const number = rg.querySelector('#regression-number');
+        const v = parseFloat(input.value);
+        if (Number.isFinite(v)) {
+          if (number) number.value = String(v);
+          if (range) range.value = String(v);
+        }
+      });
+
+      label.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const v = parseFloat(input.value);
+        state.regressionShortcuts = (state.regressionShortcuts || []).filter(x => x !== v);
         saveRegressionShortcuts();
         renderRegressionShortcuts();
       });
-      chips.appendChild(chip);
+
+      label.appendChild(input);
+      label.appendChild(text);
+      chips.appendChild(label);
     });
     wrap.appendChild(chips);
     list.appendChild(wrap);
