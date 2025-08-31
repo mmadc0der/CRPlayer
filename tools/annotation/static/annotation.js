@@ -523,6 +523,21 @@
     return null;
   }
 
+  // Persist current selection to localStorage and cookies
+  function saveSessionSelection() {
+    try {
+      if (state.session_id != null) localStorage.setItem('currentSession', String(state.session_id));
+      if (state.project_name != null) localStorage.setItem('currentProject', String(state.project_name));
+      if (state.project_id != null) localStorage.setItem('currentProjectId', String(state.project_id));
+      if (state.dataset_id != null && state.session_id != null) {
+        localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
+        setCookie('currentDatasetId', String(state.dataset_id));
+      }
+      setCookie('currentProject', state.project_name || '');
+      if (state.project_id != null) setCookie('currentProjectId', String(state.project_id));
+    } catch {}
+  }
+
   // Modal helpers
   function getModal(id) { return document.getElementById(id); }
   function openModal(id) {
