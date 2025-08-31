@@ -23,7 +23,6 @@
         if (sIdx > 0) return u.pathname.substring(0, sIdx);
         if (u.pathname.startsWith('/annotation')) return '/annotation';
       }
-
     } catch {}
     return '';
   })();
@@ -746,7 +745,17 @@
 
     // Show/hide mode-specific areas
     if (rgPanel) { if (isRegr) rgPanel.classList.remove('hidden'); else rgPanel.classList.add('hidden'); }
-
+    
+    // Helper: Set the Categories section header text
+    function setCategoriesHeader(text) {
+      const container = document.getElementById('categories-container');
+      if (!container) return;
+      const section = container.closest('.panel__section');
+      if (!section) return;
+      const h3 = section.querySelector('h3.panel__title');
+      if (h3) h3.textContent = text;
+    }
+    
     // Render dynamic contents for panels when visible
     if (isSingle) {
       setCategoriesHeader('Categories');
