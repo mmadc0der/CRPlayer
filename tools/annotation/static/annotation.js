@@ -23,22 +23,32 @@
         if (sIdx > 0) return u.pathname.substring(0, sIdx);
         if (u.pathname.startsWith('/annotation')) return '/annotation';
       }
+
+  // Helper: Set the Categories section header text
+  function setCategoriesHeader(text) {
+    const container = document.getElementById('categories-container');
+    if (!container) return;
+    const section = container.closest('.panel__section');
+    if (!section) return;
+    const h3 = section.querySelector('h3.panel__title');
+    if (h3) h3.textContent = text;
+  }
+
     } catch {}
     return '';
   })();
 
-  // ---------- Multi-label UI ----------
+  // ---------- Multi-label UI (reuse #category-list with checkboxes) ----------
   function renderMultilabelPanel() {
-    const ml = document.getElementById('multilabel-panel');
-    if (!ml) return;
-    // Build checklist from state.datasetClasses into existing panel section
+    const list = els.categoryList && els.categoryList();
+    if (!list) return;
+    list.innerHTML = '';
+    list.classList.add('categories');
     const rows = state.datasetClasses || [];
-    const header = '<h3 class="panel__title">Multi-label</h3>';
-    const wrap = document.createElement('div');
-    wrap.className = 'panel__body';
-    wrap.style.display = 'grid';
-    wrap.style.gridTemplateColumns = 'repeat(auto-fill,minmax(160px,1fr))';
-    wrap.style.gap = '8px';
+    const grid = document.createElement('div');
+    grid.style.display = 'grid';
+    grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(160px,1fr))';
+    grid.style.gap = '8px';
     rows.forEach(r => {
       const id = `ml-${r.id}`;
       const item = document.createElement('label');
@@ -47,14 +57,13 @@
       item.style.alignItems = 'center';
       item.style.gap = '8px';
       item.innerHTML = `<input type="checkbox" id="${id}" data-class-id="${r.id}"><span>${r.name}</span>`;
-      wrap.appendChild(item);
+      grid.appendChild(item);
     });
-    ml.innerHTML = header;
-    ml.appendChild(wrap);
+    list.appendChild(grid);
   }
 
   function getSelectedMultilabelClassIds() {
-    const checks = document.querySelectorAll('#multilabel-panel input[type="checkbox"][data-class-id]');
+    const checks = document.querySelectorAll('#category-list input[type="checkbox"][data-class-id]');
     const ids = [];
     checks.forEach(ch => { if (ch.checked) ids.push(parseInt(ch.getAttribute('data-class-id'), 10)); });
     return ids;
@@ -99,12 +108,12 @@
     wrap.innerHTML = `
       <label style="align-self:center">Value</label>
       <input id="regression-input" type="range" min="0" max="100" step="1" value="0" style="width:100%"> 
-      <input id="regression-number" type="number" min="0" max="100" step="1" value="0" style="width:96px">
+      <input id="regression-number" class="input" type="number" min="0" max="100" step="1" value="0" style="width:96px">
       <div style="grid-column: 1 / -1; display:flex; gap:12px; align-items:center;">
         <label>Min</label>
-        <input id="regression-min" type="number" value="0" style="width:96px">
+        <input id="regression-min" class="input" type="number" value="0" style="width:96px">
         <label>Max</label>
-        <input id="regression-max" type="number" value="100" style="width:96px">
+        <input id="regression-max" class="input" type="number" value="100" style="width:96px">
       </div>
     `;
     rg.innerHTML = header;
@@ -718,15 +727,9 @@
 
   // --- Mode toggle scaffolding ---
   function ensureModePanels() {
-    // Mount mode-specific containers inside the existing Categories section
+    // Only need a regression panel container; MultiLabel reuses #category-list
     const container = document.getElementById('categories-container');
     if (!container) return;
-    if (!document.getElementById('multilabel-panel')) {
-      const ml = document.createElement('div');
-      ml.id = 'multilabel-panel';
-      ml.className = 'hidden';
-      container.appendChild(ml);
-    }
     if (!document.getElementById('regression-panel')) {
       const rg = document.createElement('div');
       rg.id = 'regression-panel';
@@ -746,23 +749,32 @@
     const addBtn = els.addCategoryBtn && els.addCategoryBtn();
     const newCat = els.newCategoryInput && els.newCategoryInput();
     const shortcuts = els.dynamicShortcuts && els.dynamicShortcuts();
-    const mlPanel = document.getElementById('multilabel-panel');
     const rgPanel = document.getElementById('regression-panel');
 
-    // Show/hide SingleLabel controls (keep Add button visible for accessibility)
-    [catList, newCat, shortcuts].forEach(el => {
-      if (!el) return;
-      if (isSingle) el.classList.remove('hidden'); else el.classList.add('hidden');
-    });
-    if (addBtn) addBtn.classList.remove('hidden');
+    // Keep core controls visible across modes; styling/behavior will change per mode
+    [catList, newCat, addBtn].forEach(el => { if (el) el.classList.remove('hidden'); });
 
     // Show/hide mode-specific areas
-    if (mlPanel) { if (isMulti) mlPanel.classList.remove('hidden'); else mlPanel.classList.add('hidden'); }
     if (rgPanel) { if (isRegr) rgPanel.classList.remove('hidden'); else rgPanel.classList.add('hidden'); }
 
     // Render dynamic contents for panels when visible
-    if (isMulti) renderMultilabelPanel();
-    if (isRegr) renderRegressionPanel();
+    if (isSingle) {
+      setCategoriesHeader('Categories');
+      configureAddControlsForMode('Single');
+      if (typeof renderCategories === 'function') renderCategories();
+    }
+    if (isMulti) {
+      // Categories header remains "Categories" and input stays text
+      setCategoriesHeader('Categories');
+      configureAddControlsForMode('MultiLabel');
+      renderMultilabelPanel();
+    }
+    if (isRegr) {
+      setCategoriesHeader('Shortcuts');
+      configureAddControlsForMode('Regression');
+      renderRegressionPanel();
+      renderRegressionShortcuts();
+    }
   }
 
   async function listDatasetClasses(datasetId) {
@@ -807,6 +819,85 @@
       localStorage.setItem(lsKey('categories'), JSON.stringify(state.categories));
       localStorage.setItem(lsKey('hotkeys'), JSON.stringify(state.hotkeys));
     } catch {}
+  }
+
+  // ----- Regression shortcuts (simple persistence and rendering) -----
+  function loadRegressionShortcuts() {
+    try {
+      const s = localStorage.getItem(lsKey('regression_shortcuts'));
+      state.regressionShortcuts = s ? JSON.parse(s) : [];
+    } catch { state.regressionShortcuts = []; }
+  }
+  function saveRegressionShortcuts() {
+    try { localStorage.setItem(lsKey('regression_shortcuts'), JSON.stringify(state.regressionShortcuts || [])); } catch {}
+  }
+  function renderRegressionShortcuts() {
+    const list = els.categoryList && els.categoryList();
+    if (!list) return;
+    // Replace existing list with shortcuts
+    list.innerHTML = '';
+    const existing = document.getElementById('reg-shortcuts');
+    if (existing) existing.remove();
+    const wrap = document.createElement('div');
+    wrap.id = 'reg-shortcuts';
+    wrap.style.marginTop = '8px';
+    const chips = document.createElement('div');
+    chips.style.display = 'flex';
+    chips.style.flexWrap = 'wrap';
+    chips.style.gap = '6px';
+    (state.regressionShortcuts || []).forEach(val => {
+      const chip = document.createElement('span');
+      chip.className = 'badge';
+      chip.textContent = String(val);
+      chip.title = 'Click to remove';
+      chip.style.cursor = 'pointer';
+      chip.addEventListener('click', () => {
+        state.regressionShortcuts = (state.regressionShortcuts || []).filter(v => v !== val);
+        saveRegressionShortcuts();
+        renderRegressionShortcuts();
+      });
+      chips.appendChild(chip);
+    });
+    wrap.appendChild(chips);
+    list.appendChild(wrap);
+  }
+
+  // ----- Context-aware Add and input controls -----
+  function configureAddControlsForMode(mode) {
+    const input = els.newCategoryInput && els.newCategoryInput();
+    const btn = els.addCategoryBtn && els.addCategoryBtn();
+    if (!input || !btn) return;
+    if (mode === 'Regression') {
+      // number input for shortcuts
+      input.setAttribute('type', 'number');
+      input.classList.add('input');
+      input.placeholder = 'Add new shortcut...';
+      loadRegressionShortcuts();
+      btn.onclick = () => {
+        const raw = input.value.trim();
+        if (raw === '') { toast('Enter a number'); return; }
+        const n = Number(raw);
+        if (!Number.isFinite(n)) { toast('Invalid number'); return; }
+        state.regressionShortcuts = state.regressionShortcuts || [];
+        if (!state.regressionShortcuts.includes(n)) state.regressionShortcuts.push(n);
+        saveRegressionShortcuts();
+        renderRegressionShortcuts();
+        input.value = '';
+      };
+    } else {
+      // Single/MultiLabel: text input for categories
+      input.setAttribute('type', 'text');
+      input.classList.add('input');
+      input.placeholder = 'Add new category...';
+      btn.onclick = () => {
+        const name = (input.value || '').trim();
+        if (!name) { toast('Name required'); return; }
+        if (!state.categories.includes(name)) state.categories.push(name);
+        saveCategoriesToStorage();
+        renderCategories();
+        input.value = '';
+      };
+    }
   }
 
   // Persist dataset-session settings to backend
