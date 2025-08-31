@@ -60,20 +60,32 @@
   const els = {
     projectSelect: () => document.getElementById('project-select'),
     datasetSelect: () => document.getElementById('dataset-select'),
-    sessionList: () => document.getElementById('session-list'),
     sessionSelector: () => document.getElementById('session-selector'),
     annotationInterface: () => document.getElementById('annotation-interface'),
     sessionInfo: () => document.getElementById('session-info'),
-    img: () => document.getElementById('frame-img'),
+    img: () => document.getElementById('frame-image'),
     frameId: () => document.getElementById('frame-id'),
     frameFilename: () => document.getElementById('frame-filename'),
     frameTimestamp: () => document.getElementById('frame-timestamp'),
-    notes: () => document.getElementById('notes'),
+    notes: () => document.getElementById('notes-input'),
     categoryList: () => document.getElementById('category-list'),
     dynamicShortcuts: () => document.getElementById('dynamic-shortcuts'),
     progressFill: () => document.getElementById('progress-fill'),
     progressText: () => document.getElementById('progress-text'),
     sessionName: () => document.getElementById('session-name'),
+    // Category add controls
+    addCategoryBtn: () => document.getElementById('add-category-btn'),
+    newCategoryInput: () => document.getElementById('new-category-input'),
+    // Navigation & actions
+    firstBtn: () => document.getElementById('first-btn'),
+    prevBtn: () => document.getElementById('prev-btn'),
+    nextBtn: () => document.getElementById('next-btn'),
+    lastBtn: () => document.getElementById('last-btn'),
+    frameInput: () => document.getElementById('frame-input'),
+    saveNextBtn: () => document.getElementById('save-next-btn'),
+    saveBtn: () => document.getElementById('save-btn'),
+    skipBtn: () => document.getElementById('skip-btn'),
+    sessionList: () => document.getElementById('session-list')
   };
 
   // App state
@@ -114,17 +126,15 @@
 
   async function saveSettings() {
     if (!state.dataset_id || !state.session_id) return;
-    const payload = {
-      session_id: state.session_id,
-      dataset_id: state.dataset_id,
-      settings: {
-        categories: state.categories || [],
-        hotkeys: state.hotkeys || {},
-        regressionMin: state.regressionMin,
-        regressionMax: state.regressionMax,
-      },
+    const settings = {
+      categories: state.categories || [],
+      hotkeys: state.hotkeys || {},
+      regressionMin: state.regressionMin,
+      regressionMax: state.regressionMax,
     };
-    try { await apiPost('settings', payload); } catch {}
+    try {
+      await apiPut(`datasets/${encodeURIComponent(state.dataset_id)}/sessions/${encodeURIComponent(state.session_id)}/settings`, { settings });
+    } catch {}
   }
   let saveSettingsTimer = null;
   function debouncedSaveSettings() {
@@ -168,7 +178,7 @@
     sel.innerHTML = '';
     const pid = getSelectedProjectId();
     if (!pid) return;
-    const datasets = await apiGet(`datasets?project_id=${encodeURIComponent(pid)}`).catch(() => []);
+    const datasets = await listDatasets(pid).catch(() => []);
     datasets.forEach(d => {
       const o = document.createElement('option');
       o.value = String(d.id);
@@ -195,14 +205,20 @@
     return classes;
   }
   async function listTargetTypes() {
-    return await apiGet('target-types').catch(() => []);
+    return await apiGet('target_types').catch(() => []);
+  }
+
+  async function listDatasets(projectId) {
+    if (!projectId) return [];
+    return await apiGet(`projects/${encodeURIComponent(projectId)}/datasets`).catch(() => []);
   }
 
   async function createProject(name, description = '') {
     return await apiPost('projects', { name, description }).catch(() => null);
   }
   async function createDataset(project_id, name, description = '', target_type_id = 1) {
-    return await apiPost('datasets', { project_id, name, description, target_type_id }).catch(() => null);
+    if (!project_id) return null;
+    return await apiPost(`projects/${encodeURIComponent(project_id)}/datasets`, { name, description, target_type_id }).catch(() => null);
   }
 
   // ---------- Dataset/session helpers ----------
@@ -217,7 +233,7 @@
   async function enrollSession(datasetId, sessionId) {
     try {
       const payload = { session_id: sessionId };
-      const res = await apiPost(`datasets/${encodeURIComponent(datasetId)}/enroll`, payload);
+      const res = await apiPost(`datasets/${encodeURIComponent(datasetId)}/enroll_session`, payload);
       return !!res;
     } catch { return false; }
   }
@@ -248,8 +264,7 @@
 
   async function fetchDatasetSessionSettings(datasetId, sessionId) {
     try {
-      const q = new URLSearchParams({ dataset_id: String(datasetId), session_id: String(sessionId) }).toString();
-      return await apiGet(`settings?${q}`);
+      return await apiGet(`datasets/${encodeURIComponent(datasetId)}/sessions/${encodeURIComponent(sessionId)}/settings`);
     } catch { return null; }
   }
 
@@ -276,8 +291,7 @@
   async function refreshProgress() {
     try {
       if (!state.dataset_id || !state.session_id) return;
-      const q = new URLSearchParams({ dataset_id: String(state.dataset_id), session_id: String(state.session_id) }).toString();
-      const res = await apiGet(`progress?${q}`);
+      const res = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/progress`);
       if (res && typeof res.annotated === 'number' && typeof res.total === 'number') {
         updateProgress(res.annotated, res.total);
         state.totalFrames = res.total;
