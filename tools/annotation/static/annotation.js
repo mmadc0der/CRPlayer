@@ -1493,29 +1493,19 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
   async function loadFrame(idx) {
     if (idx < 0) idx = 0;
     try {
-      const data = await apiGet('frame', {
+      // Use unified /api/frame; include dataset_id when available to retrieve annotation payload
+      const params = {
         session_id: state.session_id,
         project_name: state.project_name,
         idx: idx,
-      });
+      };
+      if (state.dataset_id) params.dataset_id = state.dataset_id;
+      const data = await apiGet('frame', params);
 
       state.currentIdx = idx;
       const frame = data.frame || {};
-      // Fetch annotation/effective settings for this frame so we can load notes
-      let ann = {};
-      try {
-        if (state.dataset_id) {
-          const annResp = await apiGet('annotations/frame', {
-            session_id: state.session_id,
-            dataset_id: state.dataset_id,
-            idx: idx,
-          });
-          if (annResp && annResp.annotation) ann = annResp.annotation;
-        }
-      } catch (e) {
-        // Non-fatal; continue without annotation payload
-        console.warn('Annotation fetch failed', e);
-      }
+      // Annotation/effective settings are embedded when dataset_id is provided
+      let ann = (data && data.annotation) ? data.annotation : {};
 
       // Compute total frames only once from first frame request (we don't have a stats endpoint)
       // We can infer totalFrames from last session discovery payload later; for now keep it if already set

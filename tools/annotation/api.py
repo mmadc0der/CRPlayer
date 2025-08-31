@@ -457,42 +457,24 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 pass
             q = FrameQuery(session_id=request.args.get('session_id', ''),
                            idx=int(request.args.get('idx', '-1')))
+            dataset_id_raw = request.args.get('dataset_id')
+            dataset_id = int(dataset_id_raw) if (dataset_id_raw is not None and str(dataset_id_raw).strip() != '') else None
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid query parameters', details={'error': str(e)})
             return jsonify(err.dict()), 400
 
         try:
-            # Debug: log incoming params and DB frame count
-            try:
-                sid = (q.session_id or '').strip()
-                print(f"[api][frame] session_id={sid} idx={q.idx}", flush=True)
-                sid_db = session_manager.get_session_db_id(sid)
-                if sid_db is not None:
-                    conn = get_connection()
-                    init_db(conn)
-                    try:
-                        print(f"[api][frame] db_path={get_db_path()}", flush=True)
-                    except Exception:
-                        pass
-                    total = conn.execute("SELECT COUNT(1) FROM frames WHERE session_id = ?", (sid_db,)).fetchone()[0]
-                    print(f"[api][frame] db_count={total}", flush=True)
-                else:
-                    print("[api][frame] session not in DB; showing sample IDs:", flush=True)
-                    try:
-                        conn = get_connection()
-                        init_db(conn)
-                        try:
-                            print(f"[api][frame] db_path={get_db_path()}", flush=True)
-                        except Exception:
-                            pass
-                        sample = [r[0] for r in conn.execute("SELECT session_id FROM sessions ORDER BY id DESC LIMIT 5").fetchall()]
-                        print(f"[api][frame] known session_ids (latest 5): {sample}", flush=True)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+            sid = (q.session_id or '').strip()
             frame = session_service.get_frame_by_idx(sid, q.idx)
-            # Deprecated filesystem annotation removed; return only frame
+            # Include annotation when dataset_id is provided
+            if dataset_id and dataset_id > 0:
+                try:
+                    frame_id = str(frame['frame_id'])
+                    ann = annotation_service.get_annotation_db(sid, int(dataset_id), frame_id)
+                except Exception:
+                    ann = None
+                return jsonify({'frame': frame, 'annotation': ann})
+            # Backward compatibility: only frame when no dataset_id
             return jsonify({'frame': frame})
         except IndexError as e:
             err = ErrorResponse(code='not_found', message=str(e))
