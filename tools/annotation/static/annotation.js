@@ -27,6 +27,264 @@
     return '';
   })();
 
+  // ---------- Core helpers (API, selectors, state) ----------
+  function withBase(path) {
+    try {
+      if (!path) return APP_BASE;
+      if (path.startsWith('http://') || path.startsWith('https://')) return path;
+      if (path.startsWith('/')) return APP_BASE + path;
+      return APP_BASE + '/' + path;
+    } catch { return path; }
+  }
+
+  async function apiRequest(method, path, body) {
+    const url = path.startsWith('/api') ? withBase(path) : withBase('/api/' + path.replace(/^\/?/, ''));
+    const init = { method, headers: { 'Accept': 'application/json' } };
+    if (body !== undefined) {
+      init.headers['Content-Type'] = 'application/json';
+      init.body = JSON.stringify(body);
+    }
+    const res = await fetch(url, init);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return await res.json();
+    return { ok: true };
+  }
+  const apiGet = (path) => apiRequest('GET', path);
+  const apiPost = (path, body) => apiRequest('POST', path, body);
+  const apiPut = (path, body) => apiRequest('PUT', path, body);
+  const apiDelete = (path) => apiRequest('DELETE', path);
+  const apiPostNoBody = (path) => apiRequest('POST', path);
+
+  // Element selectors used throughout UI
+  const els = {
+    projectSelect: () => document.getElementById('project-select'),
+    datasetSelect: () => document.getElementById('dataset-select'),
+    sessionList: () => document.getElementById('session-list'),
+    sessionSelector: () => document.getElementById('session-selector'),
+    annotationInterface: () => document.getElementById('annotation-interface'),
+    sessionInfo: () => document.getElementById('session-info'),
+    img: () => document.getElementById('frame-img'),
+    frameId: () => document.getElementById('frame-id'),
+    frameFilename: () => document.getElementById('frame-filename'),
+    frameTimestamp: () => document.getElementById('frame-timestamp'),
+    notes: () => document.getElementById('notes'),
+    categoryList: () => document.getElementById('category-list'),
+    dynamicShortcuts: () => document.getElementById('dynamic-shortcuts'),
+    progressFill: () => document.getElementById('progress-fill'),
+    progressText: () => document.getElementById('progress-text'),
+    sessionName: () => document.getElementById('session-name'),
+  };
+
+  // App state
+  const state = {
+    project_id: null,
+    project_name: 'default',
+    dataset_id: null,
+    dataset_name: null,
+    target_type_id: null,
+    target_type_name: null,
+    datasetClasses: [],
+    session_id: null,
+    currentIdx: 0,
+    totalFrames: null,
+    categories: [],
+    hotkeys: {},
+    regressionMin: null,
+    regressionMax: null,
+    frameSaved: true,
+  };
+  // Controller to cancel in-flight frame fetches
+  let frameRequestController = null;
+  function lsKey(k) {
+    const sid = state.session_id ? String(state.session_id) : 'global';
+    return `annot:${sid}:${k}`;
+  }
+
+  function toast(msg) {
+    try { console.log('[toast]', msg); } catch {}
+  }
+
+  function saveCategoriesToStorage() {
+    try {
+      localStorage.setItem(lsKey('categories'), JSON.stringify(state.categories || []));
+      localStorage.setItem(lsKey('hotkeys'), JSON.stringify(state.hotkeys || {}));
+    } catch {}
+  }
+
+  async function saveSettings() {
+    if (!state.dataset_id || !state.session_id) return;
+    const payload = {
+      session_id: state.session_id,
+      dataset_id: state.dataset_id,
+      settings: {
+        categories: state.categories || [],
+        hotkeys: state.hotkeys || {},
+        regressionMin: state.regressionMin,
+        regressionMax: state.regressionMax,
+      },
+    };
+    try { await apiPost('settings', payload); } catch {}
+  }
+  let saveSettingsTimer = null;
+  function debouncedSaveSettings() {
+    if (saveSettingsTimer) clearTimeout(saveSettingsTimer);
+    saveSettingsTimer = setTimeout(saveSettings, 400);
+  }
+
+  function getSelectedProjectId() {
+    const sel = els.projectSelect();
+    if (!sel) return null;
+    const opt = sel.selectedOptions && sel.selectedOptions[0];
+    if (opt && opt.dataset && opt.dataset.projectId) return parseInt(opt.dataset.projectId, 10);
+    const val = sel.value != null ? parseInt(sel.value, 10) : NaN;
+    return Number.isFinite(val) ? val : null;
+  }
+
+  async function populateProjectSelect(selectName = null) {
+    const sel = els.projectSelect();
+    if (!sel) return;
+    sel.innerHTML = '';
+    const projects = await apiGet('projects').catch(() => []);
+    projects.forEach(p => {
+      const o = document.createElement('option');
+      o.value = String(p.id);
+      o.textContent = String(p.name || '');
+      o.dataset.projectId = String(p.id);
+      o.dataset.projectName = String(p.name || '');
+      sel.appendChild(o);
+    });
+    if (selectName) {
+      const opt = Array.from(sel.options).find(o => (o.textContent || '') === String(selectName));
+      if (opt) sel.value = opt.value;
+    }
+    const opt = sel.selectedOptions && sel.selectedOptions[0];
+    if (opt) { state.project_id = parseInt(opt.dataset.projectId, 10); state.project_name = opt.dataset.projectName; }
+  }
+
+  async function populateDatasetSelect(selectId = null) {
+    const sel = els.datasetSelect();
+    if (!sel) return;
+    sel.innerHTML = '';
+    const pid = getSelectedProjectId();
+    if (!pid) return;
+    const datasets = await apiGet(`datasets?project_id=${encodeURIComponent(pid)}`).catch(() => []);
+    datasets.forEach(d => {
+      const o = document.createElement('option');
+      o.value = String(d.id);
+      o.textContent = String(d.name || '');
+      o.dataset.datasetId = String(d.id);
+      o.dataset.datasetName = String(d.name || '');
+      sel.appendChild(o);
+    });
+    if (selectId) sel.value = String(selectId);
+    const opt = sel.selectedOptions && sel.selectedOptions[0];
+    if (opt) { state.dataset_id = parseInt(opt.datasetId || sel.value, 10); state.dataset_name = opt.datasetName; }
+  }
+
+  async function fetchDatasetDetails(datasetId) {
+    return await apiGet(`datasets/${datasetId}`).catch(() => null);
+  }
+  async function loadDatasetClasses(datasetId) {
+    const details = await fetchDatasetDetails(datasetId);
+    const classes = (details && Array.isArray(details.classes)) ? details.classes : [];
+    state.datasetClasses = classes;
+    // Update single vs multi-label UI based on target type
+    state.target_type_name = details ? details.target_type_name : state.target_type_name;
+    state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
+    return classes;
+  }
+  async function listTargetTypes() {
+    return await apiGet('target-types').catch(() => []);
+  }
+
+  async function createProject(name, description = '') {
+    return await apiPost('projects', { name, description }).catch(() => null);
+  }
+  async function createDataset(project_id, name, description = '', target_type_id = 1) {
+    return await apiPost('datasets', { project_id, name, description, target_type_id }).catch(() => null);
+  }
+
+  // ---------- Dataset/session helpers ----------
+  async function listDatasetEnrollments(datasetId) {
+    try {
+      const res = await apiGet(`datasets/${encodeURIComponent(datasetId)}/enrollments`);
+      // Expect array of session_ids
+      return Array.isArray(res) ? res : [];
+    } catch { return []; }
+  }
+
+  async function enrollSession(datasetId, sessionId) {
+    try {
+      const payload = { session_id: sessionId };
+      const res = await apiPost(`datasets/${encodeURIComponent(datasetId)}/enroll`, payload);
+      return !!res;
+    } catch { return false; }
+  }
+
+  async function ensureDatasetSelected(sessionId) {
+    // If dataset already chosen, ensure it's enrolled; otherwise try to restore from localStorage
+    if (!state.dataset_id) {
+      try {
+        const saved = localStorage.getItem(`dataset:${sessionId}`);
+        if (saved) {
+          const obj = JSON.parse(saved);
+          if (obj && obj.id) {
+            state.dataset_id = obj.id;
+            state.dataset_name = obj.name || null;
+          }
+        }
+      } catch {}
+    }
+    if (!state.dataset_id) return; // caller may prompt user
+    try {
+      const enrolled = await listDatasetEnrollments(state.dataset_id);
+      const isEnrolled = Array.isArray(enrolled) && enrolled.includes(sessionId);
+      if (!isEnrolled) {
+        await enrollSession(state.dataset_id, sessionId);
+      }
+    } catch {}
+  }
+
+  async function fetchDatasetSessionSettings(datasetId, sessionId) {
+    try {
+      const q = new URLSearchParams({ dataset_id: String(datasetId), session_id: String(sessionId) }).toString();
+      return await apiGet(`settings?${q}`);
+    } catch { return null; }
+  }
+
+  function applyModeVisibility() {
+    const t = state.target_type_name;
+    // Panels
+    const catList = els.categoryList && els.categoryList();
+    const mlPanel = document.getElementById('multilabel-panel') || null; // optional
+    const regPanel = document.getElementById('regression-panel') || null;
+    // Determine mode
+    const isSingle = (t === 'SingleLabelClassification') || (!t);
+    const isMulti = (t === 'MultiLabelClassification');
+    const isReg = (t === 'Regression');
+    if (catList) catList.parentElement && (catList.parentElement.style.display = isSingle ? '' : (isMulti ? '' : ''));
+    if (regPanel) regPanel.style.display = isReg ? '' : 'none';
+    // Render appropriate content
+    if (isMulti) {
+      renderMultilabelPanel();
+    } else if (isSingle) {
+      renderCategories();
+    }
+  }
+
+  async function refreshProgress() {
+    try {
+      if (!state.dataset_id || !state.session_id) return;
+      const q = new URLSearchParams({ dataset_id: String(state.dataset_id), session_id: String(state.session_id) }).toString();
+      const res = await apiGet(`progress?${q}`);
+      if (res && typeof res.annotated === 'number' && typeof res.total === 'number') {
+        updateProgress(res.annotated, res.total);
+        state.totalFrames = res.total;
+      }
+    } catch {}
+  }
+
   // ---------- Multi-label UI (reuse #category-list with checkboxes) ----------
   function renderMultilabelPanel() {
     const list = els.categoryList && els.categoryList();
