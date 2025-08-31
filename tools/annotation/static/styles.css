@@ -147,9 +147,9 @@ body {
 .categories { display: grid; gap: var(--space-2); }
 .category { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 8px 10px 0px 10px; }
 .category--selected { outline: 2px solid var(--color-accent); }
-.category input--small { width: 60px; text-align: center; }
+.category .input--small { width: 60px; text-align: center; }
 .add-category { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.add-category input { flex: 1 1 auto; width: 100%; }
+.add-category input { width: 100%; }
 
 .note { width: 100%; min-height: 84px; resize: vertical; }
 
@@ -214,7 +214,7 @@ body {
 .m-input { flex: 1 1 220px; }
 
 /* Number input styling: hide default spinners and unify look */
-input[type="number"].input { -moz-appearance: textfield; }
+input[type="number"].input { appearance: textfield; -moz-appearance: textfield; }
 input[type="number"].input::-webkit-outer-spin-button,
 input[type="number"].input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
