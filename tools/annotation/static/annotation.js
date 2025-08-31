@@ -56,6 +56,27 @@
   const apiDelete = (path) => apiRequest('DELETE', path);
   const apiPostNoBody = (path) => apiRequest('POST', path);
 
+  // GET with AbortSignal and query params support (used by frame loader)
+  async function apiGetWithSignal(path, queryParams = null, signal = undefined) {
+    const base = path.startsWith('/api') ? withBase(path) : withBase('/api/' + path.replace(/^\/?/, ''));
+    const url = new URL(base, window.location.origin);
+    if (queryParams && typeof queryParams === 'object') {
+      const usp = new URLSearchParams();
+      Object.entries(queryParams).forEach(([k, v]) => {
+        if (v === undefined || v === null) return;
+        usp.append(k, String(v));
+      });
+      // If base already had search params, preserve them
+      const existing = url.search;
+      url.search = existing ? (existing + '&' + usp.toString()) : ('?' + usp.toString());
+    }
+    const res = await fetch(url.toString(), { method: 'GET', headers: { 'Accept': 'application/json' }, signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) return await res.json();
+    return { ok: true };
+  }
+
   // Element selectors used throughout UI
   const els = {
     projectSelect: () => document.getElementById('project-select'),
@@ -521,6 +542,12 @@
       }
     } catch {}
     return null;
+  }
+
+  function deleteCookie(name) {
+    try {
+      document.cookie = `${encodeURIComponent(name)}=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/`;
+    } catch {}
   }
 
   // Persist current selection to localStorage and cookies
@@ -1379,6 +1406,18 @@
       localStorage.removeItem('currentSession');
       localStorage.removeItem('currentProject');
       localStorage.removeItem('currentProjectId');
+      // Clear session-scoped keys
+      const sid = state.session_id ? String(state.session_id) : null;
+      if (sid) {
+        try { localStorage.removeItem(`annot:${sid}:categories`); } catch {}
+        try { localStorage.removeItem(`annot:${sid}:hotkeys`); } catch {}
+        try { localStorage.removeItem(`annot:${sid}:totalFrames`); } catch {}
+        try { localStorage.removeItem(`dataset:${sid}`); } catch {}
+      }
+      // Clear cookies
+      deleteCookie('currentProject');
+      deleteCookie('currentProjectId');
+      deleteCookie('currentDatasetId');
     } catch {}
     // Update header back button to go back to dashboard
     const backBtn = document.getElementById('back-btn');
