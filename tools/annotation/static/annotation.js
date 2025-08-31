@@ -79,54 +79,6 @@
       });
     }
 
-    // Selected dataset session breakdown (table)
-    if (ds && typeof ds === 'object') {
-      const dTotal = typeof ds.total === 'number' ? ds.total : 0;
-      const dLabeled = typeof ds.labeled === 'number' ? ds.labeled : (typeof ds.annotated === 'number' ? ds.annotated : 0);
-      const dRem = Math.max(0, dTotal - dLabeled);
-
-      const section = document.createElement('div');
-      section.className = 'stats-section';
-      const header = document.createElement('div');
-      header.className = 'stats-header';
-      header.textContent = `Dataset · ${ds.name || state.dataset_name || state.dataset_id}`;
-      section.appendChild(header);
-
-      const table = document.createElement('div');
-      table.className = 'dataset-table';
-      const gridEl = document.createElement('div');
-      gridEl.className = 'dataset-table__grid';
-
-      const addRow = (cells, isHeader = false, isTotal = false) => {
-        const row = document.createElement('div');
-        row.className = 'dataset-table__row' + (isHeader ? ' dataset-table__header' : '') + (isTotal ? ' dataset-table__row--total' : '');
-        cells.forEach((text, idx) => {
-          const el = document.createElement('div');
-          el.className = 'dataset-table__cell' + (idx > 0 ? ' dataset-table__cell--num' : '');
-          el.textContent = text;
-          row.appendChild(el);
-        });
-        gridEl.appendChild(row);
-      };
-
-      // Header
-      addRow(['Session', 'Labeled', 'Total', 'Remaining'], true, false);
-      // First row: dataset total
-      addRow(['Dataset total', String(dLabeled), String(dTotal), String(dRem)], false, true);
-      // Following rows: per session
-      const sessions = Array.isArray(ds.sessions) ? ds.sessions : [];
-      sessions.forEach(s => {
-        const sL = typeof s.labeled === 'number' ? s.labeled : 0;
-        const sT = typeof s.total === 'number' ? s.total : 0;
-        const sR = Math.max(0, sT - sL);
-        addRow([ String(s.session_id || ''), String(sL), String(sT), String(sR) ]);
-      });
-
-      table.appendChild(gridEl);
-      section.appendChild(table);
-      grid.appendChild(section);
-    }
-
     if ((!pj || typeof pj !== 'object') && (!ds || typeof ds !== 'object')) {
       grid.innerHTML = '<div class="selector__meta">No stats yet</div>';
     }
