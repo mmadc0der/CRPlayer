@@ -1589,6 +1589,9 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
           session_id: state.session_id,
           dataset_id: state.dataset_id,
           frame_idx: state.currentIdx,
+          override_settings: {
+            notes: els.notes().value,
+          },
           ...(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId))
             ? { class_id: classId }
             : { category_name: category }),
