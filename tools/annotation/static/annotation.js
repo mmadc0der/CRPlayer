@@ -24,16 +24,6 @@
         if (u.pathname.startsWith('/annotation')) return '/annotation';
       }
 
-  // Helper: Set the Categories section header text
-  function setCategoriesHeader(text) {
-    const container = document.getElementById('categories-container');
-    if (!container) return;
-    const section = container.closest('.panel__section');
-    if (!section) return;
-    const h3 = section.querySelector('h3.panel__title');
-    if (h3) h3.textContent = text;
-  }
-
     } catch {}
     return '';
   })();
