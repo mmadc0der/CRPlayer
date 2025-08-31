@@ -836,7 +836,12 @@
   function loadRegressionShortcuts() {
     try {
       const s = localStorage.getItem(lsKey('regression_shortcuts'));
-      state.regressionShortcuts = s ? JSON.parse(s) : [];
+      let data = s ? JSON.parse(s) : [];
+      // Migrate from [number] -> [{value, key:null}]
+      if (Array.isArray(data) && (data.length === 0 || typeof data[0] !== 'object')) {
+        data = data.map(v => ({ value: v, key: null }));
+      }
+      state.regressionShortcuts = Array.isArray(data) ? data : [];
     } catch { state.regressionShortcuts = []; }
   }
   function saveRegressionShortcuts() {
@@ -845,61 +850,62 @@
   function renderRegressionShortcuts() {
     const list = els.categoryList && els.categoryList();
     if (!list) return;
-    // Replace existing list with shortcuts
+    // Replace existing list with category-style items
     list.innerHTML = '';
-    const existing = document.getElementById('reg-shortcuts');
-    if (existing) existing.remove();
-    const wrap = document.createElement('div');
-    wrap.id = 'reg-shortcuts';
-    wrap.style.marginTop = '8px';
-    const chips = document.createElement('div');
-    chips.style.display = 'flex';
-    chips.style.flexWrap = 'wrap';
-    chips.style.gap = '6px';
-    const groupName = 'reg-shortcut';
-    (state.regressionShortcuts || []).forEach(val => {
-      const id = `reg-shortcut-${String(val).replace(/[^a-zA-Z0-9_-]/g,'_')}`;
-      const label = document.createElement('label');
-      label.className = 'badge badge--selectable';
-      label.setAttribute('for', id);
-      label.title = 'Left click: select | Right click: remove';
+    const items = (state.regressionShortcuts || []);
+    items.forEach((item, idx) => {
+      const v = item?.value;
+      const keyVal = item?.key ?? '';
+      const row = document.createElement('div');
+      row.className = 'category';
 
-      const input = document.createElement('input');
-      input.type = 'radio';
-      input.name = groupName;
-      input.id = id;
-      input.value = String(val);
-      input.style.display = 'none';
-
-      const text = document.createElement('span');
-      text.textContent = String(val);
-
-      input.addEventListener('change', () => {
+      const left = document.createElement('div');
+      left.style.display = 'flex';
+      left.style.alignItems = 'center';
+      left.style.gap = '8px';
+      const valBtn = document.createElement('button');
+      valBtn.className = 'btn btn--small';
+      valBtn.textContent = String(v);
+      valBtn.title = 'Apply value';
+      valBtn.addEventListener('click', () => {
         const rg = document.getElementById('regression-panel');
         if (!rg) return;
         const range = rg.querySelector('#regression-input');
         const number = rg.querySelector('#regression-number');
-        const v = parseFloat(input.value);
         if (Number.isFinite(v)) {
           if (number) number.value = String(v);
           if (range) range.value = String(v);
         }
       });
+      left.appendChild(valBtn);
 
-      label.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        const v = parseFloat(input.value);
-        state.regressionShortcuts = (state.regressionShortcuts || []).filter(x => x !== v);
+      const right = document.createElement('div');
+      right.style.display = 'flex';
+      right.style.alignItems = 'center';
+      right.style.gap = '8px';
+      const keyInput = document.createElement('input');
+      keyInput.className = 'input input--small';
+      keyInput.placeholder = 'Key';
+      keyInput.value = keyVal;
+      keyInput.addEventListener('input', () => {
+        state.regressionShortcuts[idx].key = keyInput.value;
+        saveRegressionShortcuts();
+      });
+      const del = document.createElement('button');
+      del.className = 'btn';
+      del.textContent = 'Delete';
+      del.addEventListener('click', () => {
+        state.regressionShortcuts.splice(idx, 1);
         saveRegressionShortcuts();
         renderRegressionShortcuts();
       });
+      right.appendChild(keyInput);
+      right.appendChild(del);
 
-      label.appendChild(input);
-      label.appendChild(text);
-      chips.appendChild(label);
+      row.appendChild(left);
+      row.appendChild(right);
+      list.appendChild(row);
     });
-    wrap.appendChild(chips);
-    list.appendChild(wrap);
   }
 
   // ----- Context-aware Add and input controls -----
@@ -919,7 +925,8 @@
         const n = Number(raw);
         if (!Number.isFinite(n)) { toast('Invalid number'); return; }
         state.regressionShortcuts = state.regressionShortcuts || [];
-        if (!state.regressionShortcuts.includes(n)) state.regressionShortcuts.push(n);
+        const exists = state.regressionShortcuts.some(x => (typeof x === 'object' ? x.value === n : x === n));
+        if (!exists) state.regressionShortcuts.push({ value: n, key: '' });
         saveRegressionShortcuts();
         renderRegressionShortcuts();
         input.value = '';
