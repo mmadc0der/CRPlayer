@@ -183,6 +183,7 @@
     regressionMin: null,
     regressionMax: null,
     frameSaved: true,
+    selectedCategory: null,
   };
   // Controller to cancel in-flight frame fetches
   let frameRequestController = null;
@@ -1119,11 +1120,8 @@
     cats.forEach((cat) => {
       const row = document.createElement('div');
       row.className = 'category';
-
-      const radio = document.createElement('input');
-      radio.type = 'radio';
-      radio.name = 'category';
-      radio.value = String(cat);
+      row.setAttribute('data-category', String(cat));
+      row.style.cursor = 'pointer';
 
       const title = document.createElement('span');
       title.textContent = String(cat);
@@ -1145,8 +1143,7 @@
       removeBtn.className = 'btn btn--sm';
       removeBtn.setAttribute('data-remove', String(cat));
       removeBtn.textContent = 'Remove';
-
-      row.appendChild(radio);
+      
       row.appendChild(title);
       wrapDiv.appendChild(input);
       wrapDiv.appendChild(removeBtn);
@@ -1164,11 +1161,22 @@
         }
       });
 
-      radio.addEventListener('change', () => { state.frameSaved = false; highlightCategoryStates(); });
+      // Make the whole row clickable to select category
+      row.addEventListener('click', (e) => {
+        // Avoid clicks on inputs/buttons toggling selection unintentionally
+        const target = e.target;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'BUTTON')) return;
+        state.selectedCategory = String(cat);
+        state.frameSaved = false;
+        highlightCategoryStates();
+      });
 
       removeBtn.addEventListener('click', () => {
         const name = removeBtn.getAttribute('data-remove');
         state.categories = (state.categories || []).filter((c) => c !== name);
+        if (state.selectedCategory === name) {
+          state.selectedCategory = null;
+        }
         if (state.hotkeys) delete state.hotkeys[name];
         saveCategoriesToStorage();
         renderCategories();
@@ -1208,8 +1216,8 @@
     const options = document.querySelectorAll('.category');
     options.forEach((opt) => {
       opt.classList.remove('category--selected');
-      const radio = opt.querySelector('input[type="radio"]');
-      if (radio && radio.checked) opt.classList.add('category--selected');
+      const name = opt.getAttribute('data-category');
+      if (name && state.selectedCategory === name) opt.classList.add('category--selected');
     });
   }
 
@@ -1221,14 +1229,12 @@
 
   function setSelectedCategory(category) {
     if (!category) return;
-    const radio = document.querySelector(`input[name="category"][value="${category}"]`);
-    if (radio) radio.checked = true;
+    state.selectedCategory = String(category);
     highlightCategoryStates();
   }
 
   function getSelectedCategory() {
-    const selected = document.querySelector('input[name="category"]:checked');
-    return selected ? selected.value : null;
+    return state.selectedCategory || null;
   }
 
   // Core flows
@@ -1659,8 +1665,9 @@
           const key = e.key.toLowerCase();
           for (const [cat, hk] of Object.entries(state.hotkeys)) {
             if (key === hk) {
-              const radio = document.querySelector(`input[name="category"][value="${cat}"]`);
-              if (radio) { radio.checked = true; state.frameSaved = false; highlightCategoryStates(); }
+              state.selectedCategory = String(cat);
+              state.frameSaved = false;
+              highlightCategoryStates();
             }
           }
         }
