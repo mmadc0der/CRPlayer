@@ -1367,6 +1367,22 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
         await loadSessions();
       });
     }
+    // Project Manage button
+    const manageProjectsBtn = document.getElementById('manage-projects');
+    if (manageProjectsBtn) {
+      manageProjectsBtn.addEventListener('click', async () => {
+        try { await renderProjectManager(); } catch {}
+        openModal('project-modal');
+      });
+    }
+    // Dataset Manage button
+    const manageDatasetsBtn = document.getElementById('manage-datasets');
+    if (manageDatasetsBtn) {
+      manageDatasetsBtn.addEventListener('click', async () => {
+        try { await renderDatasetManager(); } catch {}
+        openModal('dataset-modal');
+      });
+    }
     // Dataset selector
     const ds = els.datasetSelect();
     if (ds) {
@@ -1498,6 +1514,12 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
   async function init() {
     // Populate projects first so toolbar has a value
     await populateProjectSelect();
+    // Secondary safeguard: if selector still empty, prompt creation
+    const ps = els.projectSelect();
+    if (ps && (!ps.options || ps.options.length === 0)) {
+      try { await renderProjectManager(); } catch {}
+      openModal('project-modal');
+    }
     await populateDatasetSelect();
     bindEvents();
 
