@@ -338,6 +338,39 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             err = ErrorResponse(code='progress_error', message='Failed to get dataset progress', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
+    # Enrollments inspection helpers
+    @bp.route('/api/datasets/<int:dataset_id>/enrollments', methods=['GET'])
+    def api_list_enrollments(dataset_id: int):
+        """Return list of session_ids enrolled in the dataset (based on annotations rows)."""
+        try:
+            conn = get_connection()
+            init_db(conn)
+            rows = conn.execute(
+                "SELECT DISTINCT session_id FROM annotations WHERE dataset_id = ?",
+                (dataset_id,),
+            ).fetchall()
+            # session_id column is stored as text (original session_id), normalize to string
+            out = [str(r[0]) for r in rows if r and r[0] is not None]
+            return jsonify(out)
+        except Exception as e:
+            err = ErrorResponse(code='enrollments_error', message='Failed to list enrollments', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
+    @bp.route('/api/datasets/<int:dataset_id>/sessions/<session_id>/enrolled', methods=['GET'])
+    def api_is_enrolled(dataset_id: int, session_id: str):
+        """Return whether the given session is enrolled in the dataset."""
+        try:
+            conn = get_connection()
+            init_db(conn)
+            row = conn.execute(
+                "SELECT 1 FROM annotations WHERE dataset_id = ? AND session_id = ? LIMIT 1",
+                (dataset_id, session_id),
+            ).fetchone()
+            return jsonify({'enrolled': bool(row is not None)})
+        except Exception as e:
+            err = ErrorResponse(code='enrollment_check_error', message='Failed to check enrollment', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
     @bp.route('/api/datasets/<int:dataset_id>/labeled', methods=['GET'])
     def api_dataset_labeled(dataset_id: int):
         try:

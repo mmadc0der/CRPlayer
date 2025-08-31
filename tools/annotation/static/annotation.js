@@ -23,6 +23,131 @@
         if (sIdx > 0) return u.pathname.substring(0, sIdx);
         if (u.pathname.startsWith('/annotation')) return '/annotation';
       }
+
+  // ---------- Multi-label UI ----------
+  function renderMultilabelPanel() {
+    const ml = document.getElementById('multilabel-panel');
+    if (!ml) return;
+    // Build checklist from state.datasetClasses
+    const rows = state.datasetClasses || [];
+    const body = document.createElement('div');
+    body.className = 'panel';
+    body.innerHTML = '<h3>Multi-label</h3>';
+    const wrap = document.createElement('div');
+    wrap.className = 'panel__body';
+    wrap.style.display = 'grid';
+    wrap.style.gridTemplateColumns = 'repeat(auto-fill,minmax(160px,1fr))';
+    wrap.style.gap = '8px';
+    rows.forEach(r => {
+      const id = `ml-${r.id}`;
+      const item = document.createElement('label');
+      item.setAttribute('for', id);
+      item.style.display = 'flex';
+      item.style.alignItems = 'center';
+      item.style.gap = '8px';
+      item.innerHTML = `<input type="checkbox" id="${id}" data-class-id="${r.id}"><span>${r.name}</span>`;
+      wrap.appendChild(item);
+    });
+    body.appendChild(wrap);
+    ml.innerHTML = '';
+    ml.appendChild(body);
+  }
+
+  function getSelectedMultilabelClassIds() {
+    const checks = document.querySelectorAll('#multilabel-panel input[type="checkbox"][data-class-id]');
+    const ids = [];
+    checks.forEach(ch => { if (ch.checked) ids.push(parseInt(ch.getAttribute('data-class-id'), 10)); });
+    return ids;
+  }
+
+  async function saveMultilabel() {
+    if (!state.dataset_id) { toast('Select a dataset first'); return false; }
+    const classIds = getSelectedMultilabelClassIds();
+    if (!classIds.length) { toast('Select at least one label'); return false; }
+    try {
+      const payload = {
+        session_id: state.session_id,
+        dataset_id: state.dataset_id,
+        frame_idx: state.currentIdx,
+        class_ids: classIds,
+      };
+      const res = await apiPost('annotations/multilabel', payload);
+      if (res && (res.ok || res.saved || res.status === 'ok')) {
+        toast('Saved');
+        refreshProgress();
+        return true;
+      }
+      toast('Save failed');
+      return false;
+    } catch (e) {
+      console.error(e);
+      toast('Error while saving');
+      return false;
+    }
+  }
+
+  // ---------- Regression UI ----------
+  function renderRegressionPanel() {
+    const rg = document.getElementById('regression-panel');
+    if (!rg) return;
+    const body = document.createElement('div');
+    body.className = 'panel';
+    body.innerHTML = '<h3>Regression</h3>';
+    const wrap = document.createElement('div');
+    wrap.className = 'panel__body';
+    wrap.style.display = 'flex';
+    wrap.style.alignItems = 'center';
+    wrap.style.gap = '12px';
+    wrap.innerHTML = `
+      <label style="min-width:80px">Value</label>
+      <input id="regression-input" type="range" min="0" max="100" step="1" value="0" style="flex:1"> 
+      <input id="regression-number" type="number" min="0" max="100" step="1" value="0" style="width:96px">
+    `;
+    body.appendChild(wrap);
+    rg.innerHTML = '';
+    rg.appendChild(body);
+    // Sync number and range
+    const range = rg.querySelector('#regression-input');
+    const number = rg.querySelector('#regression-number');
+    if (range && number) {
+      range.addEventListener('input', () => { number.value = range.value; });
+      number.addEventListener('input', () => { range.value = number.value; });
+    }
+  }
+
+  function getRegressionValue() {
+    const rg = document.getElementById('regression-panel');
+    if (!rg) return null;
+    const number = rg.querySelector('#regression-number');
+    const v = number ? parseFloat(number.value) : NaN;
+    return Number.isFinite(v) ? v : null;
+  }
+
+  async function saveRegression() {
+    if (!state.dataset_id) { toast('Select a dataset first'); return false; }
+    const v = getRegressionValue();
+    if (v == null) { toast('Enter a value'); return false; }
+    try {
+      const payload = {
+        session_id: state.session_id,
+        dataset_id: state.dataset_id,
+        frame_idx: state.currentIdx,
+        value: v,
+      };
+      const res = await apiPost('annotations/regression', payload);
+      if (res && (res.ok || res.saved || res.status === 'ok')) {
+        toast('Saved');
+        refreshProgress();
+        return true;
+      }
+      toast('Save failed');
+      return false;
+    } catch (e) {
+      console.error(e);
+      toast('Error while saving');
+      return false;
+    }
+  }
     } catch {}
     return '';
   })();
@@ -506,6 +631,68 @@
     return apiGet(`datasets/${datasetId}/progress`);
   }
 
+  async function fetchDatasetDetails(datasetId) {
+    const invalid = (v) => v == null || v === 'null' || v === 'undefined' || Number.isNaN(Number(v)) || Number(v) <= 0;
+    if (invalid(datasetId)) return null;
+    return apiGet(`datasets/${datasetId}`);
+  }
+
+  // Enrollment helpers
+  async function listDatasetEnrollments(datasetId) {
+    const invalid = (v) => v == null || v === 'null' || v === 'undefined' || Number.isNaN(Number(v)) || Number(v) <= 0;
+    if (invalid(datasetId)) return [];
+    // Returns an array of session_ids enrolled in this dataset
+    return apiGet(`datasets/${datasetId}/enrollments`).catch(() => []);
+  }
+
+  // --- Mode toggle scaffolding ---
+  function ensureModePanels() {
+    const root = els.annotationInterface && els.annotationInterface();
+    if (!root) return;
+    // Create placeholders once
+    if (!document.getElementById('multilabel-panel')) {
+      const ml = document.createElement('div');
+      ml.id = 'multilabel-panel';
+      ml.className = 'hidden';
+      ml.innerHTML = '<div class="panel"><h3>Multi-label</h3><div class="panel__body">Multiple selection UI will appear here.</div></div>';
+      root.appendChild(ml);
+    }
+    if (!document.getElementById('regression-panel')) {
+      const rg = document.createElement('div');
+      rg.id = 'regression-panel';
+      rg.className = 'hidden';
+      rg.innerHTML = '<div class="panel"><h3>Regression</h3><div class="panel__body">Slider and keypoints will appear here.</div></div>';
+      root.appendChild(rg);
+    }
+  }
+
+  function applyModeVisibility() {
+    ensureModePanels();
+    const t = state.target_type_name;
+    const isSingle = (t === 'SingleLabelClassification') || (!t); // default to single-label if unknown
+    const isMulti = (t === 'MultiLabelClassification');
+    const isRegr = (t === 'Regression');
+
+    const catList = els.categoryList && els.categoryList();
+    const addBtn = els.addCategoryBtn && els.addCategoryBtn();
+    const newCat = els.newCategoryInput && els.newCategoryInput();
+    const shortcuts = els.dynamicShortcuts && els.dynamicShortcuts();
+    const mlPanel = document.getElementById('multilabel-panel');
+    const rgPanel = document.getElementById('regression-panel');
+
+    // Show/hide SingleLabel controls
+    [catList, addBtn, newCat, shortcuts].forEach(el => {
+      if (!el) return;
+      if (isSingle) el.classList.remove('hidden'); else el.classList.add('hidden');
+    });
+    // Show/hide placeholders for other modes
+    if (mlPanel) { if (isMulti) mlPanel.classList.remove('hidden'); else mlPanel.classList.add('hidden'); }
+    if (rgPanel) { if (isRegr) rgPanel.classList.remove('hidden'); else rgPanel.classList.add('hidden'); }
+    // Render dynamic contents for panels when visible
+    if (isMulti) renderMultilabelPanel();
+    if (isRegr) renderRegressionPanel();
+  }
+
   async function listDatasetClasses(datasetId) {
     if (!datasetId) return [];
     return apiGet(`datasets/${datasetId}/classes`);
@@ -649,35 +836,45 @@
   }
 
   // UI rendering
-  function renderSessionList(sessions) {
+  function renderSessionList(sessions, enrolledSet = null) {
     const list = els.sessionList();
     list.innerHTML = '';
     sessions.forEach((s) => {
       const div = document.createElement('div');
-      div.className = 'selector__item';
+      const isEnrolled = !!(enrolledSet && enrolledSet.has(s.session_id));
+      div.className = 'selector__item' + (isEnrolled ? ' selector__item--enrolled' : '');
+      if (isEnrolled) {
+        // Visual highlight for enrolled
+        div.style.border = '2px solid #22c55e';
+        div.style.boxShadow = '0 0 0 3px rgba(34,197,94,0.15)';
+      }
+      // Make the entire card actionable
+      div.style.cursor = 'pointer';
+      const hint = isEnrolled ? 'Click to open' : 'Not enrolled — click to enroll';
       div.innerHTML = `
         <h4>${s.session_id}</h4>
         <div class="selector__meta">Game: ${s.game_name || '-'} · Frames: ${s.frames_count || '-'}</div>
         <div class="selector__meta">Started: ${s.start_time ? new Date(s.start_time).toLocaleString() : '-'}</div>
-        <div class="selector__actions" style="margin-top:6px; display:flex; gap:8px;">
-          <button class="btn btn--primary" data-action="open">Open</button>
-          <button class="btn" data-action="enroll">Enroll</button>
-        </div>
+        <div class="selector__meta" style="margin-top:6px;color:${isEnrolled ? '#15803d' : '#6b7280'}">${hint}</div>
       `;
-      const openBtn = div.querySelector('[data-action="open"]');
-      const enrollBtn = div.querySelector('[data-action="enroll"]');
-      openBtn.addEventListener('click', () => {
-        const sel = els.projectSelect();
-        const proj = sel && sel.value ? sel.value : state.project_name || 'default';
-        // If user picked a dataset in toolbar, set it as active
-        const dsSel = els.datasetSelect();
-        if (dsSel && dsSel.value) {
-          state.dataset_id = Number(dsSel.value);
-          state.dataset_name = (dsSel.selectedOptions[0] && dsSel.selectedOptions[0].dataset.datasetName) || null;
+      // Card click behavior
+      div.addEventListener('click', async () => {
+        if (isEnrolled) {
+          const sel = els.projectSelect();
+          const proj = sel && sel.value ? sel.value : state.project_name || 'default';
+          const dsSel = els.datasetSelect();
+          if (dsSel && dsSel.value) {
+            state.dataset_id = Number(dsSel.value);
+            state.dataset_name = (dsSel.selectedOptions[0] && dsSel.selectedOptions[0].dataset.datasetName) || null;
+          }
+          selectSession(s.session_id, proj, { pushHistory: true, preload: s });
+        } else {
+          if (confirm('This session is not enrolled in the selected dataset. Enroll it now?')) {
+            await startEnrollmentFlow(s.session_id);
+            await loadSessions();
+          }
         }
-        selectSession(s.session_id, proj, { pushHistory: true, preload: s });
       });
-      enrollBtn.addEventListener('click', () => startEnrollmentFlow(s.session_id));
       list.appendChild(div);
     });
     if (sessions.length === 0) {
@@ -868,7 +1065,12 @@
   async function loadSessions() {
     try {
       const sessions = await apiGet('sessions');
-      renderSessionList(sessions);
+      let enrolledSet = null;
+      if (state.dataset_id) {
+        const enrolledIds = await listDatasetEnrollments(state.dataset_id);
+        if (Array.isArray(enrolledIds)) enrolledSet = new Set(enrolledIds);
+      }
+      renderSessionList(sessions, enrolledSet);
     } catch (e) {
       console.error(e);
       toast('Failed to load sessions');
@@ -921,6 +1123,7 @@
       history.pushState({ state: 'annotation', session: session_id, project: project_name }, 'Annotation', '#annotation');
     }
     // Update dataset progress panel
+    applyModeVisibility();
     refreshProgress();
     await loadFrame(0);
   }
@@ -976,49 +1179,47 @@
   }
 
   async function saveAnnotation() {
-    // Save single-label annotation to DB-backed endpoint
-    if (!state.dataset_id) {
-      toast('Select a dataset first (use Enroll)');
-      return false;
-    }
-    const category = getSelectedCategory();
-    if (!category) {
-      toast('Pick a category');
-      return false;
-    }
-    // Map category -> class_id using backend-provided dataset classes
-    const classId = state.classIdByName ? state.classIdByName[category] : undefined;
-    try {
-      const payload = {
-        session_id: state.session_id,
-        dataset_id: state.dataset_id,
-        frame_idx: state.currentIdx,
-        // New paradigm: allow backend to create class on demand if unknown
-        ...(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId))
-          ? { class_id: classId }
-          : { category_name: category }),
-        // override_settings can be added in future
-      };
-      const res = await apiPost('annotations/single_label', payload);
-      if (res && (res.ok || res.saved || res.status === 'ok')) {
-        state.savedCategoryForFrame = category;
-        state.frameSaved = true;
-        toast('Saved');
-        // If we saved using category_name, refresh classes mapping now that backend may have created it
-        if (!(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId)))) {
-          await loadDatasetClasses(state.dataset_id);
+    const t = state.target_type_name;
+    const isSingle = (t === 'SingleLabelClassification') || (!t);
+    if (isSingle) {
+      // Save single-label annotation to DB-backed endpoint
+      if (!state.dataset_id) { toast('Select a dataset first (use Enroll)'); return false; }
+      const category = getSelectedCategory();
+      if (!category) { toast('Pick a category'); return false; }
+      const classId = state.classIdByName ? state.classIdByName[category] : undefined;
+      try {
+        const payload = {
+          session_id: state.session_id,
+          dataset_id: state.dataset_id,
+          frame_idx: state.currentIdx,
+          ...(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId))
+            ? { class_id: classId }
+            : { category_name: category }),
+        };
+        const res = await apiPost('annotations/single_label', payload);
+        if (res && (res.ok || res.saved || res.status === 'ok')) {
+          state.savedCategoryForFrame = category;
+          state.frameSaved = true;
+          toast('Saved');
+          if (!(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId)))) {
+            await loadDatasetClasses(state.dataset_id);
+          }
+          refreshProgress();
+          return true;
         }
-        // Update progress after successful save
-        refreshProgress();
-        return true;
+        toast('Save failed');
+        return false;
+      } catch (e) {
+        console.error(e);
+        toast('Error while saving');
+        return false;
       }
-      toast('Save failed');
-      return false;
-    } catch (e) {
-      console.error(e);
-      toast('Error while saving');
-      return false;
+    } else if (t === 'MultiLabelClassification') {
+      return await saveMultilabel();
+    } else if (t === 'Regression') {
+      return await saveRegression();
     }
+    return false;
   }
 
   async function saveAndNext() {
@@ -1060,10 +1261,12 @@
     // Project selector
     const ps = els.projectSelect();
     if (ps) {
-      ps.addEventListener('change', () => {
+      ps.addEventListener('change', async () => {
         state.project_name = ps.value || 'default';
         try { localStorage.setItem('currentProject', state.project_name); } catch {}
-        populateDatasetSelect();
+        await populateDatasetSelect();
+        // Refresh sessions to reflect enrollments for datasets under new project
+        await loadSessions();
       });
     }
     const manageBtn = document.getElementById('manage-projects');
@@ -1087,9 +1290,16 @@
         // Reload dataset classes when dataset changes
         if (state.dataset_id) {
           loadDatasetClasses(state.dataset_id);
-          // Fetch and apply dataset-session settings for the new dataset
-          fetchDatasetSessionSettings(state.dataset_id, state.session_id)
-            .then((settings) => {
+          // Parallel: fetch dataset details to know target type and fetch session settings
+          Promise.all([
+            fetchDatasetDetails(state.dataset_id),
+            fetchDatasetSessionSettings(state.dataset_id, state.session_id)
+          ])
+            .then(([dataset, settings]) => {
+              if (dataset && dataset.target_type_name) {
+                state.target_type_name = dataset.target_type_name;
+              }
+              // Apply settings
               if (settings && (Array.isArray(settings.categories) || settings.hotkeys)) {
                 if (Array.isArray(settings.categories)) state.categories = settings.categories;
                 if (settings.hotkeys && typeof settings.hotkeys === 'object') state.hotkeys = settings.hotkeys;
@@ -1099,6 +1309,11 @@
                 // Fallback to local defaults if backend has nothing yet
                 loadCategoriesFromStorage();
               }
+              // If Regression, clear categories/hotkeys to avoid stale UI bleed-through
+              if (state.target_type_name === 'Regression') {
+                state.categories = [];
+                state.hotkeys = {};
+              }
             })
             .catch(() => {
               loadCategoriesFromStorage();
@@ -1106,6 +1321,9 @@
             .finally(() => {
               renderCategories();
               renderDynamicShortcuts();
+              applyModeVisibility();
+              // Update session list rendering for the selected dataset's enrollments
+              loadSessions();
             });
         }
       });
