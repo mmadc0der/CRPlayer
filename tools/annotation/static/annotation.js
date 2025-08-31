@@ -1057,6 +1057,8 @@
       const input = document.createElement('input');
       input.type = 'text';
       input.placeholder = 'hotkey';
+      // Use existing small input style from stylesheet
+      input.className = 'input input--small';
       input.value = (state.hotkeys && state.hotkeys[cat]) ? String(state.hotkeys[cat]) : '';
       input.style.marginLeft = '8px';
       input.style.width = '64px';
@@ -1078,6 +1080,7 @@
         if (!state.hotkeys) state.hotkeys = {};
         state.hotkeys[cat] = v;
         saveCategoriesToStorage();
+        renderDynamicShortcuts();
         if (state.dataset_id && state.session_id) {
           debouncedSaveSettings();
         }
@@ -1103,7 +1106,10 @@
   function renderDynamicShortcuts() {
     const el = els.dynamicShortcuts();
     el.innerHTML = '';
-    Object.entries(state.hotkeys).forEach(([cat, key]) => {
+    // Build rows from categories to ensure visibility even when no hotkeys are set
+    const cats = Array.isArray(state.categories) ? state.categories : [];
+    cats.forEach((cat) => {
+      const key = state.hotkeys && state.hotkeys[cat] ? state.hotkeys[cat] : '';
       const row = document.createElement('div');
       row.className = 'shortcut';
       const left = document.createElement('span');
@@ -1111,7 +1117,8 @@
       const right = document.createElement('span');
       const keySpan = document.createElement('span');
       keySpan.className = 'key';
-      keySpan.textContent = String(key || '').toUpperCase();
+      const keyText = String(key || '').toUpperCase();
+      keySpan.textContent = keyText || '—';
       right.appendChild(keySpan);
       row.appendChild(left);
       row.appendChild(right);
@@ -1185,9 +1192,11 @@
     // Load session settings from backend and apply
     try {
       const settings = await fetchDatasetSessionSettings(state.dataset_id, session_id);
-      if (settings && (Array.isArray(settings.categories) || settings.hotkeys)) {
-        if (Array.isArray(settings.categories)) state.categories = settings.categories;
-        if (settings.hotkeys && typeof settings.hotkeys === 'object') state.hotkeys = settings.hotkeys;
+      // Normalize API shape: accept either {categories, hotkeys, regression} or {settings: {...}}
+      const s = (settings && settings.settings && typeof settings.settings === 'object') ? settings.settings : settings;
+      if (s && (Array.isArray(s.categories) || s.hotkeys)) {
+        if (Array.isArray(s.categories)) state.categories = s.categories;
+        if (s.hotkeys && typeof s.hotkeys === 'object') state.hotkeys = s.hotkeys;
         state.settingsLoaded = true;
         saveCategoriesToStorage();
       } else {
@@ -1195,21 +1204,22 @@
         loadCategoriesFromStorage();
       }
       // Apply regression settings if present
-      const reg = settings && settings.regression ? settings.regression : null;
-      if (reg) {
-        if (Number.isFinite(reg.min)) state.regressionMin = reg.min;
-        if (Number.isFinite(reg.max)) state.regressionMax = reg.max;
-        if (Array.isArray(reg.shortcuts)) state.regressionShortcuts = reg.shortcuts;
-        try {
-          if (state.regressionMin != null) localStorage.setItem(lsKey('regression_min'), String(state.regressionMin));
-          if (state.regressionMax != null) localStorage.setItem(lsKey('regression_max'), String(state.regressionMax));
-          localStorage.setItem(lsKey('regression_shortcuts'), JSON.stringify(state.regressionShortcuts || []));
-        } catch {}
-        // If current dataset is Regression, refresh UI for panel + shortcuts
-        if (state.target_type_name === 'Regression') {
-          try { renderRegressionPanel(); } catch {}
-          try { renderRegressionShortcuts(); } catch {}
-        }
+      const reg = s && s.regression ? s.regression : null;
+      const regMin = (reg && Number.isFinite(reg.min)) ? reg.min : (Number.isFinite(s?.regressionMin) ? s.regressionMin : null);
+      const regMax = (reg && Number.isFinite(reg.max)) ? reg.max : (Number.isFinite(s?.regressionMax) ? s.regressionMax : null);
+      const regShort = (reg && Array.isArray(reg.shortcuts)) ? reg.shortcuts : (Array.isArray(s?.regressionShortcuts) ? s.regressionShortcuts : null);
+      if (regMin != null) state.regressionMin = regMin;
+      if (regMax != null) state.regressionMax = regMax;
+      if (regShort) state.regressionShortcuts = regShort;
+      try {
+        if (state.regressionMin != null) localStorage.setItem(lsKey('regression_min'), String(state.regressionMin));
+        if (state.regressionMax != null) localStorage.setItem(lsKey('regression_max'), String(state.regressionMax));
+        if (state.regressionShortcuts) localStorage.setItem(lsKey('regression_shortcuts'), JSON.stringify(state.regressionShortcuts || []));
+      } catch {}
+      // If current dataset is Regression, refresh UI for panel + shortcuts
+      if (state.target_type_name === 'Regression') {
+        try { renderRegressionPanel(); } catch {}
+        try { renderRegressionShortcuts(); } catch {}
       }
     } catch {
       loadCategoriesFromStorage();
@@ -1416,8 +1426,6 @@
       }
       // Clear cookies
       deleteCookie('currentProject');
-      deleteCookie('currentProjectId');
-      deleteCookie('currentDatasetId');
     } catch {}
     // Update header back button to go back to dashboard
     const backBtn = document.getElementById('back-btn');
