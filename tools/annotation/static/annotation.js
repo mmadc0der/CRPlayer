@@ -184,6 +184,7 @@
     regressionMax: null,
     frameSaved: true,
     selectedCategory: null,
+    savedCategoryForFrame: null,
   };
   // Controller to cancel in-flight frame fetches
   let frameRequestController = null;
@@ -1216,8 +1217,11 @@
     const options = document.querySelectorAll('.category');
     options.forEach((opt) => {
       opt.classList.remove('category--selected');
+      opt.classList.remove('category--saved');
       const name = opt.getAttribute('data-category');
-      if (name && state.selectedCategory === name) opt.classList.add('category--selected');
+      if (!name) return;
+      if (state.selectedCategory === name) opt.classList.add('category--selected');
+      if (state.savedCategoryForFrame === name) opt.classList.add('category--saved');
     });
   }
 
@@ -1381,8 +1385,9 @@
 
       // Annotation fields
       const savedCat = ann?.category || ann?.annotations?.category || null;
-      setSelectedCategory(savedCat);
+      // Set saved first so subsequent selection highlight can reflect both states
       state.savedCategoryForFrame = savedCat;
+      setSelectedCategory(savedCat);
       state.frameSaved = !!savedCat;
       // Restore MultiLabel selections if present
       if (state.target_type_name === 'MultiLabelClassification') {
@@ -1462,6 +1467,8 @@
           state.savedCategoryForFrame = category;
           state.frameSaved = true;
           toast('Saved');
+          // Immediately reflect saved state (green border) without waiting for re-render
+          highlightCategoryStates();
           if (!(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId)))) {
             await loadDatasetClasses(state.dataset_id);
           }
