@@ -367,10 +367,12 @@
         await populateProjectSelect(name);
         await populateDatasetSelect();
         await renderProjectManager();
+        await loadSessions();
         toast('Project created');
       } catch { toast('Create failed'); }
     };
   }
+  ;
 
   // Dataset Management UI
   async function renderDatasetManager() {
@@ -414,6 +416,17 @@
         try {
           await apiPut(`datasets/${d.id}`, { name: newName || d.name, description: newDesc || '', target_type_id });
           await populateDatasetSelect(String(d.id));
+          // Refresh target-type UI and sessions if this dataset is selected
+          const details = await fetchDatasetDetails(d.id);
+          if (String(els.datasetSelect().value) === String(d.id)) {
+            state.dataset_id = d.id;
+            state.dataset_name = newName || d.name;
+            state.target_type_name = details ? details.target_type_name : null;
+            await loadDatasetClasses(state.dataset_id);
+            applyModeVisibility();
+            refreshProgress();
+            await loadSessions();
+          }
           await renderDatasetManager();
           toast('Dataset updated');
         } catch { toast('Update failed'); }
@@ -427,6 +440,7 @@
           await apiDelete(url);
           await populateDatasetSelect();
           await renderDatasetManager();
+          await loadSessions();
           toast('Dataset deleted');
         } catch { toast('Delete failed'); }
       };
@@ -444,7 +458,13 @@
           if (state.session_id && state.dataset_id) {
             try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
           }
+          // Update dataset-driven UI and sessions
+          const details = await fetchDatasetDetails(state.dataset_id);
+          state.target_type_name = details ? details.target_type_name : null;
+          await loadDatasetClasses(state.dataset_id);
+          applyModeVisibility();
           refreshProgress();
+          await loadSessions();
           closeModal('dataset-modal');
           toast('Dataset selected');
         }
@@ -466,6 +486,15 @@
       try {
         const created = await createDataset(projectId, name, description, target_type_id);
         await populateDatasetSelect(String(created.id));
+        // Apply target-type UI and classes for the newly selected dataset
+        const details = await fetchDatasetDetails(created.id);
+        state.dataset_id = created.id;
+        state.dataset_name = name;
+        state.target_type_name = details ? details.target_type_name : null;
+        await loadDatasetClasses(state.dataset_id);
+        applyModeVisibility();
+        refreshProgress();
+        await loadSessions();
         await renderDatasetManager();
         toast('Dataset created');
       } catch { toast('Create failed'); }
@@ -879,6 +908,14 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       const selOpt = select.selectedOptions[0];
       state.dataset_id = Number(select.value);
       state.dataset_name = selOpt ? (selOpt.dataset.datasetName || null) : null;
+      // When auto-selected, also refresh dataset details and UI mode and sessions
+      try { setCookie('currentDatasetId', String(state.dataset_id)); } catch {}
+      const details = await fetchDatasetDetails(state.dataset_id);
+      state.target_type_name = details ? details.target_type_name : null;
+      await loadDatasetClasses(state.dataset_id);
+      applyModeVisibility();
+      refreshProgress();
+      await loadSessions();
     } else {
       state.dataset_id = null;
       state.dataset_name = null;
@@ -1166,9 +1203,13 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
 
     // Ensure dataset is selected/enrolled and fetch settings
     await ensureDatasetSelected(session_id);
-    // Load dataset classes for mapping
+    // Load dataset details and classes for mapping, update UI mode
     if (state.dataset_id) {
-      await loadDatasetClasses(state.dataset_id).catch(() => {});
+      const details = await fetchDatasetDetails(state.dataset_id);
+      state.target_type_name = details ? details.target_type_name : null;
+      await loadDatasetClasses(state.dataset_id);
+      applyModeVisibility();
+      refreshProgress();
     }
     // Load session settings from backend and apply
     try {
@@ -1388,6 +1429,7 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       manageDatasetsBtn.addEventListener('click', async () => {
         try { await renderDatasetManager(); } catch {}
         openModal('dataset-modal');
+        await loadSessions();
       });
     }
     // Dataset selector
@@ -1397,20 +1439,17 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
         const sel = ds.selectedOptions[0];
         state.dataset_id = Number(ds.value);
         state.dataset_name = sel ? (sel.dataset.datasetName || null) : null;
-        // Persist selection for this session (if any) and globally to cookies
-        try {
-          if (state.session_id && state.dataset_id) {
-            localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
-          }
-          if (state.dataset_id) setCookie('currentDatasetId', String(state.dataset_id));
-        } catch {}
+        if (state.session_id && state.dataset_id) {
+          try { localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' })); } catch {}
+        }
+        try { setCookie('currentDatasetId', String(state.dataset_id)); } catch {}
         // Load dataset details and classes and update UI mode
         const details = await fetchDatasetDetails(state.dataset_id);
         state.target_type_name = details ? details.target_type_name : null;
         await loadDatasetClasses(state.dataset_id);
         applyModeVisibility();
         refreshProgress();
-        // Refresh session list highlighting with new enrollment set
+        // Refresh sessions to highlight enrollments for this dataset
         await loadSessions();
       });
     }
