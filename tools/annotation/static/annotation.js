@@ -477,6 +477,7 @@
   // App state
   let state = {
     session_id: null,
+    project_id: null,
     project_name: 'default',
     dataset_id: null,
     dataset_name: null,
@@ -770,48 +771,68 @@
   function saveSessionSelection() {
     try {
       localStorage.setItem('currentSession', state.session_id || '');
+      localStorage.setItem('currentProjectId', state.project_id || '');
       localStorage.setItem('currentProject', state.project_name || 'default');
-      if (state.dataset_id) localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
+      if (state.dataset_id) {
+        localStorage.setItem(`dataset:${state.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
+      }
       localStorage.setItem('appState', 'annotation');
     } catch {}
   }
 
-  // Projects toolbar
-  async function populateProjectSelect(prefName = null) {
-    const select = els.projectSelect();
-    if (!select) return;
-    select.innerHTML = '';
-    let projects = [];
-    try { projects = await listProjects(); } catch { projects = []; }
-    // Fallback default option if none
-    if (!projects || projects.length === 0) {
-      const opt = document.createElement('option');
-      opt.value = 'default'; opt.textContent = 'default';
-      select.appendChild(opt);
-      state.project_name = 'default';
-      return;
-    }
-    projects.forEach(p => {
-      const opt = document.createElement('option');
-      opt.value = p.name; opt.textContent = p.name; opt.dataset.projectId = p.id;
-      select.appendChild(opt);
-    });
-    // Choose preferred or saved project
-    const saved = prefName || (localStorage.getItem('currentProject') || getCookie('currentProject') || 'default');
-    const match = Array.from(select.options).find(o => o.value === saved) || select.options[0];
-    if (match) { select.value = match.value; state.project_name = match.value; }
-    // Persist to cookies when selected
-    try { setCookie('currentProject', state.project_name); } catch {}
-  }
-
-  // Use backend-provided target_type_name; no frontend mapping to avoid drift
+// Projects toolbar
+async function populateProjectSelect(pref = null) {
+const select = els.projectSelect();
+if (!select) return;
+select.innerHTML = '';
+let projects = [];
+try { projects = await listProjects(); } catch { projects = []; }
+// Fallback default option if none
+if (!projects || projects.length === 0) {
+  const opt = document.createElement('option');
+  opt.value = '0'; opt.textContent = 'default'; opt.dataset.projectId = '0'; opt.dataset.projectName = 'default';
+  select.appendChild(opt);
+  state.project_id = 0;
+  state.project_name = 'default';
+  return;
+}
+projects.forEach(p => {
+  const opt = document.createElement('option');
+  opt.value = String(p.id);
+  opt.textContent = p.name;
+  opt.dataset.projectId = String(p.id);
+  opt.dataset.projectName = p.name;
+  select.appendChild(opt);
+});
+// Choose preferred or saved project (prefer ID)
+const savedId = (pref && /^\d+$/.test(String(pref))) ? String(pref)
+               : (localStorage.getItem('currentProjectId') || getCookie('currentProjectId') || null);
+let chosen = null;
+if (savedId) {
+  chosen = Array.from(select.options).find(o => String(o.value) === String(savedId));
+}
+if (!chosen) {
+  const savedName = (pref && !/^\d+$/.test(String(pref))) ? String(pref)
+                  : (localStorage.getItem('currentProject') || getCookie('currentProject') || null);
+  if (savedName) chosen = Array.from(select.options).find(o => (o.dataset.projectName === savedName));
+}
+if (!chosen) chosen = select.options[0];
+if (chosen) {
+  select.value = chosen.value;
+  const opt = chosen;
+  state.project_id = parseInt(opt.dataset.projectId, 10);
+  state.project_name = opt.dataset.projectName || opt.textContent || 'default';
+}
+// Persist selection
+try { setCookie('currentProjectId', String(state.project_id)); setCookie('currentProject', state.project_name); } catch {}
+}
 
   function getSelectedProjectId() {
     const ps = els.projectSelect();
     if (!ps) return null;
     const opt = ps.selectedOptions && ps.selectedOptions[0];
     if (!opt) return null;
-    const pid = parseInt(opt.dataset.projectId, 10);
+    const pid = parseInt(opt.dataset.projectId || ps.value, 10);
     return Number.isFinite(pid) ? pid : null;
   }
 
@@ -890,14 +911,20 @@
       // Card click behavior
       div.addEventListener('click', async () => {
         const sel = els.projectSelect();
-        const proj = sel && sel.value ? sel.value : state.project_name || 'default';
+        let projName = state.project_name || 'default';
+        let projId = state.project_id || null;
+        if (sel && sel.selectedOptions && sel.selectedOptions[0]) {
+          const opt = sel.selectedOptions[0];
+          projName = opt.dataset.projectName || opt.textContent || projName;
+          projId = parseInt(opt.dataset.projectId || sel.value, 10);
+        }
         const dsSel = els.datasetSelect();
         if (dsSel && dsSel.value) {
           state.dataset_id = Number(dsSel.value);
           state.dataset_name = (dsSel.selectedOptions[0] && dsSel.selectedOptions[0].dataset.datasetName) || null;
         }
         if (isEnrolled) {
-          selectSession(s.session_id, proj, { pushHistory: true, preload: s });
+          selectSession(s.session_id, projName, { pushHistory: true, preload: s });
           return;
         }
         // Auto-enroll with currently selected dataset (no popups)
@@ -910,12 +937,13 @@
           // Persist selection
           try {
             localStorage.setItem(`dataset:${s.session_id}`, JSON.stringify({ id: state.dataset_id, name: state.dataset_name || '' }));
-            setCookie('currentProject', proj);
+            setCookie('currentProject', projName);
+            if (projId != null) setCookie('currentProjectId', String(projId));
             setCookie('currentDatasetId', String(state.dataset_id));
           } catch {}
           await loadSessions();
           // Auto-open after enrollment
-          selectSession(s.session_id, proj, { pushHistory: true, preload: s });
+          selectSession(s.session_id, projName, { pushHistory: true, preload: s });
         } catch (e) {
           console.error(e);
           toast('Enrollment failed');
@@ -1164,6 +1192,13 @@
     const dsText = state.dataset_name ? ` · Dataset: ${state.dataset_name} (#${state.dataset_id})` : (state.dataset_id ? ` · Dataset: #${state.dataset_id}` : '');
     els.sessionName().textContent = `Session: ${session_id} · Project: ${project_name}${dsText}`;
 
+    // Update header back button to go back to sessions
+    const backBtn = document.getElementById('back-btn');
+    if (backBtn) {
+      backBtn.textContent = 'Back to Sessions';
+      backBtn.onclick = () => showSessionSelector();
+    }
+
     saveSessionSelection();
     if (opts && opts.pushHistory) {
       history.pushState({ state: 'annotation', session: session_id, project: project_name }, 'Annotation', '#annotation');
@@ -1287,7 +1322,14 @@
       localStorage.setItem('appState', 'sessions');
       localStorage.removeItem('currentSession');
       localStorage.removeItem('currentProject');
+      localStorage.removeItem('currentProjectId');
     } catch {}
+    // Update header back button to go back to dashboard
+    const backBtn = document.getElementById('back-btn');
+    if (backBtn) {
+      backBtn.textContent = 'Back to Dashboard';
+      backBtn.onclick = () => { window.location.href = '/'; };
+    }
     if (opts && opts.pushHistory) {
       history.pushState({ state: 'sessions' }, 'Select Session', '#sessions');
     }
@@ -1308,8 +1350,15 @@
     const ps = els.projectSelect();
     if (ps) {
       ps.addEventListener('change', async () => {
-        state.project_name = ps.value || 'default';
-        try { localStorage.setItem('currentProject', state.project_name); setCookie('currentProject', state.project_name); } catch {}
+        const opt = ps.selectedOptions && ps.selectedOptions[0];
+        state.project_id = opt ? parseInt(opt.dataset.projectId || ps.value, 10) : null;
+        state.project_name = (opt && (opt.dataset.projectName || opt.textContent)) || 'default';
+        try {
+          localStorage.setItem('currentProjectId', state.project_id || '');
+          localStorage.setItem('currentProject', state.project_name);
+          setCookie('currentProjectId', String(state.project_id || ''));
+          setCookie('currentProject', state.project_name);
+        } catch {}
         await populateDatasetSelect();
         // Refresh sessions to reflect enrollments for datasets under new project
         await loadSessions();
@@ -1379,14 +1428,19 @@
     els.saveNextBtn().addEventListener('click', saveAndNext);
     els.skipBtn().addEventListener('click', () => goToFrame(state.currentIdx + 1));
 
-    // Header back button
+    // Header back button (dynamic)
     const header = document.querySelector('.header');
-    const backBtn = document.createElement('button');
-    backBtn.textContent = 'Back to Sessions';
-    backBtn.className = 'btn';
-    backBtn.style.marginTop = '8px';
-    backBtn.addEventListener('click', showSessionSelector);
-    header.appendChild(backBtn);
+    let backBtn = document.getElementById('back-btn');
+    if (!backBtn) {
+      backBtn = document.createElement('button');
+      backBtn.id = 'back-btn';
+      backBtn.className = 'btn';
+      backBtn.style.marginTop = '8px';
+      header.appendChild(backBtn);
+    }
+    // Initialize default state based on current view (on first bind we're in sessions)
+    backBtn.textContent = 'Back to Dashboard';
+    backBtn.onclick = () => { window.location.href = '/'; };
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {

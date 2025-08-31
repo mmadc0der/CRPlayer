@@ -373,7 +373,14 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             conn = get_connection()
             init_db(conn)
             row = conn.execute(
-                "SELECT 1 FROM annotations WHERE dataset_id = ? AND session_id = ? LIMIT 1",
+                """
+                SELECT 1
+                FROM annotations a
+                JOIN frames f   ON f.id = a.frame_id
+                JOIN sessions s ON s.id = f.session_id
+                WHERE a.dataset_id = ? AND s.session_id = ?
+                LIMIT 1
+                """,
                 (dataset_id, session_id),
             ).fetchone()
             return jsonify({'enrolled': bool(row is not None)})
@@ -518,6 +525,17 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             err = ErrorResponse(code='bad_request', message='Invalid payload', details={'error': str(e)})
             return jsonify(err.dict()), 400
         try:
+            # Ensure dataset target_type matches single-label; if not, auto-align to SingleLabelClassification (1)
+            try:
+                conn = get_connection()
+                init_db(conn)
+                d = db_get_dataset(conn, int(payload.dataset_id))
+                if d and d.get('target_type_name') != 'SingleLabelClassification':
+                    db_update_dataset(conn, int(payload.dataset_id), target_type_id=1)
+                    conn.commit()
+            except Exception:
+                # Non-fatal; DB triggers will still protect integrity
+                pass
             frame_id = payload.frame_id
             if frame_id is None and payload.frame_idx is not None:
                 frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
@@ -531,7 +549,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                     cls = db_get_or_create_dataset_class(conn, int(payload.dataset_id), str(payload.category_name))
                     conn.commit()
                     class_id = int(cls['id'])
-                except Exception as _:
+                except Exception:
                     class_id = None
             if class_id is None:
                 err = ErrorResponse(code='bad_request', message='class_id or category_name must resolve to a class')
