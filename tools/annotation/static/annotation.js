@@ -63,11 +63,15 @@
     const classIds = getSelectedMultilabelClassIds();
     if (!classIds.length) { toast('Select at least one label'); return false; }
     try {
+      // Map class_ids to names if we have them (backend accepts either)
+      const idToName = new Map((state.datasetClasses || []).map(r => [r.id, r.name]));
+      const categoryNames = classIds.map(id => idToName.get(id)).filter(n => typeof n === 'string' && n.length > 0);
       const payload = {
         session_id: state.session_id,
         dataset_id: state.dataset_id,
         frame_idx: state.currentIdx,
         class_ids: classIds,
+        ...(categoryNames.length > 0 ? { category_names: categoryNames } : {}),
       };
       const res = await apiPost('annotations/multilabel', payload);
       if (res && (res.ok || res.saved || res.status === 'ok')) {
@@ -611,7 +615,6 @@
     const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
     const qs = usp.toString();
     const target = qs ? `${withBase(full)}?${qs}` : withBase(full);
-    console.log(target);
     const res = await fetch(target);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
@@ -1268,8 +1271,15 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       el.innerHTML = '';
       const mk = (label, value) => {
         const d = document.createElement('div');
-        d.className = 'stat';
-        d.innerHTML = `<div class="stat__label">${label}</div><div class="stat__value">${value}</div>`;
+        d.className = 'stat-item';
+        const lab = document.createElement('div');
+        lab.className = 'stat__label';
+        lab.textContent = String(label);
+        const val = document.createElement('div');
+        val.className = 'stat__value';
+        val.textContent = String(value);
+        d.appendChild(lab);
+        d.appendChild(val);
         return d;
       };
       const total = Number.isFinite(p.total) ? Number(p.total) : null;
@@ -1283,6 +1293,10 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       el.appendChild(mk('Percent', pct != null ? `${pct.toFixed(1)}%` : '-'));
       if (state.dataset_name) el.appendChild(mk('Dataset', state.dataset_name));
       if (state.session_id) el.appendChild(mk('Session', state.session_id));
+      // Also update the header progress bar/text when we have totals
+      if (total != null && labeled != null) {
+        try { updateProgress(labeled, total); } catch {}
+      }
     } catch (e) {
       console.warn('Failed to load progress');
     }
@@ -1487,8 +1501,12 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       // We can infer totalFrames from last session discovery payload later; for now keep it if already set
       if (!state.totalFrames || state.totalFrames < 1) {
         // Try to read value from localStorage hint if we saved earlier; else leave unknown
-        const tf = parseInt(localStorage.getItem(lsKey('totalFrames') || '0'), 10);
-        if (!Number.isNaN(tf) && tf > 0) state.totalFrames = tf;
+        let tf = 0;
+        try {
+          const s = localStorage.getItem(lsKey('totalFrames'));
+          if (s != null) tf = parseInt(s, 10);
+        } catch {}
+        if (Number.isFinite(tf) && tf > 0) state.totalFrames = tf;
       }
 
       // Update image and frame info
@@ -1766,9 +1784,7 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
     });
 
     // Session selector controls
-    const btnRefresh = document.getElementById('refresh-sessions');
     const btnReindex = document.getElementById('reindex-sessions');
-    if (btnRefresh) btnRefresh.addEventListener('click', loadSessions);
     if (btnReindex) btnReindex.addEventListener('click', async () => {
       const prev = btnReindex.textContent;
       btnReindex.disabled = true;
