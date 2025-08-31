@@ -857,27 +857,17 @@
       const v = item?.value;
       const keyVal = item?.key ?? '';
       const row = document.createElement('div');
-      row.className = 'category';
+      row.className = 'category category--clickable';
+      row.tabIndex = 0; // focusable for keyboard activation
+      row.title = 'Click to apply value';
 
       const left = document.createElement('div');
       left.style.display = 'flex';
       left.style.alignItems = 'center';
       left.style.gap = '8px';
-      const valBtn = document.createElement('button');
-      valBtn.className = 'btn btn--small';
-      valBtn.textContent = String(v);
-      valBtn.title = 'Apply value';
-      valBtn.addEventListener('click', () => {
-        const rg = document.getElementById('regression-panel');
-        if (!rg) return;
-        const range = rg.querySelector('#regression-input');
-        const number = rg.querySelector('#regression-number');
-        if (Number.isFinite(v)) {
-          if (number) number.value = String(v);
-          if (range) range.value = String(v);
-        }
-      });
-      left.appendChild(valBtn);
+      const valText = document.createElement('span');
+      valText.textContent = String(v);
+      left.appendChild(valText);
 
       const right = document.createElement('div');
       right.style.display = 'flex';
@@ -904,6 +894,30 @@
 
       row.appendChild(left);
       row.appendChild(right);
+      function applyValue() {
+        const rg = document.getElementById('regression-panel');
+        if (!rg) return;
+        const range = rg.querySelector('#regression-input');
+        const number = rg.querySelector('#regression-number');
+        if (Number.isFinite(v)) {
+          if (number) number.value = String(v);
+          if (range) range.value = String(v);
+        }
+      }
+      row.addEventListener('click', (e) => {
+        // Ignore clicks on interactive controls
+        if (e.target.closest('input, button')) return;
+        applyValue();
+      });
+      row.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          // Avoid triggering click on buttons/inputs
+          if (document.activeElement === row) {
+            e.preventDefault();
+            applyValue();
+          }
+        }
+      });
       list.appendChild(row);
     });
   }
