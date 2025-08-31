@@ -138,12 +138,27 @@
         const clamped = clamp(Number.isFinite(cur) ? cur : minV, minV, maxV);
         number.value = String(clamped);
         range.value = String(clamped);
+        // Persist to state + localStorage + backend
+        state.regressionMin = minV; state.regressionMax = maxV;
+        try { localStorage.setItem(lsKey('regression_min'), String(minV)); localStorage.setItem(lsKey('regression_max'), String(maxV)); } catch {}
+        if (state.dataset_id && state.session_id) {
+          saveDatasetSessionSettings(state.dataset_id, state.session_id, { regression: { min: minV, max: maxV, shortcuts: state.regressionShortcuts || [] } }).catch(() => {});
+        }
       };
       range.addEventListener('input', syncNumber);
       number.addEventListener('input', syncRange);
       minEl.addEventListener('input', syncBounds);
       maxEl.addEventListener('input', syncBounds);
-      // Initialize bounds
+      // Initialize bounds from state, then localStorage fallback
+      let initMin = (state.regressionMin != null) ? state.regressionMin : null;
+      let initMax = (state.regressionMax != null) ? state.regressionMax : null;
+      if (initMin == null) { const s = localStorage.getItem(lsKey('regression_min')); if (s != null) initMin = parseFloat(s); }
+      if (initMax == null) { const s = localStorage.getItem(lsKey('regression_max')); if (s != null) initMax = parseFloat(s); }
+      if (!Number.isFinite(initMin)) initMin = 0;
+      if (!Number.isFinite(initMax)) initMax = 100;
+      minEl.value = String(initMin);
+      maxEl.value = String(initMax);
+      state.regressionMin = initMin; state.regressionMax = initMax;
       syncBounds();
     }
   }
@@ -550,6 +565,10 @@
     savedCategoryForFrame: null,
     frameSaved: false,
     settingsLoaded: false,
+    // Regression settings (persisted per dataset-session)
+    regressionMin: null,
+    regressionMax: null,
+    regressionShortcuts: [],
   };
 
   const els = {
@@ -841,11 +860,19 @@
       if (Array.isArray(data) && (data.length === 0 || typeof data[0] !== 'object')) {
         data = data.map(v => ({ value: v, key: null }));
       }
-      state.regressionShortcuts = Array.isArray(data) ? data : [];
+      // If state already has a value from settings, prefer it; else use storage
+      if (!Array.isArray(state.regressionShortcuts) || state.regressionShortcuts.length === 0) {
+        state.regressionShortcuts = Array.isArray(data) ? data : [];
+      }
     } catch { state.regressionShortcuts = []; }
   }
   function saveRegressionShortcuts() {
     try { localStorage.setItem(lsKey('regression_shortcuts'), JSON.stringify(state.regressionShortcuts || [])); } catch {}
+    if (state.dataset_id && state.session_id) {
+      const minV = (state.regressionMin != null) ? state.regressionMin : undefined;
+      const maxV = (state.regressionMax != null) ? state.regressionMax : undefined;
+      saveDatasetSessionSettings(state.dataset_id, state.session_id, { regression: { min: minV, max: maxV, shortcuts: state.regressionShortcuts || [] } }).catch(() => {});
+    }
   }
   function renderRegressionShortcuts() {
     const list = els.categoryList && els.categoryList();
@@ -1396,6 +1423,23 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
         // Fallback to local defaults if backend has nothing yet
         loadCategoriesFromStorage();
       }
+      // Apply regression settings if present
+      const reg = settings && settings.regression ? settings.regression : null;
+      if (reg) {
+        if (Number.isFinite(reg.min)) state.regressionMin = reg.min;
+        if (Number.isFinite(reg.max)) state.regressionMax = reg.max;
+        if (Array.isArray(reg.shortcuts)) state.regressionShortcuts = reg.shortcuts;
+        try {
+          if (state.regressionMin != null) localStorage.setItem(lsKey('regression_min'), String(state.regressionMin));
+          if (state.regressionMax != null) localStorage.setItem(lsKey('regression_max'), String(state.regressionMax));
+          localStorage.setItem(lsKey('regression_shortcuts'), JSON.stringify(state.regressionShortcuts || []));
+        } catch {}
+        // If current dataset is Regression, refresh UI for panel + shortcuts
+        if (state.target_type_name === 'Regression') {
+          try { renderRegressionPanel(); } catch {}
+          try { renderRegressionShortcuts(); } catch {}
+        }
+      }
     } catch {
       loadCategoriesFromStorage();
     }
@@ -1459,6 +1503,17 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       setSelectedCategory(savedCat);
       state.savedCategoryForFrame = savedCat;
       state.frameSaved = !!savedCat;
+      // Restore MultiLabel selections if present
+      if (state.target_type_name === 'MultiLabelClassification') {
+        const ids = (Array.isArray(ann?.class_ids) ? ann.class_ids : (Array.isArray(ann?.annotations?.class_ids) ? ann.annotations.class_ids : []));
+        if (Array.isArray(ids)) {
+          const checks = document.querySelectorAll('#category-list input[type="checkbox"][data-class-id]');
+          checks.forEach(ch => {
+            const id = parseInt(ch.getAttribute('data-class-id'), 10);
+            ch.checked = ids.includes(id);
+          });
+        }
+      }
       const notesVal = ann?.notes || ann?.annotations?.notes || '';
       els.notes().value = notesVal;
 
