@@ -153,6 +153,8 @@ body {
 .category .input--small { width: 60px; text-align: center; }
 .add-category { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .add-category input { flex: 1 1 auto; width: 100%; }
+#regression-min { width: 100%; }
+#regression-max { width: 100%;}
 
 .note { width: 100%; min-height: 84px; resize: vertical; }
 
