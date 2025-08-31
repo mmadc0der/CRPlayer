@@ -31,11 +31,9 @@
   function renderMultilabelPanel() {
     const ml = document.getElementById('multilabel-panel');
     if (!ml) return;
-    // Build checklist from state.datasetClasses
+    // Build checklist from state.datasetClasses into existing panel section
     const rows = state.datasetClasses || [];
-    const body = document.createElement('div');
-    body.className = 'panel';
-    body.innerHTML = '<h3>Multi-label</h3>';
+    const header = '<h3 class="panel__title">Multi-label</h3>';
     const wrap = document.createElement('div');
     wrap.className = 'panel__body';
     wrap.style.display = 'grid';
@@ -51,9 +49,8 @@
       item.innerHTML = `<input type="checkbox" id="${id}" data-class-id="${r.id}"><span>${r.name}</span>`;
       wrap.appendChild(item);
     });
-    body.appendChild(wrap);
-    ml.innerHTML = '';
-    ml.appendChild(body);
+    ml.innerHTML = header;
+    ml.appendChild(wrap);
   }
 
   function getSelectedMultilabelClassIds() {
@@ -93,28 +90,51 @@
   function renderRegressionPanel() {
     const rg = document.getElementById('regression-panel');
     if (!rg) return;
-    const body = document.createElement('div');
-    body.className = 'panel';
-    body.innerHTML = '<h3>Regression</h3>';
+    const header = '<h3 class="panel__title">Regression</h3>';
     const wrap = document.createElement('div');
     wrap.className = 'panel__body';
-    wrap.style.display = 'flex';
-    wrap.style.alignItems = 'center';
+    wrap.style.display = 'grid';
+    wrap.style.gridTemplateColumns = 'auto 1fr auto';
     wrap.style.gap = '12px';
     wrap.innerHTML = `
-      <label style="min-width:80px">Value</label>
-      <input id="regression-input" type="range" min="0" max="100" step="1" value="0" style="flex:1"> 
+      <label style="align-self:center">Value</label>
+      <input id="regression-input" type="range" min="0" max="100" step="1" value="0" style="width:100%"> 
       <input id="regression-number" type="number" min="0" max="100" step="1" value="0" style="width:96px">
+      <div style="grid-column: 1 / -1; display:flex; gap:12px; align-items:center;">
+        <label>Min</label>
+        <input id="regression-min" type="number" value="0" style="width:96px">
+        <label>Max</label>
+        <input id="regression-max" type="number" value="100" style="width:96px">
+      </div>
     `;
-    body.appendChild(wrap);
-    rg.innerHTML = '';
-    rg.appendChild(body);
-    // Sync number and range
+    rg.innerHTML = header;
+    rg.appendChild(wrap);
+    // Wire up interactions
     const range = rg.querySelector('#regression-input');
     const number = rg.querySelector('#regression-number');
-    if (range && number) {
-      range.addEventListener('input', () => { number.value = range.value; });
-      number.addEventListener('input', () => { range.value = number.value; });
+    const minEl = rg.querySelector('#regression-min');
+    const maxEl = rg.querySelector('#regression-max');
+    if (range && number && minEl && maxEl) {
+      const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+      const syncNumber = () => { number.value = range.value; };
+      const syncRange = () => { range.value = number.value; };
+      const syncBounds = () => {
+        let minV = parseFloat(minEl.value); if (!Number.isFinite(minV)) minV = 0;
+        let maxV = parseFloat(maxEl.value); if (!Number.isFinite(maxV)) maxV = 100;
+        if (maxV < minV) { const t = minV; minV = maxV; maxV = t; minEl.value = String(minV); maxEl.value = String(maxV); }
+        range.min = String(minV); range.max = String(maxV);
+        number.min = String(minV); number.max = String(maxV);
+        const cur = parseFloat(number.value);
+        const clamped = clamp(Number.isFinite(cur) ? cur : minV, minV, maxV);
+        number.value = String(clamped);
+        range.value = String(clamped);
+      };
+      range.addEventListener('input', syncNumber);
+      number.addEventListener('input', syncRange);
+      minEl.addEventListener('input', syncBounds);
+      maxEl.addEventListener('input', syncBounds);
+      // Initialize bounds
+      syncBounds();
     }
   }
 
@@ -698,22 +718,20 @@
 
   // --- Mode toggle scaffolding ---
   function ensureModePanels() {
-    const root = els.annotationInterface && els.annotationInterface();
-    if (!root) return;
-    // Create placeholders once
+    // Mount mode-specific containers inside the existing Categories section
+    const container = document.getElementById('categories-container');
+    if (!container) return;
     if (!document.getElementById('multilabel-panel')) {
       const ml = document.createElement('div');
       ml.id = 'multilabel-panel';
       ml.className = 'hidden';
-      ml.innerHTML = '<div class="panel"><h3>Multi-label</h3><div class="panel__body">Multiple selection UI will appear here.</div></div>';
-      root.appendChild(ml);
+      container.appendChild(ml);
     }
     if (!document.getElementById('regression-panel')) {
       const rg = document.createElement('div');
       rg.id = 'regression-panel';
       rg.className = 'hidden';
-      rg.innerHTML = '<div class="panel"><h3>Regression</h3><div class="panel__body">Slider and keypoints will appear here.</div></div>';
-      root.appendChild(rg);
+      container.appendChild(rg);
     }
   }
 
@@ -731,14 +749,17 @@
     const mlPanel = document.getElementById('multilabel-panel');
     const rgPanel = document.getElementById('regression-panel');
 
-    // Show/hide SingleLabel controls
-    [catList, addBtn, newCat, shortcuts].forEach(el => {
+    // Show/hide SingleLabel controls (keep Add button visible for accessibility)
+    [catList, newCat, shortcuts].forEach(el => {
       if (!el) return;
       if (isSingle) el.classList.remove('hidden'); else el.classList.add('hidden');
     });
-    // Show/hide placeholders for other modes
+    if (addBtn) addBtn.classList.remove('hidden');
+
+    // Show/hide mode-specific areas
     if (mlPanel) { if (isMulti) mlPanel.classList.remove('hidden'); else mlPanel.classList.add('hidden'); }
     if (rgPanel) { if (isRegr) rgPanel.classList.remove('hidden'); else rgPanel.classList.add('hidden'); }
+
     // Render dynamic contents for panels when visible
     if (isMulti) renderMultilabelPanel();
     if (isRegr) renderRegressionPanel();
