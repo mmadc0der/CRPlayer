@@ -371,6 +371,46 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             err = ErrorResponse(code='progress_error', message='Failed to get dataset progress', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
+    @bp.route('/api/projects/<int:project_id>/progress', methods=['GET'])
+    def api_project_progress(project_id: int):
+        """Aggregate progress across all datasets under a project.
+
+        Returns:
+          { total, labeled, unlabeled }
+        """
+        try:
+            conn = get_connection()
+            init_db(conn)
+            # Total annotations across datasets in the project
+            total_row = conn.execute(
+                """
+                SELECT COUNT(1) AS cnt
+                FROM annotations a
+                JOIN datasets d ON d.id = a.dataset_id
+                WHERE d.project_id = ?
+                """,
+                (project_id,),
+            ).fetchone()
+            labeled_row = conn.execute(
+                """
+                SELECT COUNT(1) AS cnt
+                FROM annotations a
+                JOIN datasets d ON d.id = a.dataset_id
+                WHERE d.project_id = ? AND a.status = 'labeled'
+                """,
+                (project_id,),
+            ).fetchone()
+            total = int(total_row[0] if total_row and total_row[0] is not None else 0)
+            labeled = int(labeled_row[0] if labeled_row and labeled_row[0] is not None else 0)
+            return jsonify({
+                'total': total,
+                'labeled': labeled,
+                'unlabeled': int(max(0, total - labeled)),
+            })
+        except Exception as e:
+            err = ErrorResponse(code='progress_error', message='Failed to get project progress', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+
     # Enrollments inspection helpers
     @bp.route('/api/datasets/<int:dataset_id>/enrollments', methods=['GET'])
     def api_list_enrollments(dataset_id: int):

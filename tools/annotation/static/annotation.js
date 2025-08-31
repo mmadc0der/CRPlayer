@@ -27,6 +27,52 @@
     return '';
   })();
 
+  // --------- Stats (dataset + project) ---------
+  async function refreshStats() {
+    const grid = document.getElementById('stats-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    // Always try dataset progress when dataset selected
+    let ds = null;
+    if (state.dataset_id) {
+      try { ds = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/progress`); } catch {}
+    }
+    // Project-level progress if we know selected project
+    let pj = null;
+    if (state.project_id != null) {
+      try { pj = await apiGet(`projects/${encodeURIComponent(state.project_id)}/progress`); } catch {}
+    }
+
+    const items = [];
+    if (ds && typeof ds === 'object') {
+      const labeled = typeof ds.labeled === 'number' ? ds.labeled : (typeof ds.annotated === 'number' ? ds.annotated : 0);
+      const total = typeof ds.total === 'number' ? ds.total : 0;
+      const pct = total > 0 ? (labeled / total) * 100 : 0;
+      items.push({ title: 'Dataset Labeled', value: `${labeled}/${total}`, subtitle: `${pct.toFixed(1)}%` });
+    }
+    if (pj && typeof pj === 'object') {
+      const labeled = typeof pj.labeled === 'number' ? pj.labeled : 0;
+      const total = typeof pj.total === 'number' ? pj.total : 0;
+      const pct = total > 0 ? (labeled / total) * 100 : 0;
+      items.push({ title: 'Project Labeled', value: `${labeled}/${total}`, subtitle: `${pct.toFixed(1)}%` });
+    }
+
+    if (items.length === 0) {
+      grid.innerHTML = '<div class="selector__meta">No stats yet</div>';
+      return;
+    }
+    items.forEach(it => {
+      const card = document.createElement('div');
+      card.className = 'stat-item';
+      const h = document.createElement('div'); h.style.fontSize = '12px'; h.style.color = 'var(--color-text-muted)'; h.textContent = it.title;
+      const v = document.createElement('div'); v.style.fontSize = '22px'; v.style.fontWeight = '600'; v.textContent = it.value;
+      const s = document.createElement('div'); s.style.marginTop = '4px'; s.style.color = 'var(--color-text-muted)'; s.textContent = it.subtitle;
+      card.appendChild(h); card.appendChild(v); card.appendChild(s);
+      grid.appendChild(card);
+    });
+  }
+
   // ---------- Core helpers (API, selectors, state) ----------
   function withBase(path) {
     try {
@@ -327,11 +373,19 @@
 
   async function refreshProgress() {
     try {
-      if (!state.dataset_id || !state.session_id) return;
+      if (!state.dataset_id) return;
       const res = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/progress`);
-      if (res && typeof res.annotated === 'number' && typeof res.total === 'number') {
-        updateProgress(res.annotated, res.total);
-        state.totalFrames = res.total;
+      if (res && typeof res === 'object') {
+        // Backend returns { labeled, total, unlabeled }. Support older { annotated, total } too.
+        const annotated = (
+          typeof res.annotated === 'number' ? res.annotated :
+          typeof res.labeled === 'number' ? res.labeled : 0
+        );
+        const total = typeof res.total === 'number' ? res.total : null;
+        if (total != null) {
+          updateProgress(annotated, total);
+          state.totalFrames = total;
+        }
       }
     } catch {}
   }
@@ -396,6 +450,7 @@
       if (res && (res.ok || res.saved || res.status === 'ok')) {
         toast('Saved');
         refreshProgress();
+        refreshStats();
         return true;
       }
       toast('Save failed');
@@ -512,6 +567,7 @@
       if (res && (res.ok || res.saved || res.status === 'ok')) {
         toast('Saved');
         refreshProgress();
+        refreshStats();
         return true;
       }
       toast('Save failed');
@@ -776,6 +832,8 @@
             // Update project-driven UI and sessions
             await populateDatasetSelect();
             await loadSessions();
+            // Update stats to reflect selected project immediately
+            refreshStats();
             closeModal('project-modal');
             toast('Project selected');
           }
@@ -897,6 +955,7 @@
           await loadDatasetClasses(state.dataset_id);
           applyModeVisibility();
           refreshProgress();
+          refreshStats();
           await loadSessions();
           closeModal('dataset-modal');
           toast('Dataset selected');
@@ -919,6 +978,7 @@
             await loadDatasetClasses(state.dataset_id);
             applyModeVisibility();
             refreshProgress();
+            refreshStats();
             await loadSessions();
           }
           await renderDatasetManager();
@@ -964,6 +1024,7 @@
         await loadDatasetClasses(state.dataset_id);
         applyModeVisibility();
         refreshProgress();
+        refreshStats();
         await loadSessions();
         await renderDatasetManager();
         toast('Dataset created');
@@ -1191,6 +1252,7 @@
       await loadDatasetClasses(state.dataset_id);
       applyModeVisibility();
       refreshProgress();
+      refreshStats();
     }
     // Load session settings from backend and apply
     try {
@@ -1251,6 +1313,7 @@
     // Update dataset progress panel
     applyModeVisibility();
     refreshProgress();
+    refreshStats();
     await loadFrame(0);
   }
 
@@ -1382,6 +1445,7 @@
             await loadDatasetClasses(state.dataset_id);
           }
           refreshProgress();
+          refreshStats();
           return true;
         }
         toast('Save failed');
@@ -1475,6 +1539,8 @@
         await populateDatasetSelect();
         // Refresh sessions to reflect enrollments for datasets under new project
         await loadSessions();
+        // Refresh dataset/project stats due to project change
+        refreshStats();
       });
     }
     // Project Manage button
@@ -1511,6 +1577,7 @@
         await loadDatasetClasses(state.dataset_id);
         applyModeVisibility();
         refreshProgress();
+        refreshStats();
         // Refresh sessions to highlight enrollments for this dataset
         await loadSessions();
       });
