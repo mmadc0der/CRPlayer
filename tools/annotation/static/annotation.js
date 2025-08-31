@@ -1353,14 +1353,21 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
     const ps = els.projectSelect();
     if (ps) {
       ps.addEventListener('change', async () => {
+        const hasOptions = ps.options && ps.options.length > 0;
         const opt = ps.selectedOptions && ps.selectedOptions[0];
-        state.project_id = opt ? parseInt(opt.dataset.projectId || ps.value, 10) : null;
-        state.project_name = (opt && (opt.dataset.projectName || opt.textContent)) || 'default';
+        if (!hasOptions || !opt) {
+          // No projects yet: prompt creation and do not override state
+          try { await renderProjectManager(); } catch {}
+          openModal('project-modal');
+          return;
+        }
+        state.project_id = parseInt(opt.dataset.projectId || ps.value, 10);
+        state.project_name = (opt.dataset.projectName || opt.textContent || '').trim() || null;
         try {
           localStorage.setItem('currentProjectId', state.project_id || '');
-          localStorage.setItem('currentProject', state.project_name);
+          localStorage.setItem('currentProject', state.project_name || '');
           setCookie('currentProjectId', String(state.project_id || ''));
-          setCookie('currentProject', state.project_name);
+          if (state.project_name) setCookie('currentProject', state.project_name);
         } catch {}
         await populateDatasetSelect();
         // Refresh sessions to reflect enrollments for datasets under new project
