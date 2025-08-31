@@ -149,7 +149,7 @@
         state.regressionMin = minV; state.regressionMax = maxV;
         try { localStorage.setItem(lsKey('regression_min'), String(minV)); localStorage.setItem(lsKey('regression_max'), String(maxV)); } catch {}
         if (state.dataset_id && state.session_id) {
-          saveDatasetSessionSettings(state.dataset_id, state.session_id, { regression: { min: minV, max: maxV, shortcuts: state.regressionShortcuts || [] } }).catch(() => {});
+          debouncedSaveSettings();
         }
       };
       range.addEventListener('input', syncNumber);
@@ -477,6 +477,7 @@
             state.dataset_id = d.id;
             state.dataset_name = newName || d.name;
             state.target_type_name = details ? details.target_type_name : null;
+            state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
             await loadDatasetClasses(state.dataset_id);
             applyModeVisibility();
             refreshProgress();
@@ -516,6 +517,7 @@
           // Update dataset-driven UI and sessions
           const details = await fetchDatasetDetails(state.dataset_id);
           state.target_type_name = details ? details.target_type_name : null;
+          state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
           await loadDatasetClasses(state.dataset_id);
           applyModeVisibility();
           refreshProgress();
@@ -546,6 +548,7 @@
         state.dataset_id = created.id;
         state.dataset_name = name;
         state.target_type_name = details ? details.target_type_name : null;
+        state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : (typeof target_type_id === 'number' ? target_type_id : null);
         await loadDatasetClasses(state.dataset_id);
         applyModeVisibility();
         refreshProgress();
@@ -565,6 +568,8 @@
     project_name: 'default',
     dataset_id: null,
     dataset_name: null,
+    target_type_id: null,
+    target_type_name: null,
     currentIdx: 0,
     totalFrames: 0,
     categories: [],
@@ -580,6 +585,9 @@
     regressionMax: null,
     regressionShortcuts: [],
   };
+  
+  // Abort controller for in-flight frame fetches
+  let frameRequestController = null;
 
   const els = {
     sessionList: () => document.getElementById('session-list'),
@@ -615,6 +623,15 @@
     dynamicShortcuts: () => document.getElementById('dynamic-shortcuts'),
   };
 
+  // Simple debounce helper
+  function debounce(fn, wait = 300) {
+    let t = null;
+    return (...args) => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => fn(...args), wait);
+    };
+  }
+
   // API client
   async function apiGet(url, params = {}) {
     const usp = new URLSearchParams(params);
@@ -622,6 +639,17 @@
     const qs = usp.toString();
     const target = qs ? `${withBase(full)}?${qs}` : withBase(full);
     const res = await fetch(target);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    return res.json();
+  }
+
+  // API GET with AbortController signal
+  async function apiGetWithSignal(url, params = {}, signal) {
+    const usp = new URLSearchParams(params);
+    const full = url.startsWith('/api') ? url : `/api/${String(url).replace(/^\/?/, '')}`;
+    const qs = usp.toString();
+    const target = qs ? `${withBase(full)}?${qs}` : withBase(full);
+    const res = await fetch(target, { signal });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   }
@@ -642,59 +670,6 @@
     const res = await fetch(withBase(full), { method: 'DELETE' });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
-  }
-
-  async function ensureDatasetSelected(sessionId) {
-    // If dataset already chosen via toolbar, accept it
-    if (Number.isFinite(Number(state.dataset_id)) && Number(state.dataset_id) > 0) {
-      return { id: Number(state.dataset_id), name: state.dataset_name || null };
-    }
-    // Try restore
-    try {
-      const saved = localStorage.getItem(`dataset:${sessionId}`);
-      if (saved) {
-        const obj = JSON.parse(saved);
-        if (obj && obj.id != null) {
-          const n = typeof obj.id === 'string' ? parseInt(obj.id, 10) : obj.id;
-          if (Number.isFinite(n) && n > 0) {
-            state.dataset_id = n; state.dataset_name = obj.name || null; return { id: n, name: state.dataset_name };
-          }
-        }
-      }
-    } catch {}
-
-    // Prompt choose or create project/dataset, and enroll idempotently
-    await startEnrollmentFlow(sessionId);
-    // After enrollment, datasetId will be last created/selected. We need to re-read from storage
-    try {
-      const saved2 = localStorage.getItem(`dataset:${sessionId}`);
-      if (saved2) {
-        const obj2 = JSON.parse(saved2);
-        if (obj2 && obj2.id != null) {
-          const n2 = typeof obj2.id === 'string' ? parseInt(obj2.id, 10) : obj2.id;
-          if (Number.isFinite(n2) && n2 > 0) {
-            state.dataset_id = n2; state.dataset_name = obj2.name || null; return { id: n2, name: state.dataset_name };
-          }
-        }
-      }
-    } catch {}
-    return null;
-  }
-
-  async function fetchDatasetSessionSettings(datasetId, sessionId) {
-    try {
-      const invalid = (v) => v == null || v === 'null' || v === 'undefined' || Number.isNaN(Number(v)) || Number(v) <= 0;
-      if (invalid(datasetId)) return {};
-      const dsid = Number(datasetId);
-      const url = `/api/datasets/${datasetId}/sessions/${encodeURIComponent(sessionId)}/settings`;
-      const res = await fetch(withBase(url));
-      if (!res.ok) throw new Error('settings fetch failed');
-      const data = await res.json();
-      return data.settings || {};
-    } catch (e) {
-      console.warn('No settings for dataset/session, using defaults');
-      return {};
-    }
   }
 
   async function apiPost(url, body) {
@@ -769,10 +744,12 @@
 
   function applyModeVisibility() {
     ensureModePanels();
-    const t = state.target_type_name;
-    const isSingle = (t === 'SingleLabelClassification') || (!t); // default to single-label if unknown
-    const isMulti = (t === 'MultiLabelClassification');
-    const isRegr = (t === 'Regression');
+    const tid = (typeof state.target_type_id === 'number') ? state.target_type_id : null;
+    const tname = state.target_type_name;
+    // Schema: 0=Regression, 1=SingleLabelClassification, 2=MultiLabelClassification
+    const isRegr = (tid === 0) || (tname === 'Regression');
+    const isSingle = (tid === 1) || (!tid && (tname === 'SingleLabelClassification' || !tname));
+    const isMulti = (tid === 2) || (tname === 'MultiLabelClassification');
 
     const catList = els.categoryList && els.categoryList();
     const addBtn = els.addCategoryBtn && els.addCategoryBtn();
@@ -880,7 +857,7 @@
     if (state.dataset_id && state.session_id) {
       const minV = (state.regressionMin != null) ? state.regressionMin : undefined;
       const maxV = (state.regressionMax != null) ? state.regressionMax : undefined;
-      saveDatasetSessionSettings(state.dataset_id, state.session_id, { regression: { min: minV, max: maxV, shortcuts: state.regressionShortcuts || [] } }).catch(() => {});
+      debouncedSaveSettings();
     }
   }
   function renderRegressionShortcuts() {
@@ -992,7 +969,11 @@
         if (!state.categories.includes(name)) state.categories.push(name);
         saveCategoriesToStorage();
         renderCategories();
-        input.value = '';
+        renderDynamicShortcuts();
+        // Persist to backend session settings
+        if (state.dataset_id && state.session_id) {
+          debouncedSaveSettings();
+        }
       };
     }
   }
@@ -1016,6 +997,22 @@
       }
       localStorage.setItem('appState', 'annotation');
     } catch {}
+  }
+
+  // Debounced settings saver
+  const debouncedSaveSettings = debounce(saveSettings, 300);
+  function saveSettings() {
+    if (state.dataset_id && state.session_id) {
+      saveDatasetSessionSettings(state.dataset_id, state.session_id, {
+        categories: state.categories,
+        hotkeys: state.hotkeys,
+        regression: {
+          min: state.regressionMin,
+          max: state.regressionMax,
+          shortcuts: state.regressionShortcuts,
+        },
+      }).catch(() => {});
+    }
   }
 
 // Projects toolbar
@@ -1117,10 +1114,12 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
       const selOpt = select.selectedOptions[0];
       state.dataset_id = Number(select.value);
       state.dataset_name = selOpt ? (selOpt.dataset.datasetName || null) : null;
+      state.target_type_id = selOpt && selOpt.dataset && selOpt.dataset.targetTypeId != null ? Number(selOpt.dataset.targetTypeId) : null;
       // When auto-selected, also refresh dataset details and UI mode and sessions
       try { setCookie('currentDatasetId', String(state.dataset_id)); } catch {}
       const details = await fetchDatasetDetails(state.dataset_id);
       state.target_type_name = details ? details.target_type_name : null;
+      state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
       await loadDatasetClasses(state.dataset_id);
       applyModeVisibility();
       refreshProgress();
@@ -1333,7 +1332,7 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
         saveCategoriesToStorage();
         // Persist to backend session settings
         if (state.dataset_id && state.session_id) {
-          saveDatasetSessionSettings(state.dataset_id, state.session_id, { categories: state.categories, hotkeys: state.hotkeys }).catch(() => {});
+          debouncedSaveSettings();
         }
       });
 
@@ -1350,7 +1349,7 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
         renderDynamicShortcuts();
         // Persist to backend session settings
         if (state.dataset_id && state.session_id) {
-          saveDatasetSessionSettings(state.dataset_id, state.session_id, { categories: state.categories, hotkeys: state.hotkeys }).catch(() => {});
+          debouncedSaveSettings();
         }
       });
     });
@@ -1500,7 +1499,12 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
         idx: idx,
       };
       if (state.dataset_id) params.dataset_id = state.dataset_id;
-      const data = await apiGet('frame', params);
+      // Cancel any in-flight frame request before starting a new one
+      if (frameRequestController) {
+        try { frameRequestController.abort(); } catch {}
+      }
+      frameRequestController = new AbortController();
+      const data = await apiGetWithSignal('frame', params, frameRequestController.signal);
 
       state.currentIdx = idx;
       const frame = data.frame || {};
@@ -1560,10 +1564,13 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
 
       // We cannot compute progress without totals; leave as-is
     } catch (e) {
-      console.error(e);
-      toast('Failed to load frame');
-    }
+    // Swallow aborts (user navigated quickly)
+    if (e && (e.name === 'AbortError' || String(e.message || '').includes('AbortError'))) return;
+    console.error(e);
+    toast('Failed to load frame');
   }
+}
+  
 
   async function saveAnnotation() {
     const t = state.target_type_name;
@@ -1736,14 +1743,12 @@ try { setCookie('currentProjectId', String(state.project_id)); setCookie('curren
         renderDynamicShortcuts();
         // Persist to backend session settings
         if (state.dataset_id && state.session_id) {
-          saveDatasetSessionSettings(state.dataset_id, state.session_id, { categories: state.categories, hotkeys: state.hotkeys }).catch(() => {});
+          debouncedSaveSettings();
         }
       }
       input.value = '';
     });
     els.newCategoryInput().addEventListener('keypress', (e) => { if (e.key === 'Enter') els.addCategoryBtn().click(); });
-
-    els.firstBtn().addEventListener('click', () => goToFrame(0));
     els.prevBtn().addEventListener('click', () => goToFrame(state.currentIdx - 1));
     els.nextBtn().addEventListener('click', () => goToFrame(state.currentIdx + 1));
     els.lastBtn().addEventListener('click', () => { if (state.totalFrames) goToFrame(state.totalFrames - 1); });
