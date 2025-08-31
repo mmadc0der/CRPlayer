@@ -128,7 +128,8 @@ body {
   display: flex; gap: var(--space-2); justify-content: center; align-items: center; flex-wrap: wrap; margin-top: var(--space-4);
 }
 .btn {
-  appearance: none; border: 1px solid var(--color-border); background: #1a1f29; color: var(--color-text);
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  border: 1px solid var(--color-border); background: #1a1f29; color: var(--color-text);
   padding: 8px 14px; border-radius: var(--radius-md); font-size: 13px; cursor: pointer; transition: background .15s ease, border-color .15s ease; margin-bottom: 0;
 }
 .btn:hover { background: #202635; border-color: #3a455c; }
