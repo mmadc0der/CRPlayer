@@ -72,6 +72,9 @@
         frame_idx: state.currentIdx,
         class_ids: classIds,
         ...(categoryNames.length > 0 ? { category_names: categoryNames } : {}),
+        override_settings: {
+          notes: els.notes().value,
+        },
       };
       const res = await apiPost('annotations/multilabel', payload);
       if (res && (res.ok || res.saved || res.status === 'ok')) {
@@ -185,6 +188,9 @@
         dataset_id: state.dataset_id,
         frame_idx: state.currentIdx,
         value: v,
+        override_settings: {
+          notes: els.notes().value,
+        },
       };
       const res = await apiPost('annotations/regression', payload);
       if (res && (res.ok || res.saved || res.status === 'ok')) {
