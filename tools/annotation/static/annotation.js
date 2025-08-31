@@ -124,6 +124,22 @@
     } catch {}
   }
 
+  // Load categories and hotkeys from localStorage (scoped by current session via lsKey)
+  function loadCategoriesFromStorage() {
+    try {
+      const catsRaw = localStorage.getItem(lsKey('categories'));
+      const hksRaw = localStorage.getItem(lsKey('hotkeys'));
+      const cats = catsRaw ? JSON.parse(catsRaw) : [];
+      const hotkeys = hksRaw ? JSON.parse(hksRaw) : {};
+      state.categories = Array.isArray(cats) ? cats : [];
+      state.hotkeys = (hotkeys && typeof hotkeys === 'object') ? hotkeys : {};
+    } catch {
+      // On any parse or access error, fall back to safe defaults
+      state.categories = Array.isArray(state.categories) ? state.categories : [];
+      state.hotkeys = (state.hotkeys && typeof state.hotkeys === 'object') ? state.hotkeys : {};
+    }
+  }
+
   async function saveSettings() {
     if (!state.dataset_id || !state.session_id) return;
     const settings = {
