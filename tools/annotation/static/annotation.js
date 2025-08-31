@@ -1054,25 +1054,28 @@
       const title = document.createElement('span');
       title.textContent = String(cat);
 
+      const wrapDiv = document.createElement('div');
+      wrapDiv.style.display = 'flex';
+      wrapDiv.style.alignItems = 'center';
+      wrapDiv.style.gap = 'var(--space-2)';
       const input = document.createElement('input');
       input.type = 'text';
-      input.placeholder = 'hotkey';
+      input.placeholder = 'key';
+      
       // Use existing small input style from stylesheet
       input.className = 'input input--small';
       input.value = (state.hotkeys && state.hotkeys[cat]) ? String(state.hotkeys[cat]) : '';
-      input.style.marginLeft = '8px';
-      input.style.width = '64px';
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'btn btn--sm';
       removeBtn.setAttribute('data-remove', String(cat));
       removeBtn.textContent = 'Remove';
-      removeBtn.style.marginLeft = '8px';
 
       row.appendChild(radio);
       row.appendChild(title);
-      row.appendChild(input);
-      row.appendChild(removeBtn);
+      wrapDiv.appendChild(input);
+      wrapDiv.appendChild(removeBtn);
+      row.appendChild(wrapDiv);
       list.appendChild(row);
 
       input.addEventListener('input', () => {
