@@ -49,10 +49,10 @@
     const addCard = (title, value, subtitle = '') => {
       const card = document.createElement('div');
       card.className = 'stat-item';
-      const h = document.createElement('div'); h.style.fontSize = '12px'; h.style.color = 'var(--color-text-muted)'; h.textContent = title;
-      const v = document.createElement('div'); v.style.fontSize = '22px'; v.style.fontWeight = '600'; v.textContent = value;
-      const s = document.createElement('div'); s.style.marginTop = '4px'; s.style.color = 'var(--color-text-muted)'; s.textContent = subtitle;
-      card.appendChild(h); card.appendChild(v); card.appendChild(s);
+      const h = document.createElement('div'); h.className = 'stat-title'; h.textContent = title;
+      const v = document.createElement('div'); v.className = 'stat-value'; v.textContent = value;
+      const s = document.createElement('div'); s.className = 'stat-sub'; s.textContent = subtitle;
+      card.appendChild(h); card.appendChild(v); if (subtitle) card.appendChild(s);
       grid.appendChild(card);
     };
 
@@ -84,37 +84,47 @@
       const dTotal = typeof ds.total === 'number' ? ds.total : 0;
       const dLabeled = typeof ds.labeled === 'number' ? ds.labeled : (typeof ds.annotated === 'number' ? ds.annotated : 0);
       const dRem = Math.max(0, dTotal - dLabeled);
-      const title = document.createElement('div');
-      title.className = 'selector__meta';
-      title.textContent = `Dataset: ${ds.name || state.dataset_name || state.dataset_id}`;
-      grid.appendChild(title);
+
+      const section = document.createElement('div');
+      section.className = 'stats-section';
+      const header = document.createElement('div');
+      header.className = 'stats-header';
+      header.textContent = `Dataset · ${ds.name || state.dataset_name || state.dataset_id}`;
+      section.appendChild(header);
 
       const table = document.createElement('div');
-      table.style.display = 'grid';
-      table.style.gridTemplateColumns = '1fr repeat(3, auto)';
-      table.style.gap = '6px 12px';
-      table.style.alignItems = 'center';
-      const header = ['Session', 'Labeled', 'Total', 'Remaining'];
-      header.forEach((h, i) => {
-        const el = document.createElement('div');
-        el.style.fontWeight = '600';
-        el.style.color = 'var(--color-text-muted)';
-        el.textContent = h;
-        table.appendChild(el);
-      });
+      table.className = 'dataset-table';
+      const gridEl = document.createElement('div');
+      gridEl.className = 'dataset-table__grid';
+
+      const addRow = (cells, isHeader = false, isTotal = false) => {
+        const row = document.createElement('div');
+        row.className = 'dataset-table__row' + (isHeader ? ' dataset-table__header' : '') + (isTotal ? ' dataset-table__row--total' : '');
+        cells.forEach((text, idx) => {
+          const el = document.createElement('div');
+          el.className = 'dataset-table__cell' + (idx > 0 ? ' dataset-table__cell--num' : '');
+          el.textContent = text;
+          row.appendChild(el);
+        });
+        gridEl.appendChild(row);
+      };
+
+      // Header
+      addRow(['Session', 'Labeled', 'Total', 'Remaining'], true, false);
       // First row: dataset total
-      const dsRow = [ 'Dataset total', String(dLabeled), String(dTotal), String(dRem) ];
-      dsRow.forEach((t) => { const el = document.createElement('div'); el.textContent = t; table.appendChild(el); });
+      addRow(['Dataset total', String(dLabeled), String(dTotal), String(dRem)], false, true);
       // Following rows: per session
       const sessions = Array.isArray(ds.sessions) ? ds.sessions : [];
       sessions.forEach(s => {
         const sL = typeof s.labeled === 'number' ? s.labeled : 0;
         const sT = typeof s.total === 'number' ? s.total : 0;
         const sR = Math.max(0, sT - sL);
-        const row = [ String(s.session_id || ''), String(sL), String(sT), String(sR) ];
-        row.forEach((t) => { const el = document.createElement('div'); el.textContent = t; table.appendChild(el); });
+        addRow([ String(s.session_id || ''), String(sL), String(sT), String(sR) ]);
       });
-      grid.appendChild(table);
+
+      table.appendChild(gridEl);
+      section.appendChild(table);
+      grid.appendChild(section);
     }
 
     if ((!pj || typeof pj !== 'object') && (!ds || typeof ds !== 'object')) {
