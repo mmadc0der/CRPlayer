@@ -1269,6 +1269,7 @@
     if (state.dataset_id) {
       const details = await fetchDatasetDetails(state.dataset_id);
       state.target_type_name = details ? details.target_type_name : null;
+      if (details && details.name) state.dataset_name = details.name;
       await loadDatasetClasses(state.dataset_id);
       applyModeVisibility();
       refreshProgress();
