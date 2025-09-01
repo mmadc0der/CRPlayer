@@ -419,7 +419,7 @@
     grid.style.gridTemplateColumns = 'repeat(auto-fill,minmax(160px,1fr))';
     grid.style.gap = '8px';
     rows.forEach(r => {
-      const id = `ml-${r.id}`;
+      const id = `${r.id}`;
       const item = document.createElement('label');
       item.className = 'ml-item';
       item.setAttribute('for', id);
