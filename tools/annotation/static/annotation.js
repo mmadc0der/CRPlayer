@@ -1435,6 +1435,7 @@
       // Set saved first so subsequent selection highlight can reflect both states
       state.savedCategoryForFrame = savedCat;
       setSelectedCategory(savedCat);
+      highlightCategoryStates();
       state.frameSaved = !!savedCat;
       // Restore MultiLabel selections if present
       if (state.target_type_name === 'MultiLabelClassification') {
