@@ -302,6 +302,11 @@
     // Update single vs multi-label UI based on target type
     state.target_type_name = details ? details.target_type_name : state.target_type_name;
     state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
+    // Build fast lookup maps for id <-> name
+    try {
+      state.classIdByName = Object.fromEntries((classes || []).map(c => [String(c.name || ''), Number(c.id)]));
+      state.nameByClassId = new Map((classes || []).map(c => [Number(c.id), String(c.name || '')]));
+    } catch {}
     return classes;
   }
   async function listTargetTypes() {
@@ -1430,13 +1435,29 @@
       const ts = frame.timestamp;
       els.frameTimestamp().textContent = typeof ts === 'number' ? `${ts.toFixed(3)}s` : '-';
 
-      // Annotation fields
-      const savedCat = ann?.category || ann?.annotations?.category || null;
-      // Set saved first so subsequent selection highlight can reflect both states
-      state.savedCategoryForFrame = savedCat;
-      setSelectedCategory(savedCat);
-      highlightCategoryStates();
-      state.frameSaved = !!savedCat;
+      // Annotation fields (single-label): map class_id -> category name when needed
+      const ttype = state.target_type_name;
+      const isSingle = (ttype === 'SingleLabelClassification') || (!ttype);
+      if (isSingle) {
+        // Accept multiple response shapes
+        const rawCat = (ann && (ann.category || (ann.annotations && ann.annotations.category))) || null;
+        const rawId = (
+          (ann && Number.isFinite(ann.class_id) ? ann.class_id : null) ??
+          (ann && ann.annotations && Number.isFinite(ann.annotations.class_id) ? ann.annotations.class_id : null) ??
+          (Number.isFinite(ann?.single_label_class_id) ? ann.single_label_class_id : null)
+        );
+        let mappedCat = rawCat;
+        if ((!mappedCat || mappedCat === '') && Number.isFinite(rawId)) {
+          const idNum = Number(rawId);
+          const name = state.nameByClassId instanceof Map ? state.nameByClassId.get(idNum) : null;
+          if (typeof name === 'string' && name.length > 0) mappedCat = name;
+        }
+        // Set saved first so subsequent selection highlight can reflect both states
+        state.savedCategoryForFrame = mappedCat || null;
+        if (mappedCat) setSelectedCategory(mappedCat);
+        highlightCategoryStates();
+        state.frameSaved = !!(mappedCat || Number.isFinite(rawId));
+      }
       // Restore MultiLabel selections if present
       if (state.target_type_name === 'MultiLabelClassification') {
         const ids = (Array.isArray(ann?.class_ids) ? ann.class_ids : (Array.isArray(ann?.annotations?.class_ids) ? ann.annotations.class_ids : []));
