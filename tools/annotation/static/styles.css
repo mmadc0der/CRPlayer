@@ -151,7 +151,7 @@ body {
 .categories { display: grid; gap: var(--space-2); }
 .category { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 4px 10px; margin-bottom: 0; }
 .category--selected { outline: 2px solid var(--color-accent); }
-.category--saved { border-color: var(--color-accent-2); }
+.category--saved { outline: 2px solid var(--color-accent-2); }
 .category--clickable { cursor: pointer; }
 .category--clickable:hover { background: #1a1f29; }
 .category .input--small { width: 60px; text-align: center; }
@@ -166,7 +166,7 @@ body {
   border-radius: var(--radius-sm);
   padding: 6px 8px;
 }
-.ml-item--saved { border-color: var(--color-accent-2); }
+.ml-item--saved { outline: 2px solid var(--color-accent-2); }
 
 /* Regression panel saved indicator */
 .panel--saved { border-color: var(--color-accent-2); }

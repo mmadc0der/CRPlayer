@@ -421,7 +421,7 @@
     rows.forEach(r => {
       const id = `${r.id}`;
       const item = document.createElement('label');
-      item.className = 'ml-item';
+      item.className = 'category';
       item.setAttribute('for', id);
       item.style.display = 'flex';
       item.style.alignItems = 'center';
@@ -449,13 +449,13 @@
 
   function highlightMultilabelStates() {
     const saved = Array.isArray(state.savedMultilabelIdsForFrame) ? state.savedMultilabelIdsForFrame : [];
-    const labels = document.querySelectorAll('#category-list .ml-item');
+    const labels = document.querySelectorAll('#category-list .category');
     labels.forEach(lab => {
-      lab.classList.remove('ml-item--saved');
+      lab.classList.remove('category--saved');
       const cb = lab.querySelector('input[type="checkbox"][data-class-id]');
       if (!cb) return;
       const id = parseInt(cb.getAttribute('data-class-id'), 10);
-      if (saved.includes(id)) lab.classList.add('ml-item--saved');
+      if (saved.includes(id)) lab.classList.add('category--saved');
     });
   }
 
@@ -1524,18 +1524,20 @@
           override_settings: {
             notes: els.notes().value,
           },
-          ...(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId))
+          ...((Number.isInteger(classId) && classId > 0)
             ? { class_id: classId }
             : { category_name: category }),
         };
         const res = await apiPost('annotations/single_label', payload);
+        // apiRequest throws for non-2xx; any returned object implies HTTP 200
         const ok = !!res && (
           res.ok === true ||
           res.saved === true ||
           res.status === 'ok' ||
           res.status === 'labeled' ||
           res.status === 'updated' ||
-          typeof res.frame_db_id !== 'undefined'
+          typeof res.frame_db_id !== 'undefined' ||
+          typeof res === 'object'
         );
         if (ok) {
           state.savedCategoryForFrame = category;
