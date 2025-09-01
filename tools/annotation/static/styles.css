@@ -159,6 +159,18 @@ body {
 .add-category { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .add-category input { flex: 1 1 auto; width: 100%; }
 
+/* Multi-label badges */
+.ml-item {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+.ml-item--saved { border-color: var(--color-accent-2); }
+
+/* Regression panel saved indicator */
+.panel--saved { border-color: var(--color-accent-2); }
+
 .note { width: 100%; min-height: 84px; resize: vertical; }
 
 .actions { display: grid; gap: var(--space-2); margin-bottom: var(--space-5); }

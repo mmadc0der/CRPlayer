@@ -185,6 +185,8 @@
     frameSaved: true,
     selectedCategory: null,
     savedCategoryForFrame: null,
+    savedMultilabelIdsForFrame: [],
+    savedRegressionValueForFrame: null,
   };
   // Controller to cancel in-flight frame fetches
   let frameRequestController = null;
@@ -419,6 +421,7 @@
     rows.forEach(r => {
       const id = `ml-${r.id}`;
       const item = document.createElement('label');
+      item.className = 'ml-item';
       item.setAttribute('for', id);
       item.style.display = 'flex';
       item.style.alignItems = 'center';
@@ -434,6 +437,7 @@
       grid.appendChild(item);
     });
     list.appendChild(grid);
+    highlightMultilabelStates();
   }
 
   function getSelectedMultilabelClassIds() {
@@ -441,6 +445,18 @@
     const ids = [];
     checks.forEach(ch => { if (ch.checked) ids.push(parseInt(ch.getAttribute('data-class-id'), 10)); });
     return ids;
+  }
+
+  function highlightMultilabelStates() {
+    const saved = Array.isArray(state.savedMultilabelIdsForFrame) ? state.savedMultilabelIdsForFrame : [];
+    const labels = document.querySelectorAll('#category-list .ml-item');
+    labels.forEach(lab => {
+      lab.classList.remove('ml-item--saved');
+      const cb = lab.querySelector('input[type="checkbox"][data-class-id]');
+      if (!cb) return;
+      const id = parseInt(cb.getAttribute('data-class-id'), 10);
+      if (saved.includes(id)) lab.classList.add('ml-item--saved');
+    });
   }
 
   async function saveMultilabel() {
@@ -462,7 +478,18 @@
         },
       };
       const res = await apiPost('annotations/multilabel', payload);
-      if (res && (res.ok || res.saved || res.status === 'ok')) {
+      const ok = !!res && (
+        res.ok === true ||
+        res.saved === true ||
+        res.status === 'ok' ||
+        res.status === 'labeled' ||
+        res.status === 'updated' ||
+        typeof res.frame_db_id !== 'undefined'
+      );
+      if (ok) {
+        state.savedMultilabelIdsForFrame = classIds.slice();
+        state.frameSaved = true;
+        highlightMultilabelStates();
         toast('Saved');
         refreshProgress();
         refreshStats();
@@ -564,6 +591,15 @@
     return Number.isFinite(v) ? v : null;
   }
 
+  function highlightRegressionSavedState() {
+    const rg = document.getElementById('regression-panel');
+    if (!rg) return;
+    rg.classList.remove('panel--saved');
+    if (state.savedRegressionValueForFrame != null) {
+      rg.classList.add('panel--saved');
+    }
+  }
+
   async function saveRegression() {
     if (!state.dataset_id) { toast('Select a dataset first'); return false; }
     const v = getRegressionValue();
@@ -579,7 +615,18 @@
         },
       };
       const res = await apiPost('annotations/regression', payload);
-      if (res && (res.ok || res.saved || res.status === 'ok')) {
+      const ok = !!res && (
+        res.ok === true ||
+        res.saved === true ||
+        res.status === 'ok' ||
+        res.status === 'labeled' ||
+        res.status === 'updated' ||
+        typeof res.frame_db_id !== 'undefined'
+      );
+      if (ok) {
+        state.savedRegressionValueForFrame = v;
+        state.frameSaved = true;
+        highlightRegressionSavedState();
         toast('Saved');
         refreshProgress();
         refreshStats();
@@ -1392,6 +1439,7 @@
       // Restore MultiLabel selections if present
       if (state.target_type_name === 'MultiLabelClassification') {
         const ids = (Array.isArray(ann?.class_ids) ? ann.class_ids : (Array.isArray(ann?.annotations?.class_ids) ? ann.annotations.class_ids : []));
+        state.savedMultilabelIdsForFrame = Array.isArray(ids) ? ids.slice() : [];
         if (Array.isArray(ids)) {
           const checks = document.querySelectorAll('#category-list input[type="checkbox"][data-class-id]');
           checks.forEach(ch => {
@@ -1399,6 +1447,24 @@
             ch.checked = ids.includes(id);
           });
         }
+        highlightMultilabelStates();
+      }
+      // Restore Regression value if present
+      if (state.target_type_name === 'Regression') {
+        const val = (
+          (ann && Number.isFinite(ann.value_real)) ? ann.value_real :
+          (ann && ann.annotations && Number.isFinite(ann.annotations.value)) ? ann.annotations.value :
+          (ann && Number.isFinite(ann.value)) ? ann.value : null
+        );
+        const rg = document.getElementById('regression-panel');
+        if (rg && val != null) {
+          const number = rg.querySelector('#regression-number');
+          const range = rg.querySelector('#regression-input');
+          if (number) number.value = String(val);
+          if (range) range.value = String(val);
+        }
+        state.savedRegressionValueForFrame = (val != null) ? val : null;
+        highlightRegressionSavedState();
       }
       let notesVal = '';
       // Prefer effective_settings.notes; fallback to legacy override_settings.notes if present
@@ -1463,7 +1529,15 @@
             : { category_name: category }),
         };
         const res = await apiPost('annotations/single_label', payload);
-        if (res && (res.ok || res.saved || res.status === 'ok')) {
+        const ok = !!res && (
+          res.ok === true ||
+          res.saved === true ||
+          res.status === 'ok' ||
+          res.status === 'labeled' ||
+          res.status === 'updated' ||
+          typeof res.frame_db_id !== 'undefined'
+        );
+        if (ok) {
           state.savedCategoryForFrame = category;
           state.frameSaved = true;
           toast('Saved');
