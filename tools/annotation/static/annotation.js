@@ -94,6 +94,19 @@
     } catch { return path; }
   }
 
+  // Coerce possibly-string numbers (e.g., "2") to finite numbers; otherwise return null
+  function toNumber(v) {
+    if (v == null) return null;
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t.length === 0) return null;
+      const n = Number(t);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  }
+
   async function apiRequest(method, path, body) {
     const url = path.startsWith('/api') ? withBase(path) : withBase('/api/' + path.replace(/^\/?/, ''));
     const init = { method, headers: { 'Accept': 'application/json' } };
@@ -1439,15 +1452,10 @@
       const ttype = state.target_type_name;
       const isSingle = (ttype === 'SingleLabelClassification') || (!ttype);
       if (isSingle) {
-        // Accept multiple response shapes
-        const rawCat = (ann && (ann.category || (ann.annotations && ann.annotations.category))) || null;
-        const rawId = (
-          (ann && Number.isFinite(ann.class_id) ? ann.class_id : null) ??
-          (ann && ann.annotations && Number.isFinite(ann.annotations.class_id) ? ann.annotations.class_id : null) ??
-          (Number.isFinite(ann?.single_label_class_id) ? ann.single_label_class_id : null)
-        );
-        let mappedCat = rawCat;
-        if ((!mappedCat || mappedCat === '') && Number.isFinite(rawId)) {
+        const rawId = toNumber(ann?.single_label_class_id);
+        try { console.debug('[loadFrame] ann keys', Object.keys(ann || {}), 'single_label_class_id', rawId); } catch {}
+        let mappedCat = null;
+        if (Number.isFinite(rawId)) {
           const idNum = Number(rawId);
           const name = state.nameByClassId instanceof Map ? state.nameByClassId.get(idNum) : null;
           if (typeof name === 'string' && name.length > 0) mappedCat = name;
@@ -1456,19 +1464,21 @@
         state.savedCategoryForFrame = mappedCat || null;
         if (mappedCat) setSelectedCategory(mappedCat);
         highlightCategoryStates();
-        state.frameSaved = !!(mappedCat || Number.isFinite(rawId));
+        state.frameSaved = Boolean(ann && (ann.status === 'labeled' || Number.isFinite(rawId)));
       }
       // Restore MultiLabel selections if present
       if (state.target_type_name === 'MultiLabelClassification') {
-        const ids = (Array.isArray(ann?.class_ids) ? ann.class_ids : (Array.isArray(ann?.annotations?.class_ids) ? ann.annotations.class_ids : []));
-        state.savedMultilabelIdsForFrame = Array.isArray(ids) ? ids.slice() : [];
-        if (Array.isArray(ids)) {
-          const checks = document.querySelectorAll('#category-list input[type="checkbox"][data-class-id]');
-          checks.forEach(ch => {
-            const id = parseInt(ch.getAttribute('data-class-id'), 10);
-            ch.checked = ids.includes(id);
-          });
-        }
+        // Backend sends CSV of ids in ann.multilabel_class_ids_csv
+        const csv = ann?.multilabel_class_ids_csv;
+        const ids = typeof csv === 'string' && csv.trim().length > 0
+          ? csv.split(',').map(s => toNumber(s)).filter(n => Number.isFinite(n)).map(n => Number(n))
+          : [];
+        state.savedMultilabelIdsForFrame = ids.slice();
+        const checks = document.querySelectorAll('#category-list input[type="checkbox"][data-class-id]');
+        checks.forEach(ch => {
+          const id = parseInt(ch.getAttribute('data-class-id'), 10);
+          ch.checked = ids.includes(id);
+        });
         highlightMultilabelStates();
       }
       // Restore Regression value if present
