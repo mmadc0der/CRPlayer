@@ -1597,9 +1597,8 @@
           toast('Saved');
           // Immediately reflect saved state (green border) without waiting for re-render
           highlightCategoryStates();
-          if (!(Number.isInteger(classId) || (typeof classId === 'number' && !Number.isNaN(classId)))) {
-            await loadDatasetClasses(state.dataset_id);
-          }
+          // Always refresh classes after save to ensure maps reflect any new/renamed classes
+          await loadDatasetClasses(state.dataset_id);
           refreshProgress();
           refreshStats();
           return true;
