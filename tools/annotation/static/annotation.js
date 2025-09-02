@@ -309,18 +309,35 @@
     return await apiGet(`datasets/${datasetId}`).catch(() => null);
   }
   async function loadDatasetClasses(datasetId) {
+    if (!datasetId) {
+      state.datasetClasses = [];
+      state.classIdByName = {};
+      state.nameByClassId = new Map();
+      return [];
+    }
     const details = await fetchDatasetDetails(datasetId);
-    const classes = (details && Array.isArray(details.classes)) ? details.classes : [];
-    state.datasetClasses = classes;
-    // Update single vs multi-label UI based on target type
+    // Keep target type from details
     state.target_type_name = details ? details.target_type_name : state.target_type_name;
     state.target_type_id = (details && typeof details.target_type_id === 'number') ? details.target_type_id : state.target_type_id;
+    // Fetch classes from dedicated endpoint
+    let classes = [];
+    try {
+      classes = await apiGet(`datasets/${datasetId}/classes`).catch(() => []);
+    } catch { classes = []; }
+    // Fallback if API someday embeds classes in dataset payload
+    if ((!classes || classes.length === 0) && details && Array.isArray(details.classes)) {
+      classes = details.classes;
+    }
+    state.datasetClasses = Array.isArray(classes) ? classes : [];
     // Build fast lookup maps for id <-> name
     try {
-      state.classIdByName = Object.fromEntries((classes || []).map(c => [String(c.name || ''), Number(c.id)]));
-      state.nameByClassId = new Map((classes || []).map(c => [Number(c.id), String(c.name || '')]));
-    } catch {}
-    return classes;
+      state.classIdByName = Object.fromEntries((state.datasetClasses || []).map(c => [String(c.name || ''), Number(c.id)]));
+      state.nameByClassId = new Map((state.datasetClasses || []).map(c => [Number(c.id), String(c.name || '')]));
+    } catch {
+      state.classIdByName = {};
+      state.nameByClassId = new Map();
+    }
+    return state.datasetClasses;
   }
   async function listTargetTypes() {
     return await apiGet('target_types').catch(() => []);
@@ -1452,6 +1469,10 @@
       const ttype = state.target_type_name;
       const isSingle = (ttype === 'SingleLabelClassification') || (!ttype);
       if (isSingle) {
+        // Ensure classes are loaded so we can map id->name, especially on first load
+        if (state.dataset_id && (!(state.nameByClassId instanceof Map) || state.nameByClassId.size === 0)) {
+          try { await loadDatasetClasses(state.dataset_id); } catch {}
+        }
         const rawId = toNumber(ann?.single_label_class_id);
         try { console.debug('[loadFrame] ann keys', Object.keys(ann || {}), 'single_label_class_id', rawId); } catch {}
         let mappedCat = null;
@@ -1463,7 +1484,6 @@
         // Set saved first so subsequent selection highlight can reflect both states
         state.savedCategoryForFrame = mappedCat || null;
         if (mappedCat) setSelectedCategory(mappedCat);
-        highlightCategoryStates();
         state.frameSaved = Boolean(ann && (ann.status === 'labeled' || Number.isFinite(rawId)));
       }
       // Restore MultiLabel selections if present
