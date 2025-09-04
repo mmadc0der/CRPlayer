@@ -132,6 +132,12 @@ WITHOUT ROWID;
 
 CREATE INDEX IF NOT EXISTS idx_ann_labels_dataset ON annotation_labels(dataset_id);
 CREATE INDEX IF NOT EXISTS idx_ann_labels_frame   ON annotation_labels(frame_id);
+CREATE INDEX IF NOT EXISTS idx_ann_labels_class   ON annotation_labels(class_id);
+
+-- Performance indexes for common queries
+CREATE INDEX IF NOT EXISTS idx_annotations_status ON annotations(status);
+CREATE INDEX IF NOT EXISTS idx_frames_ts ON frames(ts_ms);
+CREATE INDEX IF NOT EXISTS idx_sessions_root_path ON sessions(root_path);
 
 CREATE TRIGGER IF NOT EXISTS trg_check_regression_dataset
 BEFORE INSERT ON regression_annotations

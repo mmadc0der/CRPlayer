@@ -63,6 +63,20 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             err = ErrorResponse(code='target_types_error', message='Failed to list target types', details={'error': str(e)})
             return jsonify(err.dict()), 500
 
+    @bp.route('/api/projects', methods=['GET'])
+    def api_list_projects():
+        conn = None
+        try:
+            conn = get_connection()
+            init_db(conn)
+            return jsonify(db_list_projects(conn))
+        except Exception as e:
+            err = ErrorResponse(code='projects_error', message='Failed to list projects', details={'error': str(e)})
+            return jsonify(err.dict()), 500
+        finally:
+            if conn:
+                conn.close()
+
     # -------------------- Read annotation for a frame --------------------
     @bp.route('/api/annotations/frame', methods=['GET'])
     def api_get_annotation_for_frame():
@@ -630,6 +644,10 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
             if frame_id is None and payload.frame_idx is not None:
                 frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
                 frame_id = str(frame['frame_id'])
+            elif frame_id is None:
+                err = ErrorResponse(code='bad_request', message='Either frame_id or frame_idx must be provided')
+                return jsonify(err.dict()), 400
+            
             res = annotation_service.save_regression(
                 session_id=payload.session_id,
                 dataset_id=payload.dataset_id,
@@ -637,7 +655,13 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 value=payload.value,
                 override_settings=payload.override_settings,
             )
-            return jsonify(res)
+            return jsonify({'success': True, 'annotation': res})
+        except ValueError as e:
+            err = ErrorResponse(code='validation_error', message=str(e))
+            return jsonify(err.dict()), 400
+        except FileNotFoundError as e:
+            err = ErrorResponse(code='not_found', message=str(e))
+            return jsonify(err.dict()), 404
         except Exception as e:
             err = ErrorResponse(code='save_error', message='Failed to save regression', details={'error': str(e)})
             return jsonify(err.dict()), 500
@@ -658,13 +682,19 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 if d and d.get('target_type_name') != 'SingleLabelClassification':
                     db_update_dataset(conn, int(payload.dataset_id), target_type_id=1)
                     conn.commit()
+                conn.close()
             except Exception:
                 # Non-fatal; DB triggers will still protect integrity
                 pass
+            
             frame_id = payload.frame_id
             if frame_id is None and payload.frame_idx is not None:
                 frame = session_service.get_frame_by_idx(payload.session_id, int(payload.frame_idx))
                 frame_id = str(frame['frame_id'])
+            elif frame_id is None:
+                err = ErrorResponse(code='bad_request', message='Either frame_id or frame_idx must be provided')
+                return jsonify(err.dict()), 400
+                
             # Resolve class_id if only category_name was provided
             class_id = payload.class_id
             if class_id is None and payload.category_name:
@@ -674,6 +704,7 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                     cls = db_get_or_create_dataset_class(conn, int(payload.dataset_id), str(payload.category_name))
                     conn.commit()
                     class_id = int(cls['id'])
+                    conn.close()
                 except Exception:
                     class_id = None
             if class_id is None:
@@ -686,7 +717,13 @@ def create_annotation_api(session_manager: SessionManager) -> Blueprint:
                 class_id=int(class_id),
                 override_settings=payload.override_settings,
             )
-            return jsonify(res)
+            return jsonify({'success': True, 'annotation': res})
+        except ValueError as e:
+            err = ErrorResponse(code='validation_error', message=str(e))
+            return jsonify(err.dict()), 400
+        except FileNotFoundError as e:
+            err = ErrorResponse(code='not_found', message=str(e))
+            return jsonify(err.dict()), 404
         except Exception as e:
             err = ErrorResponse(code='save_error', message='Failed to save single label', details={'error': str(e)})
             return jsonify(err.dict()), 500

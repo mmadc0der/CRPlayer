@@ -64,8 +64,15 @@ def get_db_path(custom_path: Optional[Path] = None) -> Path:
 
 def get_connection(custom_path: Optional[Path] = None) -> sqlite3.Connection:
     db_path = get_db_path(custom_path)
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    # Ensure foreign keys
-    conn.execute('PRAGMA foreign_keys = ON;')
-    return conn
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=30.0)
+        conn.row_factory = sqlite3.Row
+        # Ensure foreign keys and optimize for concurrent access
+        conn.execute('PRAGMA foreign_keys = ON;')
+        conn.execute('PRAGMA journal_mode = WAL;')  # Better concurrency
+        conn.execute('PRAGMA synchronous = NORMAL;')  # Balance safety/speed
+        conn.execute('PRAGMA cache_size = -64000;')  # 64MB cache
+        conn.execute('PRAGMA temp_store = MEMORY;')
+        return conn
+    except sqlite3.Error as e:
+        raise RuntimeError(f"Failed to connect to database at {db_path}: {e}") from e
