@@ -38,7 +38,14 @@ def set_script_name():
 
 # Bootstrap services and register blueprint
 session_manager = SessionManager()
-app.register_blueprint(create_annotation_api(session_manager))
+
+# Register API blueprint at /api/* for backward compatibility
+api_bp_root = create_annotation_api(session_manager, name='annotation_api_root')
+app.register_blueprint(api_bp_root)
+
+# Register API blueprint at /annotation/api/* for sub-path mounting  
+api_bp_sub = create_annotation_api(session_manager, name='annotation_api_sub')
+app.register_blueprint(api_bp_sub, url_prefix='/annotation')
 
 # Initialize SQLite schema (idempotent)
 try:
@@ -92,8 +99,14 @@ atexit.register(_stop_indexer)
 
 @app.route('/')
 def index():
-    """Main annotation interface."""
+    """Main annotation interface (primary access point)."""
     return render_template('index.html')
+
+@app.route('/annotation/')
+def annotation_index():
+    """Main annotation interface at /annotation/ path (for sub-path mounting)."""
+    return render_template('index.html')
+
 
 
 ## API routes are provided by the annotation_api blueprint
