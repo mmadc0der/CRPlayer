@@ -114,11 +114,27 @@
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
     }
-    const res = await fetch(url, init);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const ct = res.headers.get('content-type') || '';
-    if (ct.includes('application/json')) return await res.json();
-    return { ok: true };
+    try {
+      const res = await fetch(url, init);
+      if (!res.ok) {
+        let errorMessage = `HTTP ${res.status}`;
+        try {
+          const errorData = await res.json();
+          if (errorData.message) {
+            errorMessage = errorData.message;
+          }
+        } catch {
+          // Use default error message if JSON parsing fails
+        }
+        throw new Error(errorMessage);
+      }
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json')) return await res.json();
+      return { ok: true };
+    } catch (error) {
+      console.error(`API request failed: ${method} ${path}`, error);
+      throw error;
+    }
   }
   const apiGet = (path) => apiRequest('GET', path);
   const apiPost = (path, body) => apiRequest('POST', path, body);
@@ -285,6 +301,22 @@
     if (opt) { state.project_id = parseInt(opt.dataset.projectId, 10); state.project_name = opt.dataset.projectName; }
   }
 
+  async function listDatasets(projectId) {
+    return await apiGet(`projects/${encodeURIComponent(projectId)}/datasets`).catch(() => []);
+  }
+
+  async function createDataset(project_id, name, description = '', target_type_id = 1) {
+    return await apiPost(`projects/${encodeURIComponent(project_id)}/datasets`, {
+      name,
+      description,
+      target_type_id
+    });
+  }
+
+  async function fetchDatasetDetails(datasetId) {
+    return await apiGet(`datasets/${encodeURIComponent(datasetId)}`).catch(() => null);
+  }
+
   async function populateDatasetSelect(selectId = null) {
     const sel = els.datasetSelect();
     if (!sel) return;
@@ -305,9 +337,6 @@
     if (opt) { state.dataset_id = parseInt(opt.datasetId || sel.value, 10); state.dataset_name = opt.datasetName; }
   }
 
-  async function fetchDatasetDetails(datasetId) {
-    return await apiGet(`datasets/${datasetId}`).catch(() => null);
-  }
   async function loadDatasetClasses(datasetId) {
     if (!datasetId) {
       state.datasetClasses = [];
@@ -514,11 +543,13 @@
       };
       const res = await apiPost('annotations/multilabel', payload);
       const ok = !!res && (
+        res.success === true ||
         res.ok === true ||
         res.saved === true ||
         res.status === 'ok' ||
         res.status === 'labeled' ||
         res.status === 'updated' ||
+        typeof res.annotation !== 'undefined' ||
         typeof res.frame_db_id !== 'undefined'
       );
       if (ok) {
@@ -651,11 +682,13 @@
       };
       const res = await apiPost('annotations/regression', payload);
       const ok = !!res && (
+        res.success === true ||
         res.ok === true ||
         res.saved === true ||
         res.status === 'ok' ||
         res.status === 'labeled' ||
         res.status === 'updated' ||
+        typeof res.annotation !== 'undefined' ||
         typeof res.frame_db_id !== 'undefined'
       );
       if (ok) {
@@ -1440,6 +1473,11 @@
       }
       frameRequestController = new AbortController();
       const data = await apiGetWithSignal('frame', params, frameRequestController.signal);
+      
+      // Check if this request was cancelled (user navigated away)
+      if (frameRequestController.signal.aborted) {
+        return;
+      }
 
       state.currentIdx = idx;
       const frame = data.frame || {};
@@ -1581,13 +1619,15 @@
             : { category_name: category }),
         };
         const res = await apiPost('annotations/single_label', payload);
-        // apiRequest throws for non-2xx; any returned object implies HTTP 200
+        // Check for success in the new API response format
         const ok = !!res && (
+          res.success === true ||
           res.ok === true ||
           res.saved === true ||
           res.status === 'ok' ||
           res.status === 'labeled' ||
           res.status === 'updated' ||
+          typeof res.annotation !== 'undefined' ||
           typeof res.frame_db_id !== 'undefined' ||
           typeof res === 'object'
         );

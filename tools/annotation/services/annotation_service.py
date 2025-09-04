@@ -15,6 +15,7 @@ from db.repository import (
     replace_multilabel_set,
     list_frames_with_annotations,
     set_annotation_frame_settings as repo_set_annotation_frame_settings,
+    transaction,
 )
 from services.settings_service import SettingsService
 
@@ -69,58 +70,73 @@ class AnnotationService:
 
     def save_regression(self, session_id: str, dataset_id: int, frame_id: str, value: float, override_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         conn = self._conn()
-        sid, fid = self._resolve_ids(conn, session_id, frame_id)
-        ensure_membership(conn, dataset_id, fid)
-        # Optional: enforce bounds if provided in effective settings
         try:
-            eff = self._settings.get_effective_settings(dataset_id, session_id, frame_db_id=fid)
-            reg = eff.get('regression') if isinstance(eff, dict) else None
-            if isinstance(reg, dict):
-                vmin = reg.get('min')
-                vmax = reg.get('max')
-                if vmin is not None and value < float(vmin):
-                    raise ValueError(f"regression value {value} < min {vmin}")
-                if vmax is not None and value > float(vmax):
-                    raise ValueError(f"regression value {value} > max {vmax}")
-        except Exception:
-            # Do not fail on settings retrieval errors; only enforce when valid bounds are present
-            pass
-        upsert_regression(conn, dataset_id, fid, float(value))
-        if override_settings is not None:
-            repo_set_annotation_frame_settings(conn, dataset_id, fid, override_settings)
-        conn.commit()
-        return self.get_annotation_db(session_id, dataset_id, frame_id) or {}
+            with transaction(conn):
+                sid, fid = self._resolve_ids(conn, session_id, frame_id)
+                ensure_membership(conn, dataset_id, fid)
+                # Optional: enforce bounds if provided in effective settings
+                try:
+                    eff = self._settings.get_effective_settings(dataset_id, session_id, frame_db_id=fid)
+                    reg = eff.get('regression') if isinstance(eff, dict) else None
+                    if isinstance(reg, dict):
+                        vmin = reg.get('min')
+                        vmax = reg.get('max')
+                        if vmin is not None and value < float(vmin):
+                            raise ValueError(f"regression value {value} < min {vmin}")
+                        if vmax is not None and value > float(vmax):
+                            raise ValueError(f"regression value {value} > max {vmax}")
+                except Exception:
+                    # Do not fail on settings retrieval errors; only enforce when valid bounds are present
+                    pass
+                upsert_regression(conn, dataset_id, fid, float(value))
+                if override_settings is not None:
+                    repo_set_annotation_frame_settings(conn, dataset_id, fid, override_settings)
+            return self.get_annotation_db(session_id, dataset_id, frame_id) or {}
+        finally:
+            conn.close()
 
     def save_single_label(self, session_id: str, dataset_id: int, frame_id: str, class_id: int, override_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         conn = self._conn()
-        sid, fid = self._resolve_ids(conn, session_id, frame_id)
-        ensure_membership(conn, dataset_id, fid)
-        upsert_single_label(conn, dataset_id, fid, int(class_id))
-        if override_settings is not None:
-            repo_set_annotation_frame_settings(conn, dataset_id, fid, override_settings)
-        conn.commit()
-        return self.get_annotation_db(session_id, dataset_id, frame_id) or {}
+        try:
+            with transaction(conn):
+                sid, fid = self._resolve_ids(conn, session_id, frame_id)
+                ensure_membership(conn, dataset_id, fid)
+                upsert_single_label(conn, dataset_id, fid, int(class_id))
+                if override_settings is not None:
+                    repo_set_annotation_frame_settings(conn, dataset_id, fid, override_settings)
+            return self.get_annotation_db(session_id, dataset_id, frame_id) or {}
+        finally:
+            conn.close()
 
     def save_multilabel(self, session_id: str, dataset_id: int, frame_id: str, class_ids: List[int], override_settings: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         conn = self._conn()
-        sid, fid = self._resolve_ids(conn, session_id, frame_id)
-        ensure_membership(conn, dataset_id, fid)
-        replace_multilabel_set(conn, dataset_id, fid, [int(c) for c in class_ids])
-        if override_settings is not None:
-            repo_set_annotation_frame_settings(conn, dataset_id, fid, override_settings)
-        conn.commit()
-        return self.get_annotation_db(session_id, dataset_id, frame_id) or {}
+        try:
+            with transaction(conn):
+                sid, fid = self._resolve_ids(conn, session_id, frame_id)
+                ensure_membership(conn, dataset_id, fid)
+                replace_multilabel_set(conn, dataset_id, fid, [int(c) for c in class_ids])
+                if override_settings is not None:
+                    repo_set_annotation_frame_settings(conn, dataset_id, fid, override_settings)
+            return self.get_annotation_db(session_id, dataset_id, frame_id) or {}
+        finally:
+            conn.close()
 
     def set_status(self, session_id: str, dataset_id: int, frame_id: str, status: str) -> None:
         conn = self._conn()
-        sid, fid = self._resolve_ids(conn, session_id, frame_id)
-        ensure_membership(conn, dataset_id, fid)
-        set_annotation_status(conn, dataset_id, fid, status)
-        conn.commit()
+        try:
+            with transaction(conn):
+                sid, fid = self._resolve_ids(conn, session_id, frame_id)
+                ensure_membership(conn, dataset_id, fid)
+                set_annotation_status(conn, dataset_id, fid, status)
+        finally:
+            conn.close()
 
     def set_frame_override_settings(self, session_id: str, dataset_id: int, frame_id: str, settings: Optional[Dict[str, Any]]) -> None:
         conn = self._conn()
-        sid, fid = self._resolve_ids(conn, session_id, frame_id)
-        ensure_membership(conn, dataset_id, fid)
-        repo_set_annotation_frame_settings(conn, dataset_id, fid, settings)
-        conn.commit()
+        try:
+            with transaction(conn):
+                sid, fid = self._resolve_ids(conn, session_id, frame_id)
+                ensure_membership(conn, dataset_id, fid)
+                repo_set_annotation_frame_settings(conn, dataset_id, fid, settings)
+        finally:
+            conn.close()

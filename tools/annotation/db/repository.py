@@ -3,6 +3,18 @@ from __future__ import annotations
 import json
 import sqlite3
 from typing import Optional, Tuple, List, Dict, Any
+from contextlib import contextmanager
+
+
+@contextmanager
+def transaction(conn: sqlite3.Connection):
+    """Context manager for database transactions with proper error handling."""
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def upsert_session(conn: sqlite3.Connection, session_id: str, root_path: str, metadata: dict) -> int:
