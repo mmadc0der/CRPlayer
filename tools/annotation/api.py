@@ -44,8 +44,8 @@ from db.classes import (
 )
 
 
-def create_annotation_api(session_manager: SessionManager) -> Blueprint:
-    bp = Blueprint('annotation_api', __name__)
+def create_annotation_api(session_manager: SessionManager, name: str = 'annotation_api') -> Blueprint:
+    bp = Blueprint(name, __name__)
 
     session_service = SessionService(session_manager)
     annotation_service = AnnotationService(session_manager)
