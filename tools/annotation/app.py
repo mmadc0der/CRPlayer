@@ -26,6 +26,16 @@ app = Flask(
     template_folder=str(BASE_DIR / 'templates'),
 )
 
+# Configure Flask to work behind reverse proxy with URL prefix
+app.config['APPLICATION_ROOT'] = '/annotation'
+
+# Handle X-Script-Name header for proper URL generation
+from flask import request
+@app.before_request
+def set_script_name():
+    if 'X-Script-Name' in request.headers:
+        app.config['APPLICATION_ROOT'] = request.headers['X-Script-Name']
+
 # Bootstrap services and register blueprint
 session_manager = SessionManager()
 app.register_blueprint(create_annotation_api(session_manager))
