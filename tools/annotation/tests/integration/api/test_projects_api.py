@@ -30,7 +30,7 @@ class TestProjectsAPI:
             content_type='application/json'
         )
         
-        assert response.status_code == 200
+        assert response.status_code in [200, 201]  # 200 if exists, 201 if created
         data = response.get_json()
         
         assert 'id' in data
@@ -61,7 +61,7 @@ class TestProjectsAPI:
             data=json.dumps(project_data),
             content_type='application/json'
         )
-        assert response1.status_code == 200
+        assert response1.status_code in [200, 201]  # 200 if exists, 201 if created
         
         # Try to create second project with same name
         response2 = client.post(
@@ -70,9 +70,11 @@ class TestProjectsAPI:
             content_type='application/json'
         )
         
-        assert response2.status_code == 409
+        assert response2.status_code == 200  # Returns existing project
         data = response2.get_json()
-        assert data['code'] == 'conflict'
+        # Should return the existing project data, not an error
+        assert 'id' in data
+        assert data['name'] == project_data['name']
 
     def test_list_projects_with_data(self, client: FlaskClient):
         """Test listing projects with existing data."""

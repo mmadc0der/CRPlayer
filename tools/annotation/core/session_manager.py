@@ -51,18 +51,21 @@ class SessionManager:
             # frames count via DB
             cnt = conn.execute("SELECT COUNT(1) FROM frames WHERE session_id = ?", (sid_db,)).fetchone()[0]
             session_dir = Path(root_path)
-            results.append({
+            status_data = self._get_session_status(session_dir)
+            session_info = {
                 'session_id': session_id,
                 'path': root_path,
-                'game_name': md.get('game_name', 'unknown'),
+                'game_name': md.get('game_name', 'Unknown'),
                 'frames_count': int(cnt),
                 'start_time': md.get('start_time', 'unknown'),
                 'projects': [],
-                'status': self._get_session_status(session_dir),
-            })
+            }
+            # Merge status data into session info
+            session_info.update(status_data)
+            results.append(session_info)
         return results
 
-    def get_session_path_by_id(self, session_id: str) -> Optional[Path]:
+    def get_session_path_by_id(self, session_id: str) -> Optional[str]:
         """Resolve a session directory by session_id from DB."""
         conn = self._conn()
         row = conn.execute(
@@ -71,7 +74,7 @@ class SessionManager:
         ).fetchone()
         if not row or not row[0]:
             return None
-        return Path(row[0])
+        return str(row[0])
 
     def find_session_by_id(self, session_id: str) -> Optional[Dict[str, Any]]:
         """Load session info by session_id from DB.
@@ -109,6 +112,19 @@ class SessionManager:
             (session_id,),
         ).fetchone()
         return int(row[0]) if row else None
+    
+    def get_frames_for_session(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get all frames for a session."""
+        conn = self._conn()
+        cur = conn.execute("""
+            SELECT f.frame_id, f.ts_ms 
+            FROM frames f
+            JOIN sessions s ON s.id = f.session_id
+            WHERE s.session_id = ?
+            ORDER BY f.ts_ms, f.frame_id
+        """, (session_id,))
+        rows = cur.fetchall()
+        return [{"frame_id": row[0], "ts_ms": row[1]} for row in rows]
     
     def load_session(self, session_path: str) -> Dict[str, Any]:
         """Load session by path (read-only).
@@ -173,14 +189,22 @@ class SessionManager:
             stacklevel=2,
         )
     
-    def _get_session_status(self, session_dir: Path) -> str:
+    def _get_session_status(self, session_dir: Path) -> Dict[str, Any]:
         """Get current status of a session."""
         status_file = session_dir / "status.json"
         if status_file.exists():
             try:
                 with open(status_file, 'r') as f:
                     status_data = json.load(f)
-                return status_data.get('status', 'unknown')
+                return status_data
             except:
                 pass
+<<<<<<< Current (Your changes)
         return 'captured'
+=======
+        return {
+            'status': 'captured',
+            'collection_status': 'unknown',
+            'annotation_status': 'not_started'
+        }
+>>>>>>> Incoming (Background Agent changes)

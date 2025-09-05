@@ -133,7 +133,12 @@ def dataset_progress(conn: sqlite3.Connection, dataset_id: int) -> Dict[str, int
         "SELECT COUNT(*) FROM annotations WHERE dataset_id = ? AND status = 'labeled'",
         (dataset_id,),
     ).fetchone()[0]
-    return {"total": int(total), "labeled": int(labeled), "unlabeled": int(total - labeled)}
+    return {
+        "total": int(total), 
+        "labeled": int(labeled), 
+        "unlabeled": int(total - labeled),
+        "annotated": int(labeled)  # Legacy field, alias for labeled
+    }
 
 
 def get_dataset_by_name(conn: sqlite3.Connection, project_id: int, name: str) -> Optional[Dict[str, Any]]:

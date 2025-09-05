@@ -43,7 +43,7 @@ class TestErrorResponse:
             details={"key": "value"}
         )
         
-        result = error.dict()
+        result = error.model_dump()
         expected = {
             "code": "test_error",
             "message": "Test message",

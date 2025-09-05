@@ -147,9 +147,14 @@ class TestSessionManager:
         """Test reading status.json files from session directories."""
         sm = SessionManager(data_root=str(temp_data_dir), conn=populated_db)
         
-        # Create a status.json file
+        # Update the session's root_path to match our test directory
         session_dir = temp_data_dir / "raw" / "test_session_001"
         session_dir.mkdir(parents=True, exist_ok=True)
+        populated_db.execute(
+            "UPDATE sessions SET root_path = ? WHERE session_id = ?",
+            (str(session_dir), "test_session_001")
+        )
+        populated_db.commit()
         
         status_data = {
             "collection_status": "completed",

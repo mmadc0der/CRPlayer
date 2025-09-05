@@ -61,21 +61,9 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify([{'id': int(r['id']), 'name': r['name']} for r in rows])
         except Exception as e:
             err = ErrorResponse(code='target_types_error', message='Failed to list target types', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
-    @bp.route('/api/projects', methods=['GET'])
-    def api_list_projects():
-        conn = None
-        try:
-            conn = get_connection()
-            init_db(conn)
-            return jsonify(db_list_projects(conn))
-        except Exception as e:
-            err = ErrorResponse(code='projects_error', message='Failed to list projects', details={'error': str(e)})
-            return jsonify(err.dict()), 500
-        finally:
-            if conn:
-                conn.close()
+    # Removed duplicate api_list_projects function - keeping the one at line 187
 
     # -------------------- Read annotation for a frame --------------------
     @bp.route('/api/annotations/frame', methods=['GET'])
@@ -95,10 +83,10 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             idx = int(request.args.get('idx', '-1'))
             if not session_id or dataset_id <= 0 or idx < 0:
                 err = ErrorResponse(code='bad_request', message='session_id, dataset_id and idx are required')
-                return jsonify(err.dict()), 400
+                return jsonify(err.model_dump()), 400
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid query parameters', details={'error': str(e)})
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
 
         try:
             # Resolve frame_id from idx
@@ -108,7 +96,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify({'annotation': ann})
         except Exception as e:
             err = ErrorResponse(code='annotation_error', message='Failed to fetch annotation', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/sessions', methods=['GET'])
     def discover_sessions():
@@ -117,7 +105,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(sessions)
         except Exception as e:
             err = ErrorResponse(code='sessions_error', message='Failed to discover sessions', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/projects/<int:project_id>', methods=['PUT'])
     def api_update_project(project_id: int):
@@ -131,17 +119,17 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             exists = conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone()
             if not exists:
                 err = ErrorResponse(code='not_found', message='Project not found')
-                return jsonify(err.dict()), 404
+                return jsonify(err.model_dump()), 404
             db_update_project(conn, project_id, name, description)
             conn.commit()
             row = conn.execute("SELECT id, name, description, created_at FROM projects WHERE id = ?", (project_id,)).fetchone()
             return jsonify(dict(row))
         except sqlite3.IntegrityError as e:
             err = ErrorResponse(code='conflict', message='Project name already exists', details={'error': str(e)})
-            return jsonify(err.dict()), 409
+            return jsonify(err.model_dump()), 409
         except Exception as e:
             err = ErrorResponse(code='update_project_error', message='Failed to update project', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/projects/<int:project_id>', methods=['DELETE'])
     def api_delete_project(project_id: int):
@@ -155,13 +143,13 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 cnt = conn.execute("SELECT COUNT(1) FROM datasets WHERE project_id = ?", (project_id,)).fetchone()[0]
                 if cnt:
                     err = ErrorResponse(code='conflict', message='Project has datasets; delete them first')
-                    return jsonify(err.dict()), 409
+                    return jsonify(err.model_dump()), 409
             n = db_delete_project(conn, project_id)
             conn.commit()
             return jsonify({'deleted': int(n)})
         except Exception as e:
             err = ErrorResponse(code='delete_project_error', message='Failed to delete project', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/reindex', methods=['POST'])
     def reindex():
@@ -181,9 +169,21 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             })
         except Exception as e:
             err = ErrorResponse(code='reindex_error', message='Failed to reindex', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     # -------------------- Projects & Datasets CRUD --------------------
+<<<<<<< Current (Your changes)
+=======
+    @bp.route('/api/projects', methods=['GET'])
+    def api_list_projects():
+        try:
+            conn = get_connection()
+            init_db(conn)
+            return jsonify(db_list_projects(conn))
+        except Exception as e:
+            err = ErrorResponse(code='projects_error', message='Failed to list projects', details={'error': str(e)})
+            return jsonify(err.model_dump()), 500
+>>>>>>> Incoming (Background Agent changes)
 
     @bp.route('/api/projects', methods=['POST'])
     def api_create_project():
@@ -193,24 +193,30 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             description = payload.get('description')
             if not name:
                 err = ErrorResponse(code='bad_request', message='name is required')
-                return jsonify(err.dict()), 400
+                return jsonify(err.model_dump()), 400
             conn = get_connection()
             init_db(conn)
             try:
                 pid = db_create_project(conn, name, description)
                 conn.commit()
-                return jsonify({'id': pid, 'name': name, 'description': description}), 201
+                # Fetch the created project with created_at timestamp
+                cur = conn.execute("SELECT id, name, description, created_at FROM projects WHERE id = ?", (pid,))
+                row = cur.fetchone()
+                if row:
+                    return jsonify(dict(row)), 201
+                else:
+                    return jsonify({'id': pid, 'name': name, 'description': description}), 201
             except sqlite3.IntegrityError:
                 # Unique constraint on projects.name; return existing
                 # Fetch existing row id
                 cur = conn.execute("SELECT id, name, description, created_at FROM projects WHERE name = ?", (name,))
                 row = cur.fetchone()
                 if row:
-                    return jsonify({'id': int(row['id']), 'name': row['name'], 'description': row['description']}), 200
+                    return jsonify(dict(row)), 200
                 raise
         except Exception as e:
             err = ErrorResponse(code='create_project_error', message='Failed to create project', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/projects/<int:project_id>/datasets', methods=['GET'])
     def api_list_datasets(project_id: int):
@@ -220,7 +226,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(db_list_datasets(conn, project_id))
         except Exception as e:
             err = ErrorResponse(code='datasets_error', message='Failed to list datasets', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>', methods=['GET'])
     def api_get_dataset(dataset_id: int):
@@ -230,11 +236,11 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             d = db_get_dataset(conn, dataset_id)
             if not d:
                 err = ErrorResponse(code='not_found', message='Dataset not found')
-                return jsonify(err.dict()), 404
+                return jsonify(err.model_dump()), 404
             return jsonify(d)
         except Exception as e:
             err = ErrorResponse(code='dataset_error', message='Failed to get dataset', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/projects/<int:project_id>/datasets', methods=['POST'])
     def api_create_dataset(project_id: int):
@@ -245,21 +251,21 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             target_type_id = payload.get('target_type_id')
             if not name or target_type_id is None:
                 err = ErrorResponse(code='bad_request', message='name and target_type_id are required')
-                return jsonify(err.dict()), 400
+                return jsonify(err.model_dump()), 400
             conn = get_connection()
             init_db(conn)
             # Ensure the parent project exists; otherwise, the insert will raise a FK error
             proj_row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
             if not proj_row:
                 err = ErrorResponse(code='not_found', message='Project not found', details={'project_id': project_id})
-                return jsonify(err.dict()), 404
+                return jsonify(err.model_dump()), 404
             try:
                 ttid = int(target_type_id)
                 # Validate target type exists in DB
                 exists = conn.execute("SELECT 1 FROM target_types WHERE id = ?", (ttid,)).fetchone()
                 if not exists:
                     err = ErrorResponse(code='bad_request', message='unknown target_type_id', details={'target_type_id': ttid})
-                    return jsonify(err.dict()), 400
+                    return jsonify(err.model_dump()), 400
                 did = db_create_dataset(conn, project_id, name, description, ttid)
                 conn.commit()
                 # Fetch full dataset row to include target_type_name
@@ -275,7 +281,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 raise
         except Exception as e:
             err = ErrorResponse(code='create_dataset_error', message='Failed to create dataset', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>', methods=['PUT'])
     def api_update_dataset(dataset_id: int):
@@ -293,23 +299,23 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 tt_exists = conn.execute("SELECT 1 FROM target_types WHERE id = ?", (ttid_val,)).fetchone()
                 if not tt_exists:
                     err = ErrorResponse(code='bad_request', message='unknown target_type_id', details={'target_type_id': ttid_val})
-                    return jsonify(err.dict()), 400
+                    return jsonify(err.model_dump()), 400
             conn = get_connection()
             init_db(conn)
             existing = db_get_dataset(conn, dataset_id)
             if not existing:
                 err = ErrorResponse(code='not_found', message='Dataset not found')
-                return jsonify(err.dict()), 404
+                return jsonify(err.model_dump()), 404
             db_update_dataset(conn, dataset_id, name=name, description=description, target_type_id=ttid_val)
             conn.commit()
             updated = db_get_dataset(conn, dataset_id)
             return jsonify(updated)
         except sqlite3.IntegrityError as e:
             err = ErrorResponse(code='conflict', message='Dataset name already exists in project', details={'error': str(e)})
-            return jsonify(err.dict()), 409
+            return jsonify(err.model_dump()), 409
         except Exception as e:
             err = ErrorResponse(code='update_dataset_error', message='Failed to update dataset', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>', methods=['DELETE'])
     def api_delete_dataset(dataset_id: int):
@@ -322,13 +328,13 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 cnt = conn.execute("SELECT COUNT(1) FROM annotations WHERE dataset_id = ?", (dataset_id,)).fetchone()[0]
                 if cnt:
                     err = ErrorResponse(code='conflict', message='Dataset has annotations; cannot delete')
-                    return jsonify(err.dict()), 409
+                    return jsonify(err.model_dump()), 409
             n = db_delete_dataset(conn, dataset_id)
             conn.commit()
             return jsonify({'deleted': int(n)})
         except Exception as e:
             err = ErrorResponse(code='delete_dataset_error', message='Failed to delete dataset', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     # Enroll session frames into dataset (creates annotations rows with status=unlabeled)
     @bp.route('/api/datasets/<int:dataset_id>/enroll_session', methods=['POST'])
@@ -339,14 +345,14 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             settings = payload.get('settings')  # optional default settings_json
             if not session_id:
                 err = ErrorResponse(code='bad_request', message='session_id is required')
-                return jsonify(err.dict()), 400
+                return jsonify(err.model_dump()), 400
             conn = get_connection()
             init_db(conn)
             # Ensure dataset exists
             d = db_get_dataset(conn, dataset_id)
             if not d:
                 err = ErrorResponse(code='not_found', message='Dataset not found')
-                return jsonify(err.dict()), 404
+                return jsonify(err.model_dump()), 404
             # If baseline settings include categories, ensure dataset_classes exist in DB with stable ordering
             try:
                 if isinstance(settings, dict):
@@ -361,10 +367,10 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify({'ok': True, 'summary': summary})
         except ValueError as ve:
             err = ErrorResponse(code='bad_request', message=str(ve))
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
         except Exception as e:
             err = ErrorResponse(code='enroll_error', message='Failed to enroll session', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>/progress', methods=['GET'])
     def api_dataset_progress(dataset_id: int):
@@ -420,7 +426,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(out)
         except Exception as e:
             err = ErrorResponse(code='progress_error', message='Failed to get dataset progress', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/projects/<int:project_id>/progress', methods=['GET'])
     def api_project_progress(project_id: int):
@@ -484,7 +490,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(result)
         except Exception as e:
             err = ErrorResponse(code='progress_error', message='Failed to get project progress', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     # Enrollments inspection helpers
     @bp.route('/api/datasets/<int:dataset_id>/enrollments', methods=['GET'])
@@ -512,7 +518,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(out)
         except Exception as e:
             err = ErrorResponse(code='enrollments_error', message='Failed to list enrollments', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>/sessions/<session_id>/enrolled', methods=['GET'])
     def api_is_enrolled(dataset_id: int, session_id: str):
@@ -534,7 +540,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify({'enrolled': bool(row is not None)})
         except Exception as e:
             err = ErrorResponse(code='enrollment_check_error', message='Failed to check enrollment', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>/labeled', methods=['GET'])
     def api_dataset_labeled(dataset_id: int):
@@ -544,7 +550,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(rows)
         except Exception as e:
             err = ErrorResponse(code='labeled_error', message='Failed to list labeled items', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>/classes', methods=['GET'])
     def api_list_dataset_classes(dataset_id: int):
@@ -555,12 +561,12 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             d = db_get_dataset(conn, dataset_id)
             if not d:
                 err = ErrorResponse(code='not_found', message='Dataset not found')
-                return jsonify(err.dict()), 404
+                return jsonify(err.model_dump()), 404
             rows = db_list_dataset_classes(conn, dataset_id)
             return jsonify(rows)
         except Exception as e:
             err = ErrorResponse(code='classes_error', message='Failed to list dataset classes', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/frame', methods=['GET'])
     def get_frame():
@@ -576,7 +582,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             dataset_id = int(dataset_id_raw) if (dataset_id_raw is not None and str(dataset_id_raw).strip() != '') else None
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid query parameters', details={'error': str(e)})
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
 
         try:
             sid = (q.session_id or '').strip()
@@ -593,13 +599,13 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify({'frame': frame})
         except IndexError as e:
             err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.dict()), 404
+            return jsonify(err.model_dump()), 404
         except FileNotFoundError as e:
             err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.dict()), 404
+            return jsonify(err.model_dump()), 404
         except Exception as e:
             err = ErrorResponse(code='frame_error', message='Failed to fetch frame', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/image', methods=['GET'])
     def get_image():
@@ -608,17 +614,17 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                            idx=int(request.args.get('idx', '-1')))
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid query parameters', details={'error': str(e)})
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
 
         try:
             abs_path, _frame = session_service.get_frame_for_image(q.session_id, q.idx)
             return send_file(abs_path)
         except FileNotFoundError as e:
             err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.dict()), 404
+            return jsonify(err.model_dump()), 404
         except Exception as e:
             err = ErrorResponse(code='image_error', message='Failed to load image', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     # Legacy filesystem save endpoint removed in favor of DB-backed endpoints above
 
@@ -626,10 +632,10 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     @bp.route('/api/annotations/regression', methods=['POST'])
     def api_save_regression():
         try:
-            payload = SaveRegressionRequest.parse_obj(request.get_json())
+            payload = SaveRegressionRequest.model_validate(request.get_json())
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid payload', details={'error': str(e)})
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
         try:
             frame_id = payload.frame_id
             if frame_id is None and payload.frame_idx is not None:
@@ -637,7 +643,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 frame_id = str(frame['frame_id'])
             elif frame_id is None:
                 err = ErrorResponse(code='bad_request', message='Either frame_id or frame_idx must be provided')
-                return jsonify(err.dict()), 400
+                return jsonify(err.model_dump()), 400
             
             res = annotation_service.save_regression(
                 session_id=payload.session_id,
@@ -649,21 +655,21 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify({'success': True, 'annotation': res})
         except ValueError as e:
             err = ErrorResponse(code='validation_error', message=str(e))
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
         except FileNotFoundError as e:
             err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.dict()), 404
+            return jsonify(err.model_dump()), 404
         except Exception as e:
             err = ErrorResponse(code='save_error', message='Failed to save regression', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/annotations/single_label', methods=['POST'])
     def api_save_single_label():
         try:
-            payload = SaveSingleLabelRequest.parse_obj(request.get_json())
+            payload = SaveSingleLabelRequest.model_validate(request.get_json())
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid payload', details={'error': str(e)})
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
         try:
             # Ensure dataset target_type matches single-label; if not, auto-align to SingleLabelClassification (1)
             try:
@@ -684,7 +690,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 frame_id = str(frame['frame_id'])
             elif frame_id is None:
                 err = ErrorResponse(code='bad_request', message='Either frame_id or frame_idx must be provided')
-                return jsonify(err.dict()), 400
+                return jsonify(err.model_dump()), 400
                 
             # Resolve class_id if only category_name was provided
             class_id = payload.class_id
@@ -700,7 +706,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                     class_id = None
             if class_id is None:
                 err = ErrorResponse(code='bad_request', message='class_id or category_name must resolve to a class')
-                return jsonify(err.dict()), 400
+                return jsonify(err.model_dump()), 400
             res = annotation_service.save_single_label(
                 session_id=payload.session_id,
                 dataset_id=payload.dataset_id,
@@ -711,21 +717,21 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify({'success': True, 'annotation': res})
         except ValueError as e:
             err = ErrorResponse(code='validation_error', message=str(e))
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
         except FileNotFoundError as e:
             err = ErrorResponse(code='not_found', message=str(e))
-            return jsonify(err.dict()), 404
+            return jsonify(err.model_dump()), 404
         except Exception as e:
             err = ErrorResponse(code='save_error', message='Failed to save single label', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/annotations/multilabel', methods=['POST'])
     def api_save_multilabel():
         try:
-            payload = SaveMultilabelRequest.parse_obj(request.get_json())
+            payload = SaveMultilabelRequest.model_validate(request.get_json())
         except Exception as e:
             err = ErrorResponse(code='bad_request', message='Invalid payload', details={'error': str(e)})
-            return jsonify(err.dict()), 400
+            return jsonify(err.model_dump()), 400
         try:
             frame_id = payload.frame_id
             if frame_id is None and payload.frame_idx is not None:
@@ -764,7 +770,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(res)
         except Exception as e:
             err = ErrorResponse(code='save_error', message='Failed to save multilabel', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     # -------------------- Dataset-session settings --------------------
     @bp.route('/api/datasets/<int:dataset_id>/sessions/<session_id>/settings', methods=['PUT'])
@@ -774,12 +780,12 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             settings = payload.get('settings')
             if not isinstance(settings, dict):
                 err = ErrorResponse(code='bad_request', message='settings (object) is required')
-                return jsonify(err.dict()), 400
+                return jsonify(err.model_dump()), 400
             settings_service.upsert_dataset_session_settings(dataset_id, session_id, settings)
             return jsonify({'ok': True})
         except Exception as e:
             err = ErrorResponse(code='settings_error', message='Failed to upsert settings', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>/sessions/<session_id>/settings', methods=['GET'])
     def api_get_dataset_session_settings(dataset_id: int, session_id: str):
@@ -788,7 +794,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify({'settings': s})
         except Exception as e:
             err = ErrorResponse(code='settings_error', message='Failed to get settings', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     @bp.route('/api/datasets/<int:dataset_id>/sessions/<session_id>/settings', methods=['DELETE'])
     def api_delete_dataset_session_settings(dataset_id: int, session_id: str):
@@ -797,6 +803,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify({'ok': True})
         except Exception as e:
             err = ErrorResponse(code='settings_error', message='Failed to delete settings', details={'error': str(e)})
-            return jsonify(err.dict()), 500
+            return jsonify(err.model_dump()), 500
 
     return bp

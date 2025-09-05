@@ -79,3 +79,21 @@ dev-test: ## Quick development test run
 
 ci: ## Run CI pipeline (what CI/CD should run)
 	python run_tests.py --type all --coverage-html --parallel 4
+
+install-hooks: ## Install git hooks for validation
+	./install-git-hooks.sh
+
+validate: ## Run validation checks (for PR/MR)
+	$(MAKE) lint
+	$(MAKE) test-fast
+	@echo "✅ Validation complete"
+
+pre-commit: ## Run pre-commit checks
+	@echo "🔍 Running pre-commit validation..."
+	python3 -m py_compile $$(find . -name "*.py" | grep -v __pycache__ | head -10)
+	python3 -c "import api, app, dto; print('✅ Critical imports OK')"
+	python3 -m pytest tests/ -x --tb=short -q --maxfail=3 -m "not slow"
+	@echo "✅ Pre-commit validation passed"
+
+setup-dev: dev-setup install-hooks ## Complete development environment setup
+	@echo "🎉 Development environment ready!"

@@ -31,17 +31,19 @@ class TestDatabaseRepository:
 
     def test_transaction_context_manager_rollback(self, temp_db):
         """Test transaction context manager rolls back on error."""
+        # Insert a test project first
+        temp_db.execute("INSERT INTO projects (name, description) VALUES ('Test Project', 'Test')")
+        temp_db.commit()
+        
         with pytest.raises(Exception):
             with transaction(temp_db):
-                temp_db.execute("CREATE TABLE test_table (id INTEGER)")
+                temp_db.execute("INSERT INTO projects (name, description) VALUES ('Another Project', 'Test')")
                 # Force an error
                 raise Exception("Test error")
         
-        # Table should not exist after rollback
-        cursor = temp_db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='test_table'"
-        )
-        assert cursor.fetchone() is None
+        # Only the first project should exist after rollback
+        cursor = temp_db.execute("SELECT COUNT(*) FROM projects")
+        assert cursor.fetchone()[0] == 1
 
     def test_upsert_session_creates_new_session(self, temp_db):
         """Test upsert_session creates a new session."""
@@ -176,15 +178,12 @@ class TestDatabaseRepository:
         frame_db_id = get_frame_db_id(temp_db, session_db_id, "frame_001")
         
         # Ensure membership
-        ann_id = ensure_membership(temp_db, dataset_id, frame_db_id)
-        
-        assert isinstance(ann_id, int)
-        assert ann_id > 0
+        ensure_membership(temp_db, dataset_id, frame_db_id)
         
         # Verify annotation was created
         cursor = temp_db.execute(
-            "SELECT dataset_id, frame_id, status FROM annotations WHERE id = ?",
-            (ann_id,)
+            "SELECT dataset_id, frame_id, status FROM annotations WHERE dataset_id = ? AND frame_id = ?",
+            (dataset_id, frame_db_id)
         )
         row = cursor.fetchone()
         assert row is not None
@@ -203,10 +202,10 @@ class TestDatabaseRepository:
         ann_id = ensure_membership(temp_db, dataset_id, frame_db_id)
         
         # Update status
-        set_annotation_status(temp_db, ann_id, "labeled")
+        set_annotation_status(temp_db, dataset_id, frame_db_id, "labeled")
         
         # Verify status was updated
-        cursor = temp_db.execute("SELECT status FROM annotations WHERE id = ?", (ann_id,))
+        cursor = temp_db.execute("SELECT status FROM annotations WHERE dataset_id = ? AND frame_id = ?", (dataset_id, frame_db_id))
         row = cursor.fetchone()
         assert row[0] == "labeled"
 
@@ -228,7 +227,10 @@ class TestDatabaseRepository:
         
         # Verify in database
         cursor = temp_db.execute(
-            "SELECT regression_value, status FROM annotations WHERE dataset_id = ? AND frame_id = ?",
+            """SELECT r.value_real, a.status 
+               FROM regression_annotations r 
+               JOIN annotations a ON a.dataset_id = r.dataset_id AND a.frame_id = r.frame_id
+               WHERE r.dataset_id = ? AND r.frame_id = ?""",
             (dataset_id, frame_db_id)
         )
         row = cursor.fetchone()

@@ -18,19 +18,16 @@ class TestSessionService:
 
     def test_resolve_session_dir_by_id_success(self, session_service, mock_session_manager):
         """Test resolve_session_dir_by_id with existing session."""
-        mock_session_manager.get_session_path_by_id.return_value = "/test/path"
-        
-        result = session_service.resolve_session_dir_by_id("test_session")
-        
-        assert str(result) == "/test/path"
-        mock_session_manager.get_session_path_by_id.assert_called_once_with("test_session")
+        with patch.object(mock_session_manager, 'get_session_path_by_id', return_value="/test/path") as mock_method:
+            result = session_service.resolve_session_dir_by_id("test_session")
+            assert str(result) == "/test/path"
+            mock_method.assert_called_once_with("test_session")
 
     def test_resolve_session_dir_by_id_not_found(self, session_service, mock_session_manager):
         """Test resolve_session_dir_by_id with nonexistent session."""
-        mock_session_manager.get_session_path_by_id.return_value = None
-        
-        with pytest.raises(FileNotFoundError, match="Session not found by id: nonexistent"):
-            session_service.resolve_session_dir_by_id("nonexistent")
+        with patch.object(mock_session_manager, 'get_session_path_by_id', return_value=None):
+            with pytest.raises(FileNotFoundError, match="Session not found by id: nonexistent"):
+                session_service.resolve_session_dir_by_id("nonexistent")
 
     def test_get_session_info_success(self, session_service, mock_session_manager):
         """Test get_session_info with existing session."""
@@ -40,19 +37,17 @@ class TestSessionService:
             "frames_count": 5,
             "game_name": "TestGame"
         }
-        mock_session_manager.find_session_by_id.return_value = expected_info
         
-        result = session_service.get_session_info("test_session")
-        
-        assert result == expected_info
-        mock_session_manager.find_session_by_id.assert_called_once_with("test_session")
+        with patch.object(mock_session_manager, 'find_session_by_id', return_value=expected_info) as mock_method:
+            result = session_service.get_session_info("test_session")
+            assert result == expected_info
+            mock_method.assert_called_once_with("test_session")
 
     def test_get_session_info_not_found(self, session_service, mock_session_manager):
         """Test get_session_info with nonexistent session."""
-        mock_session_manager.find_session_by_id.return_value = None
-        
-        with pytest.raises(FileNotFoundError, match="Session not found by id: nonexistent"):
-            session_service.get_session_info("nonexistent")
+        with patch.object(mock_session_manager, 'find_session_by_id', return_value=None):
+            with pytest.raises(FileNotFoundError, match="Session not found by id: nonexistent"):
+                session_service.get_session_info("nonexistent")
 
     @patch('services.session_service.get_connection')
     @patch('services.session_service.init_db')
@@ -60,7 +55,7 @@ class TestSessionService:
                                          session_service, mock_session_manager, temp_db):
         """Test _get_frame_row_by_idx with valid index."""
         mock_get_connection.return_value = temp_db
-        mock_session_manager.get_session_db_id.return_value = 123
+        # Mock get_session_db_id method
         
         # Mock database query result
         temp_db.execute = Mock()
@@ -81,7 +76,7 @@ class TestSessionService:
 
     def test_get_frame_row_by_idx_session_not_found(self, session_service, mock_session_manager):
         """Test _get_frame_row_by_idx with nonexistent session."""
-        mock_session_manager.get_session_db_id.return_value = None
+        # Mock get_session_db_id method to return None
         
         with pytest.raises(FileNotFoundError, match="Session not found by id: nonexistent"):
             session_service._get_frame_row_by_idx("nonexistent", 0)
@@ -92,7 +87,7 @@ class TestSessionService:
                                                  session_service, mock_session_manager, temp_db):
         """Test _get_frame_row_by_idx with index out of range."""
         mock_get_connection.return_value = temp_db
-        mock_session_manager.get_session_db_id.return_value = 123
+        # Mock get_session_db_id method
         
         # Mock database queries
         temp_db.execute = Mock()
@@ -132,7 +127,7 @@ class TestSessionService:
                                         session_service, mock_session_manager, temp_db):
         """Test that database connections are properly handled."""
         mock_get_connection.return_value = temp_db
-        mock_session_manager.get_session_db_id.return_value = 123
+        # Mock get_session_db_id method
         
         # Mock successful query
         temp_db.execute = Mock()
@@ -152,7 +147,7 @@ class TestSessionService:
             with patch('services.session_service.init_db'):
                 mock_conn = Mock()
                 mock_get_connection.return_value = mock_conn
-                mock_session_manager.get_session_db_id.return_value = 123
+                # Mock get_session_db_id method
                 
                 # Mock query execution
                 mock_cursor = Mock()

@@ -93,8 +93,13 @@ def dataset_service(mock_session_manager: SessionManager) -> DatasetService:
 
 
 @pytest.fixture
-def app(temp_data_dir: Path, temp_db_file: Path) -> Flask:
-    """Create a Flask application configured for testing."""
+def app(temp_data_dir: Path) -> Flask:
+    """Create a Flask application configured for testing with isolated database."""
+    import tempfile
+    import os
+    from db.schema import init_db
+    import sqlite3
+    
     app = Flask(__name__)
     app.config.update({
         "TESTING": True,
@@ -103,28 +108,42 @@ def app(temp_data_dir: Path, temp_db_file: Path) -> Flask:
         "APPLICATION_ROOT": "/annotation"
     })
     
-    # Mock the database path to use our test database
-    with patch('db.connection.get_db_path', return_value=temp_db_file):
-        with patch('core.session_manager.SessionManager') as mock_sm_class:
-            # Create a real SessionManager with test database connection
-            mock_sm = SessionManager(data_root=str(temp_data_dir))
-            mock_sm_class.return_value = mock_sm
-            
-            # Import and register blueprint after patching
-            from api import create_annotation_api
-            app.register_blueprint(create_annotation_api(mock_sm))
-            
-            # Add the main route
-            @app.route('/')
-            def index():
-                return "Test annotation interface"
+    # Create a unique in-memory database for each test using shared cache
+    import uuid
+    db_name = f"test_{uuid.uuid4().hex}"
+    
+    # Mock get_connection to return isolated in-memory databases
+    def get_test_connection():
+        conn = sqlite3.connect(f":memory:")
+        conn.row_factory = sqlite3.Row
+        conn.execute('PRAGMA foreign_keys = ON;')
+        init_db(conn)
+        return conn
+    
+    # Apply patches before importing the API module
+    with patch('db.connection.get_connection', side_effect=get_test_connection):
+        with patch('api.get_connection', side_effect=get_test_connection):  # Also patch in api module
+            with patch('core.session_manager.SessionManager') as mock_sm_class:
+                # Create a real SessionManager with test database connection
+                mock_sm = SessionManager(data_root=str(temp_data_dir))
+                mock_sm_class.return_value = mock_sm
+                
+                # Import and register blueprint after patching
+                from api import create_annotation_api
+                app.register_blueprint(create_annotation_api(mock_sm))
+                
+                # Add the main route
+                @app.route('/')
+                def index():
+                    return "Test annotation interface"
     
     return app
 
 
 @pytest.fixture
 def client(app: Flask) -> FlaskClient:
-    """Create a test client for the Flask application."""
+    """Create a test client for the Flask application with clean database."""
+    # The app fixture already provides database isolation via mocking
     return app.test_client()
 
 
@@ -235,11 +254,18 @@ def create_test_session(conn: sqlite3.Connection, session_id: str,
 
 
 def create_test_project_and_dataset(conn: sqlite3.Connection, 
-                                   project_name: str = "Test Project",
-                                   dataset_name: str = "Test Dataset",
+                                   project_name: str = None,
+                                   dataset_name: str = None,
                                    target_type_id: int = 1) -> tuple[int, int]:
-    """Helper function to create a test project and dataset."""
+    """Helper function to create a test project and dataset with unique names."""
+    import uuid
     from db.projects import create_project, create_dataset
+    
+    # Generate unique names if not provided
+    if project_name is None:
+        project_name = f"Test Project {uuid.uuid4().hex[:8]}"
+    if dataset_name is None:
+        dataset_name = f"Test Dataset {uuid.uuid4().hex[:8]}"
     
     project_id = create_project(conn, project_name, f"Description for {project_name}")
     dataset_id = create_dataset(conn, project_id, dataset_name, f"Description for {dataset_name}", target_type_id)

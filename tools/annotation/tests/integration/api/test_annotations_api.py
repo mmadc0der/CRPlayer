@@ -34,7 +34,9 @@ class TestAnnotationsAPI:
             data=json.dumps(dataset_data),
             content_type='application/json'
         )
-        dataset_id = dataset_response.get_json()['id']
+        dataset_response_data = dataset_response.get_json()
+        print(f"Dataset creation response: {dataset_response.status_code} - {dataset_response_data}")
+        dataset_id = dataset_response_data['id']
         
         return project_id, dataset_id
 

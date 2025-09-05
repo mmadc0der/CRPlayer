@@ -56,7 +56,7 @@ def upsert_frame(conn: sqlite3.Connection, session_db_id: int, frame_id: str, ts
         # Optionally update timestamp if provided
         cur.execute(
             """
-            UPDATE frames SET ts_ms = COALESCE(?, ts_ms)
+            UPDATE frames SET ts_ms = COALESCE(ts_ms, ?)
             WHERE session_id = ? AND frame_id = ?
             """,
             (ts_ms, session_db_id, frame_id),
@@ -236,7 +236,7 @@ def set_annotation_status(conn: sqlite3.Connection, dataset_id: int, frame_db_id
 # Regression CRUD helpers
 # -----------------------
 
-def upsert_regression(conn: sqlite3.Connection, dataset_id: int, frame_db_id: int, value_real: float) -> None:
+def upsert_regression(conn: sqlite3.Connection, dataset_id: int, frame_db_id: int, value_real: float) -> dict:
     ensure_membership(conn, dataset_id, frame_db_id)
     conn.execute(
         """
@@ -247,6 +247,12 @@ def upsert_regression(conn: sqlite3.Connection, dataset_id: int, frame_db_id: in
         (dataset_id, frame_db_id, float(value_real)),
     )
     set_annotation_status(conn, dataset_id, frame_db_id, 'labeled')
+    
+    # Return the created/updated annotation data
+    return {
+        "regression_value": float(value_real),
+        "status": "labeled"
+    }
 
 
 def delete_regression(conn: sqlite3.Connection, dataset_id: int, frame_db_id: int) -> None:
@@ -260,7 +266,7 @@ def delete_regression(conn: sqlite3.Connection, dataset_id: int, frame_db_id: in
 # Single-label CRUD helpers
 # -----------------------------
 
-def upsert_single_label(conn: sqlite3.Connection, dataset_id: int, frame_db_id: int, class_id: int) -> None:
+def upsert_single_label(conn: sqlite3.Connection, dataset_id: int, frame_db_id: int, class_id: int) -> dict:
     ensure_membership(conn, dataset_id, frame_db_id)
     conn.execute(
         """
@@ -271,6 +277,12 @@ def upsert_single_label(conn: sqlite3.Connection, dataset_id: int, frame_db_id: 
         (dataset_id, frame_db_id, int(class_id)),
     )
     set_annotation_status(conn, dataset_id, frame_db_id, 'labeled')
+    
+    # Return the created/updated annotation data
+    return {
+        "single_label_class_id": int(class_id),
+        "status": "labeled"
+    }
 
 
 def delete_single_label(conn: sqlite3.Connection, dataset_id: int, frame_db_id: int) -> None:

@@ -53,7 +53,7 @@ class SaveRegressionRequestFactory(factory.DictFactory):
     session_id = factory.Sequence(lambda n: f"test_session_{n:03d}")
     dataset_id = 1
     frame_idx = factory.Sequence(lambda n: n)
-    value = factory.Faker('pyfloat', left_digits=1, right_digits=3, positive=True, max_value=100.0)
+    value = factory.Faker('pyfloat', left_digits=3, right_digits=3, positive=True, max_value=100.0)
 
 
 class SaveSingleLabelRequestFactory(factory.DictFactory):

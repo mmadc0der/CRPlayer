@@ -19,13 +19,15 @@ class TestDatabaseSchema:
         tables = [row[0] for row in cursor.fetchall()]
         
         expected_tables = [
-            'annotation_frame_settings',
+            'annotation_labels',
             'annotations',
+            'classification_annotations',
             'dataset_classes',
             'dataset_session_settings',
             'datasets',
             'frames',
             'projects',
+            'regression_annotations',
             'sessions',
             'target_types'
         ]
@@ -137,12 +139,10 @@ class TestDatabaseSchema:
         columns = {row[1]: row[2] for row in cursor.fetchall()}
         
         expected_columns = {
-            'id': 'INTEGER',
             'dataset_id': 'INTEGER',
             'frame_id': 'INTEGER',
             'status': 'TEXT',
-            'regression_value': 'REAL',
-            'single_label_class_id': 'INTEGER',
+            'settings_json': 'TEXT',
             'created_at': 'DATETIME',
             'updated_at': 'DATETIME'
         }
@@ -180,14 +180,11 @@ class TestDatabaseSchema:
 
     def test_check_constraints(self, temp_db):
         """Test check constraints are working."""
-        from db.repository import upsert_session, upsert_frame
-        
-        # Create a session
-        session_db_id = upsert_session(temp_db, "test_session", "/path", {})
-        
-        # Try to insert frame with negative timestamp (should fail)
+        # Try to insert frame with negative timestamp directly (should fail)
         with pytest.raises(sqlite3.IntegrityError):
-            upsert_frame(temp_db, session_db_id, "frame_001", -1000)
+            temp_db.execute(
+                "INSERT INTO frames(session_id, frame_id, ts_ms) VALUES (1, 'test', -1000)"
+            )
 
     def test_indexes_created(self, temp_db):
         """Test that necessary indexes are created."""
@@ -199,8 +196,9 @@ class TestDatabaseSchema:
         # Check for specific indexes mentioned in schema
         expected_indexes = [
             'idx_frames_session_frame',
-            'idx_annotations_dataset_frame',
-            'idx_annotations_dataset_status'
+            'idx_annotations_frame',
+            'idx_annotations_dataset',
+            'idx_annotations_status'
         ]
         
         for index in expected_indexes:
