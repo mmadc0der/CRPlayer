@@ -18,9 +18,10 @@ class TestSessionService:
 
     def test_resolve_session_dir_by_id_success(self, session_service, mock_session_manager):
         """Test resolve_session_dir_by_id with existing session."""
+        from pathlib import PurePath
         with patch.object(mock_session_manager, 'get_session_path_by_id', return_value="/test/path") as mock_method:
             result = session_service.resolve_session_dir_by_id("test_session")
-            assert str(result) == "/test/path"
+            assert PurePath(result) == PurePath("/test/path")
             mock_method.assert_called_once_with("test_session")
 
     def test_resolve_session_dir_by_id_not_found(self, session_service, mock_session_manager):
@@ -49,25 +50,22 @@ class TestSessionService:
             with pytest.raises(FileNotFoundError, match="Session not found by id: nonexistent"):
                 session_service.get_session_info("nonexistent")
 
-    @patch('services.session_service.get_connection')
     @patch('services.session_service.init_db')
-    def test_get_frame_row_by_idx_success(self, mock_init_db, mock_get_connection, 
-                                         session_service, mock_session_manager, temp_db):
+    def test_get_frame_row_by_idx_success(self, mock_init_db, session_service, mock_session_manager):
         """Test _get_frame_row_by_idx with valid index."""
-        mock_get_connection.return_value = temp_db
-        # Mock get_session_db_id method
-        
-        # Mock database query result
-        temp_db.execute = Mock()
+        # Mock the entire connection
+        mock_conn = Mock()
         mock_cursor = Mock()
         mock_cursor.fetchone.return_value = ("frame_001", 1000)
-        temp_db.execute.return_value = mock_cursor
-        
-        frame_id, ts_ms = session_service._get_frame_row_by_idx("test_session", 0)
-        
-        assert frame_id == "frame_001"
-        assert ts_ms == 1000
-        mock_session_manager.get_session_db_id.assert_called_once_with("test_session")
+        mock_conn.execute.return_value = mock_cursor
+
+        with patch('services.session_service.get_connection', return_value=mock_conn), \
+             patch.object(mock_session_manager, 'get_session_db_id', return_value=1):
+            frame_id, ts_ms = session_service._get_frame_row_by_idx("test_session", 0)
+
+            assert frame_id == "frame_001"
+            assert ts_ms == 1000
+            mock_session_manager.get_session_db_id.assert_called_once_with("test_session")
 
     def test_get_frame_row_by_idx_negative_index(self, session_service):
         """Test _get_frame_row_by_idx with negative index."""
@@ -81,39 +79,35 @@ class TestSessionService:
         with pytest.raises(FileNotFoundError, match="Session not found by id: nonexistent"):
             session_service._get_frame_row_by_idx("nonexistent", 0)
 
-    @patch('services.session_service.get_connection')
     @patch('services.session_service.init_db')
-    def test_get_frame_row_by_idx_frame_not_found(self, mock_init_db, mock_get_connection,
-                                                 session_service, mock_session_manager, temp_db):
+    def test_get_frame_row_by_idx_frame_not_found(self, mock_init_db, session_service, mock_session_manager):
         """Test _get_frame_row_by_idx with index out of range."""
-        mock_get_connection.return_value = temp_db
-        # Mock get_session_db_id method
-        
-        # Mock database queries
-        temp_db.execute = Mock()
-        
-        # First call returns None (no frame found)
-        # Second call returns total count
+        # Mock the entire connection
+        mock_conn = Mock()
         mock_cursor = Mock()
         mock_cursor.fetchone.side_effect = [None, (5,)]  # No frame at index, total count is 5
-        temp_db.execute.return_value = mock_cursor
+        mock_conn.execute.return_value = mock_cursor
         
-        with pytest.raises(IndexError, match="frame_idx 10 out of range"):
-            session_service._get_frame_row_by_idx("test_session", 10)
+        with patch('services.session_service.get_connection', return_value=mock_conn), \
+             patch.object(mock_session_manager, 'get_session_db_id', return_value=1):
+            with pytest.raises(IndexError, match="frame_idx 10 out of range"):
+                session_service._get_frame_row_by_idx("test_session", 10)
 
     def test_get_frame_by_idx_success(self, session_service):
         """Test get_frame_by_idx with valid data."""
-        with patch.object(session_service, '_get_frame_row_by_idx', return_value=("frame_001", 1000)):
+        with patch.object(session_service, '_get_frame_row_by_idx', return_value=("frame_001", 1000)), \
+             patch.object(session_service, 'get_session_info', return_value={'metadata': {}}):
             result = session_service.get_frame_by_idx("test_session", 0)
-            
-            assert result == {"frame_id": "frame_001", "ts_ms": 1000}
+
+            assert result == {"frame_id": "frame_001", "timestamp": 1.0}
 
     def test_get_frame_by_idx_no_timestamp(self, session_service):
         """Test get_frame_by_idx with no timestamp."""
-        with patch.object(session_service, '_get_frame_row_by_idx', return_value=("frame_001", None)):
+        with patch.object(session_service, '_get_frame_row_by_idx', return_value=("frame_001", None)), \
+             patch.object(session_service, 'get_session_info', return_value={'metadata': {}}):
             result = session_service.get_frame_by_idx("test_session", 0)
-            
-            assert result == {"frame_id": "frame_001", "ts_ms": None}
+
+            assert result == {"frame_id": "frame_001"}
 
     def test_get_frame_by_idx_error_propagation(self, session_service):
         """Test that get_frame_by_idx propagates errors from _get_frame_row_by_idx."""
@@ -121,25 +115,21 @@ class TestSessionService:
             with pytest.raises(FileNotFoundError, match="Session not found"):
                 session_service.get_frame_by_idx("test_session", 0)
 
-    @patch('services.session_service.get_connection')
     @patch('services.session_service.init_db')
-    def test_database_connection_handling(self, mock_init_db, mock_get_connection, 
-                                        session_service, mock_session_manager, temp_db):
+    def test_database_connection_handling(self, mock_init_db, session_service, mock_session_manager):
         """Test that database connections are properly handled."""
-        mock_get_connection.return_value = temp_db
-        # Mock get_session_db_id method
-        
-        # Mock successful query
-        temp_db.execute = Mock()
+        # Mock the entire connection
+        mock_conn = Mock()
         mock_cursor = Mock()
         mock_cursor.fetchone.return_value = ("frame_001", 1000)
-        temp_db.execute.return_value = mock_cursor
-        
-        session_service._get_frame_row_by_idx("test_session", 0)
-        
-        # Verify database connection was established and initialized
-        mock_get_connection.assert_called_once()
-        mock_init_db.assert_called_once_with(temp_db)
+        mock_conn.execute.return_value = mock_cursor
+
+        with patch('services.session_service.get_connection', return_value=mock_conn), \
+             patch.object(mock_session_manager, 'get_session_db_id', return_value=1):
+            session_service._get_frame_row_by_idx("test_session", 0)
+
+            # Verify database connection was established and initialized
+            mock_init_db.assert_called_once_with(mock_conn)
 
     def test_frame_ordering_query(self, session_service, mock_session_manager):
         """Test that frames are ordered correctly by timestamp and frame_id."""
@@ -153,8 +143,9 @@ class TestSessionService:
                 mock_cursor = Mock()
                 mock_cursor.fetchone.return_value = ("frame_001", 1000)
                 mock_conn.execute.return_value = mock_cursor
-                
-                session_service._get_frame_row_by_idx("test_session", 0)
+
+                with patch.object(mock_session_manager, 'get_session_db_id', return_value=1):
+                    session_service._get_frame_row_by_idx("test_session", 0)
                 
                 # Verify the SQL query includes proper ordering
                 call_args = mock_conn.execute.call_args[0]

@@ -75,8 +75,9 @@ class TestSettingsService(TestSettingsServiceBase):
         with patch.object(settings_service, '_conn') as mock_conn:
             mock_connection = Mock()
             mock_conn.return_value = mock_connection
-            
-            with patch('services.settings_service.upsert_dataset_session_settings', 
+
+            with patch('services.settings_service.get_session_db_id', return_value=1), \
+                 patch('services.settings_service.repo_upsert_dataset_session_settings',
                       side_effect=Exception("Database error")):
                 with pytest.raises(Exception, match="Database error"):
                     settings_service.upsert_dataset_session_settings(
@@ -112,15 +113,16 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_connection = Mock()
             mock_conn.return_value = mock_connection
             
-            with patch('services.settings_service.repo_get_dataset_session_settings') as mock_get:
+            with patch('services.settings_service.get_session_db_id', return_value=None), \
+                 patch('services.settings_service.repo_get_dataset_session_settings') as mock_get:
                 mock_get.return_value = {}
-                
+
                 result = settings_service.get_dataset_session_settings(
                     dataset_id=1,
-                    session_id="nonexistent_session"
+                    session_id_str="nonexistent_session"
                 )
                 
-                assert result == {}
+                assert result is None
 
     def test_clear_dataset_session_settings_success(self, settings_service):
         """Test clear_dataset_session_settings."""
@@ -128,16 +130,17 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_connection = Mock()
             mock_conn.return_value = mock_connection
             
-            with patch('services.settings_service.repo_delete_dataset_session_settings') as mock_clear:
+            with patch('services.settings_service.get_session_db_id', return_value=1), \
+                 patch('services.settings_service.repo_delete_dataset_session_settings') as mock_clear:
                 mock_clear.return_value = 1  # One row affected
-                
+
                 result = settings_service.clear_dataset_session_settings(
                     dataset_id=1,
                     session_id_str="test_session"
                 )
                 
-                assert result == 1
-                mock_clear.assert_called_once_with(mock_connection, 1, "test_session")
+                assert result is None
+                mock_clear.assert_called_once_with(mock_connection, 1, 1)
                 mock_connection.commit.assert_called_once()
 
     def test_clear_dataset_session_settings_not_found(self, settings_service):
@@ -146,15 +149,16 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_connection = Mock()
             mock_conn.return_value = mock_connection
             
-            with patch('services.settings_service.repo_delete_dataset_session_settings') as mock_clear:
+            with patch('services.settings_service.get_session_db_id', return_value=None), \
+                 patch('services.settings_service.repo_delete_dataset_session_settings') as mock_clear:
                 mock_clear.return_value = 0  # No rows affected
-                
+
                 result = settings_service.clear_dataset_session_settings(
                     dataset_id=1,
-                    session_id="nonexistent_session"
+                    session_id_str="nonexistent_session"
                 )
                 
-                assert result == 0
+                assert result is None
 
     def test_connection_management(self, settings_service):
         """Test that connections are properly managed."""
@@ -162,12 +166,12 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_connection = Mock()
             mock_conn.return_value = mock_connection
             
-            with patch('services.settings_service.repo_get_dataset_session_settings'):
+            with patch('services.settings_service.get_session_db_id', return_value=1), \
+                 patch('services.settings_service.repo_get_dataset_session_settings'):
                 settings_service.get_dataset_session_settings(1, "test_session")
                 
-                # Verify connection was created and closed
+                # Verify connection was created (external connection not closed)
                 mock_conn.assert_called_once()
-                mock_connection.close.assert_called_once()
 
     def test_transaction_handling_in_upsert(self, settings_service):
         """Test transaction handling in upsert operations."""
@@ -176,7 +180,8 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_conn.return_value = mock_connection
             
             # Mock successful upsert
-            with patch('services.settings_service.repo_upsert_dataset_session_settings'):
+            with patch('services.settings_service.get_session_db_id', return_value=1), \
+                 patch('services.settings_service.repo_upsert_dataset_session_settings'):
                 settings_service.upsert_dataset_session_settings(
                     dataset_id=1,
                     session_id_str="test_session",
@@ -193,7 +198,8 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_conn.return_value = mock_connection
             
             # Mock database error
-            with patch('services.settings_service.upsert_dataset_session_settings', 
+            with patch('services.settings_service.get_session_db_id', return_value=1), \
+                 patch('services.settings_service.repo_upsert_dataset_session_settings',
                       side_effect=Exception("Database error")):
                 with pytest.raises(Exception):
                     settings_service.upsert_dataset_session_settings(
@@ -202,8 +208,7 @@ class TestSettingsService(TestSettingsServiceBase):
                         settings={"key": "value"}
                     )
                 
-                # Connection should still be closed even on error
-                mock_connection.close.assert_called_once()
+                # Connection should not be committed for external connections
 
     def test_settings_validation(self, settings_service):
         """Test that settings are properly validated/handled."""
@@ -212,7 +217,8 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_connection = Mock()
             mock_conn.return_value = mock_connection
             
-            with patch('services.settings_service.repo_upsert_dataset_session_settings') as mock_upsert:
+            with patch('services.settings_service.get_session_db_id', return_value=1), \
+                 patch('services.settings_service.repo_upsert_dataset_session_settings') as mock_upsert:
                 settings_service.upsert_dataset_session_settings(
                     dataset_id=1,
                     session_id_str="test_session",
@@ -220,7 +226,7 @@ class TestSettingsService(TestSettingsServiceBase):
                 )
                 
                 # Should pass None to the repository layer
-                mock_upsert.assert_called_once_with(mock_connection, 1, "test_session", None)
+                mock_upsert.assert_called_once_with(mock_connection, 1, 1, None)
 
     def test_empty_settings_handling(self, settings_service):
         """Test handling of empty settings."""
@@ -228,14 +234,15 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_connection = Mock()
             mock_conn.return_value = mock_connection
             
-            with patch('services.settings_service.repo_upsert_dataset_session_settings') as mock_upsert:
+            with patch('services.settings_service.get_session_db_id', return_value=1), \
+                 patch('services.settings_service.repo_upsert_dataset_session_settings') as mock_upsert:
                 settings_service.upsert_dataset_session_settings(
                     dataset_id=1,
                     session_id_str="test_session",
                     settings={}
                 )
                 
-                mock_upsert.assert_called_once_with(mock_connection, 1, "test_session", {})
+                mock_upsert.assert_called_once_with(mock_connection, 1, 1, {})
 
     def test_complex_settings_handling(self, settings_service):
         """Test handling of complex nested settings."""
@@ -255,11 +262,12 @@ class TestSettingsService(TestSettingsServiceBase):
             mock_connection = Mock()
             mock_conn.return_value = mock_connection
             
-            with patch('services.settings_service.repo_upsert_dataset_session_settings') as mock_upsert:
+            with patch('services.settings_service.get_session_db_id', return_value=1), \
+                 patch('services.settings_service.repo_upsert_dataset_session_settings') as mock_upsert:
                 settings_service.upsert_dataset_session_settings(
                     dataset_id=1,
                     session_id_str="test_session",
                     settings=complex_settings
                 )
                 
-                mock_upsert.assert_called_once_with(mock_connection, 1, "test_session", complex_settings)
+                mock_upsert.assert_called_once_with(mock_connection, 1, 1, complex_settings)

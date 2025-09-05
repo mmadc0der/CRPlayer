@@ -172,8 +172,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(err.model_dump()), 500
 
     # -------------------- Projects & Datasets CRUD --------------------
-<<<<<<< Current (Your changes)
-=======
     @bp.route('/api/projects', methods=['GET'])
     def api_list_projects():
         try:
@@ -183,7 +181,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
         except Exception as e:
             err = ErrorResponse(code='projects_error', message='Failed to list projects', details={'error': str(e)})
             return jsonify(err.model_dump()), 500
->>>>>>> Incoming (Background Agent changes)
 
     @bp.route('/api/projects', methods=['POST'])
     def api_create_project():

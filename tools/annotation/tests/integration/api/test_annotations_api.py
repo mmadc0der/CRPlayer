@@ -26,7 +26,7 @@ class TestAnnotationsAPI:
             content_type='application/json'
         )
         project_id = project_response.get_json()['id']
-        
+
         # Create dataset
         dataset_data = DatasetDataFactory(target_type_id=target_type_id)
         dataset_response = client.post(
@@ -37,7 +37,18 @@ class TestAnnotationsAPI:
         dataset_response_data = dataset_response.get_json()
         print(f"Dataset creation response: {dataset_response.status_code} - {dataset_response_data}")
         dataset_id = dataset_response_data['id']
-        
+
+        # Create a test session and frame directly in the database
+        from db.connection import get_connection
+        from tests.conftest import create_test_session
+
+        conn = get_connection()
+        try:
+            session_db_id = create_test_session(conn, "test_session_000", frame_count=5)
+            print(f"Created test session with ID: {session_db_id}")
+        finally:
+            conn.close()
+
         return project_id, dataset_id
 
     def test_get_annotation_for_frame_not_found(self, client: FlaskClient):
@@ -66,9 +77,11 @@ class TestAnnotationsAPI:
             frame_idx=0,
             value=42.5
         )
-        
-        with patch('services.annotation_service.AnnotationService.save_regression') as mock_save:
+
+        with patch('services.annotation_service.AnnotationService.save_regression') as mock_save, \
+             patch('services.session_service.SessionService.get_frame_by_idx') as mock_get_frame:
             mock_save.return_value = {"regression_value": 42.5, "status": "labeled"}
+            mock_get_frame.return_value = {"frame_id": "frame_001", "ts_ms": 1000}
             
             response = client.post(
                 '/api/annotations/regression',
@@ -103,8 +116,10 @@ class TestAnnotationsAPI:
             class_id=1
         )
         
-        with patch('services.annotation_service.AnnotationService.save_single_label') as mock_save:
+        with patch('services.annotation_service.AnnotationService.save_single_label') as mock_save, \
+             patch('services.session_service.SessionService.get_frame_by_idx') as mock_get_frame:
             mock_save.return_value = {"single_label_class_id": 1, "status": "labeled"}
+            mock_get_frame.return_value = {"frame_id": "frame_001", "ts_ms": 1000}
             
             response = client.post(
                 '/api/annotations/single_label',
@@ -122,26 +137,28 @@ class TestAnnotationsAPI:
         project_id, dataset_id = self.setup_project_and_dataset(client, target_type_id=1)
         
         request_data = {
-            "session_id": "test_session_001",
+            "session_id": "test_session_000",
             "dataset_id": dataset_id,
             "frame_idx": 0,
             "category_name": "battle"
         }
-        
-        with patch('services.annotation_service.AnnotationService.save_single_label') as mock_save:
-            with patch('db.classes.get_or_create_dataset_class') as mock_get_class:
-                mock_get_class.return_value = {"id": 1, "name": "battle"}
-                mock_save.return_value = {"single_label_class_id": 1, "status": "labeled"}
-                
-                response = client.post(
-                    '/api/annotations/single_label',
-                    data=json.dumps(request_data),
-                    content_type='application/json'
-                )
-                
-                assert response.status_code == 200
-                data = response.get_json()
-                assert data['success'] is True
+
+        with patch('services.annotation_service.AnnotationService.save_single_label') as mock_save, \
+             patch('services.session_service.SessionService.get_frame_by_idx') as mock_get_frame, \
+             patch('db.classes.get_or_create_dataset_class') as mock_get_class:
+            mock_get_class.return_value = {"id": 1, "name": "battle"}
+            mock_save.return_value = {"single_label_class_id": 1, "status": "labeled"}
+            mock_get_frame.return_value = {"frame_id": "frame_001", "ts_ms": 1000}
+
+            response = client.post(
+                '/api/annotations/single_label',
+                data=json.dumps(request_data),
+                content_type='application/json'
+            )
+
+            assert response.status_code == 200
+            data = response.get_json()
+            assert data['success'] is True
 
     def test_save_multilabel_success(self, client: FlaskClient):
         """Test saving multilabel annotation."""
@@ -153,8 +170,10 @@ class TestAnnotationsAPI:
             class_ids=[1, 2, 3]
         )
         
-        with patch('services.annotation_service.AnnotationService.save_multilabel') as mock_save:
+        with patch('services.annotation_service.AnnotationService.save_multilabel') as mock_save, \
+             patch('services.session_service.SessionService.get_frame_by_idx') as mock_get_frame:
             mock_save.return_value = {"class_ids": [1, 2, 3], "status": "labeled"}
+            mock_get_frame.return_value = {"frame_id": "frame_001", "ts_ms": 1000}
             
             response = client.post(
                 '/api/annotations/multilabel',
@@ -178,15 +197,17 @@ class TestAnnotationsAPI:
             "category_names": ["battle", "boss", "critical"]
         }
         
-        with patch('services.annotation_service.AnnotationService.save_multilabel') as mock_save:
-            with patch('db.classes.get_or_create_dataset_class') as mock_get_class:
+        with patch('services.annotation_service.AnnotationService.save_multilabel') as mock_save, \
+             patch('services.session_service.SessionService.get_frame_by_idx') as mock_get_frame, \
+             patch('db.classes.get_or_create_dataset_class') as mock_get_class:
                 mock_get_class.side_effect = [
                     {"id": 1, "name": "battle"},
                     {"id": 2, "name": "boss"},
                     {"id": 3, "name": "critical"}
                 ]
                 mock_save.return_value = {"class_ids": [1, 2, 3], "status": "labeled"}
-                
+                mock_get_frame.return_value = {"frame_id": "frame_001", "ts_ms": 1000}
+
                 response = client.post(
                     '/api/annotations/multilabel',
                     data=json.dumps(request_data),
@@ -209,8 +230,10 @@ class TestAnnotationsAPI:
             override_settings=override_settings
         )
         
-        with patch('services.annotation_service.AnnotationService.save_regression') as mock_save:
+        with patch('services.annotation_service.AnnotationService.save_regression') as mock_save, \
+             patch('services.session_service.SessionService.get_frame_by_idx') as mock_get_frame:
             mock_save.return_value = {"regression_value": 42.5, "status": "labeled"}
+            mock_get_frame.return_value = {"frame_id": "frame_001", "ts_ms": 1000}
             
             response = client.post(
                 '/api/annotations/regression',
@@ -295,7 +318,7 @@ class TestAnnotationsAPI:
         
         assert response.status_code == 400
         data = response.get_json()
-        assert data['code'] == 'validation_error'
+        assert data['code'] == 'bad_request'
 
     def test_malformed_json_handling(self, client: FlaskClient):
         """Test handling of malformed JSON."""

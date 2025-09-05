@@ -199,12 +199,8 @@ class SessionManager:
                 return status_data
             except:
                 pass
-<<<<<<< Current (Your changes)
-        return 'captured'
-=======
         return {
             'status': 'captured',
             'collection_status': 'unknown',
             'annotation_status': 'not_started'
         }
->>>>>>> Incoming (Background Agent changes)

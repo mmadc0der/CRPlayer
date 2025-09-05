@@ -92,14 +92,14 @@ def dataset_service(mock_session_manager: SessionManager) -> DatasetService:
     return DatasetService(mock_session_manager)
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def app(temp_data_dir: Path) -> Flask:
     """Create a Flask application configured for testing with isolated database."""
     import tempfile
     import os
     from db.schema import init_db
     import sqlite3
-    
+
     app = Flask(__name__)
     app.config.update({
         "TESTING": True,
@@ -107,44 +107,68 @@ def app(temp_data_dir: Path) -> Flask:
         "SECRET_KEY": "test-secret-key",
         "APPLICATION_ROOT": "/annotation"
     })
-    
-    # Create a unique in-memory database for each test using shared cache
+
+    # Create a unique temporary database file for each test
     import uuid
-    db_name = f"test_{uuid.uuid4().hex}"
-    
-    # Mock get_connection to return isolated in-memory databases
-    def get_test_connection():
-        conn = sqlite3.connect(f":memory:")
+    test_db_path = temp_data_dir / f"test_{uuid.uuid4().hex}.db"
+
+    # Set environment variable to use test database
+    original_db_path = os.environ.get('ANNOTATION_DB_PATH')
+    os.environ['ANNOTATION_DB_PATH'] = str(test_db_path)
+
+    try:
+        # Initialize the test database
+        conn = sqlite3.connect(str(test_db_path))
         conn.row_factory = sqlite3.Row
         conn.execute('PRAGMA foreign_keys = ON;')
         init_db(conn)
-        return conn
-    
-    # Apply patches before importing the API module
-    with patch('db.connection.get_connection', side_effect=get_test_connection):
-        with patch('api.get_connection', side_effect=get_test_connection):  # Also patch in api module
-            with patch('core.session_manager.SessionManager') as mock_sm_class:
-                # Create a real SessionManager with test database connection
-                mock_sm = SessionManager(data_root=str(temp_data_dir))
-                mock_sm_class.return_value = mock_sm
-                
-                # Import and register blueprint after patching
-                from api import create_annotation_api
-                app.register_blueprint(create_annotation_api(mock_sm))
-                
-                # Add the main route
-                @app.route('/')
-                def index():
-                    return "Test annotation interface"
-    
-    return app
+        conn.close()
+
+        # Create a real SessionManager with test database connection
+        mock_sm = SessionManager(data_root=str(temp_data_dir))
+
+        # Import and register blueprint
+        from api import create_annotation_api
+        app.register_blueprint(create_annotation_api(mock_sm))
+
+        # Add the main route
+        @app.route('/')
+        def index():
+            return "Test annotation interface"
+
+        return app
+    finally:
+        # Restore original environment variable
+        if original_db_path is not None:
+            os.environ['ANNOTATION_DB_PATH'] = original_db_path
+        elif 'ANNOTATION_DB_PATH' in os.environ:
+            del os.environ['ANNOTATION_DB_PATH']
 
 
 @pytest.fixture
 def client(app: Flask) -> FlaskClient:
     """Create a test client for the Flask application with clean database."""
     # The app fixture already provides database isolation via mocking
-    return app.test_client()
+    test_client = app.test_client()
+
+    # Clean up database before each test
+    with app.app_context():
+        try:
+            from db.connection import get_connection
+            conn = get_connection()
+            # Clear all tables to ensure clean state
+            conn.execute("DELETE FROM annotations")
+            conn.execute("DELETE FROM frames")
+            conn.execute("DELETE FROM sessions")
+            conn.execute("DELETE FROM datasets")
+            conn.execute("DELETE FROM projects")
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            # If cleanup fails, continue with test
+            pass
+
+    return test_client
 
 
 @pytest.fixture

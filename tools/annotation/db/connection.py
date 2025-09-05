@@ -74,10 +74,5 @@ def get_connection(custom_path: Optional[Path] = None) -> sqlite3.Connection:
         conn.execute('PRAGMA cache_size = -64000;')  # 64MB cache
         conn.execute('PRAGMA temp_store = MEMORY;')
         return conn
-<<<<<<< Current (Your changes)
-    except sqlite3.Error as e:
-        raise RuntimeError(f"Failed to connect to database at {db_path}: {e}") from e
-=======
     except Exception as e:
         raise RuntimeError(f"Failed to connect to database: {e}") from e
->>>>>>> Incoming (Background Agent changes)

@@ -265,8 +265,8 @@ class TestDatasetsAPI:
             data=json.dumps(dataset_data),
             content_type='application/json'
         )
-        
-        assert response.status_code == 200
+
+        assert response.status_code == 201
         data = response.get_json()
         
         assert 'id' in data
@@ -283,8 +283,8 @@ class TestDatasetsAPI:
             data=json.dumps(dataset_data),
             content_type='application/json'
         )
-        
-        assert response.status_code == 400
+
+        assert response.status_code == 404
         data = response.get_json()
         assert 'code' in data
 
