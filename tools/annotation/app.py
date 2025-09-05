@@ -40,12 +40,8 @@ def set_script_name():
 session_manager = SessionManager()
 
 # Register API blueprint at /api/* for backward compatibility
-api_bp_root = create_annotation_api(session_manager, name='annotation_api_root')
-app.register_blueprint(api_bp_root)
-
-# Register API blueprint at /annotation/api/* for sub-path mounting  
-api_bp_sub = create_annotation_api(session_manager, name='annotation_api_sub')
-app.register_blueprint(api_bp_sub, url_prefix='/annotation')
+api_bp = create_annotation_api(session_manager, name='annotation_api')
+app.register_blueprint(api_bp)
 
 # Initialize SQLite schema (idempotent)
 try:

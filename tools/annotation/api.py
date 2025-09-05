@@ -184,15 +184,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             return jsonify(err.dict()), 500
 
     # -------------------- Projects & Datasets CRUD --------------------
-    @bp.route('/api/projects', methods=['GET'])
-    def api_list_projects():
-        try:
-            conn = get_connection()
-            init_db(conn)
-            return jsonify(db_list_projects(conn))
-        except Exception as e:
-            err = ErrorResponse(code='projects_error', message='Failed to list projects', details={'error': str(e)})
-            return jsonify(err.dict()), 500
 
     @bp.route('/api/projects', methods=['POST'])
     def api_create_project():
