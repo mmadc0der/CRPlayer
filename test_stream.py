@@ -4,9 +4,18 @@ Verifies RTX 3060 performance and 60fps capability.
 """
 
 import time
-import torch
-import psutil
 import threading
+import pytest
+try:
+    import psutil
+except ModuleNotFoundError:  # pragma: no cover
+    pytest.skip("psutil not available", allow_module_level=True)
+
+try:
+    import torch
+except ModuleNotFoundError:  # pragma: no cover
+    pytest.skip("PyTorch not available", allow_module_level=True)
+
 from streamer.android_stream_gpu import GPUAndroidStreamer
 
 

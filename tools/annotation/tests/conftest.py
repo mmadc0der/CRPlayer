@@ -13,7 +13,10 @@ from unittest.mock import Mock, patch
 from flask import Flask
 from flask.testing import FlaskClient
 
-from app import app as flask_app
+# Ensure path for shim module
+from importlib import import_module
+
+flask_app = import_module("app").app  # type: ignore
 from core.session_manager import SessionManager
 from db.connection import get_connection, get_db_path
 from db.schema import init_db
