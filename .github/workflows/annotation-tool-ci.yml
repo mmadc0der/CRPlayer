@@ -26,18 +26,15 @@ defaults:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: 3.11
 
       - name: Cache pip dependencies
         uses: actions/cache@v3
@@ -110,7 +107,7 @@ jobs:
         if: always()
         with:
           files: tools/annotation/pytest-results.xml
-          check_name: "Annotation Tool Test Results (Python ${{ matrix.python-version }})"
+          check_name: "Annotation Tool Test Results"
 
   security:
     runs-on: ubuntu-latest
