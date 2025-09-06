@@ -56,7 +56,7 @@ class ClassifierConsumer(StreamConsumer):
       device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
       self.model = TinyGameStateClassifier(num_classes=4)
-      self.model.load_state_dict(torch.load(model_path, map_location=device))
+      self.model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
       self.model.to(device)
       self.model.eval()
 

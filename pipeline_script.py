@@ -85,7 +85,7 @@ class PipelineScript:
                 value = int(value)
               elif '.' in value and value.replace('.', '').isdigit():
                 value = float(value)
-            except:
+            except (ValueError, AttributeError):
               pass  # Keep as string
             consumer_config[key] = value
 

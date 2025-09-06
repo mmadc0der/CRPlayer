@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from pathlib import Path
 from typing import Dict, Any, Optional
+import secrets
 import json
 import time
 from datetime import datetime
@@ -54,6 +55,7 @@ class DataCollectorConsumer(StreamConsumer):
     self.max_frames = max_frames
 
     # Sparsity tracking
+    # For random sparsity, we'll use cryptographically secure randomness to satisfy security scanners
     self.random_threshold = 1.0 / sample_rate if sparsity_mode == "random" else None
     # Generate unique session name with meaningful prefix
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -164,9 +166,9 @@ class DataCollectorConsumer(StreamConsumer):
       return self.frame_count % self.sample_rate == 0
 
     elif self.sparsity_mode == "random":
-      # Random sampling with probability 1/sample_rate
-      import random
-      return random.random() < self.random_threshold
+      # Random sampling with probability 1/sample_rate using secure randomness
+      # Equivalent to random.random() < 1/sample_rate but avoids Bandit B311
+      return secrets.randbelow(self.sample_rate) == 0
 
     elif self.sparsity_mode == "adaptive":
       # Adaptive sampling - denser at start, sparser later

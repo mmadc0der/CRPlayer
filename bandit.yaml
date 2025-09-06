@@ -1,6 +1,12 @@
 exclude_dirs:
   - tools/annotation/tests
   - tests
+  - .venv
+  - venv
+  - tools/annotation/htmlcov
+  - htmlcov
+  - .pytest_cache
+  - __pycache__
 
 # Skip assert_used (B101) in common test file patterns
 assert_used:

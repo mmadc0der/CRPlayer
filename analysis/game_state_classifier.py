@@ -387,7 +387,7 @@ def test_real_time_classification():
   # Load trained model
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
   model = TinyGameStateClassifier(num_classes=4)
-  model.load_state_dict(torch.load('best_game_state_model.pth', map_location=device))
+  model.load_state_dict(torch.load('best_game_state_model.pth', map_location=device, weights_only=True))
   model.to(device)
   model.eval()
 
