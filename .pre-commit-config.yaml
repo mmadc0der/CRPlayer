@@ -7,4 +7,4 @@ repos:
         args: ["--in-place", "--recursive", "--style", "pyproject.toml"]
         files: \.(py)$
         exclude: |
-          ^tools/annotation/(\.venv|htmlcov)/
+          ^\.venv/|^tools/annotation/(\.venv|htmlcov)/

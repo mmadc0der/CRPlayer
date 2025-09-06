@@ -1,6 +1,6 @@
 # Makefile for annotation tool testing
 
-.PHONY: help install-test test test-unit test-integration test-db test-api test-coverage test-fast clean
+.PHONY: help install-test test test-unit test-integration test-db test-api test-coverage test-fast clean pre-commit install-hooks
 
 help: ## Show this help message
 	@echo "Available commands:"
@@ -80,20 +80,26 @@ dev-test: ## Quick development test run
 ci: ## Run CI pipeline (what CI/CD should run)
 	python run_tests.py --type all --coverage-html --parallel 4
 
-install-hooks: ## Install git hooks for validation
-	./install-git-hooks.sh
+install-hooks: ## Install pre-commit hooks
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit install --install-hooks; \
+		pre-commit validate-config; \
+		echo "✅ pre-commit hooks installed"; \
+	else \
+		echo "pre-commit not installed. Run: pip install pre-commit"; \
+	fi
 
 validate: ## Run validation checks (for PR/MR)
 	$(MAKE) lint
 	$(MAKE) test-fast
 	@echo "✅ Validation complete"
 
-pre-commit: ## Run pre-commit checks
-	@echo "🔍 Running pre-commit validation..."
-	python3 -m py_compile $$(find . -name "*.py" | grep -v __pycache__ | head -10)
-	python3 -c "import api, app, dto; print('✅ Critical imports OK')"
-	python3 -m pytest tests/ -x --tb=short -q --maxfail=3 -m "not slow"
-	@echo "✅ Pre-commit validation passed"
+pre-commit: ## Run pre-commit on all files
+	@if command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit run --all-files; \
+	else \
+		echo "pre-commit not installed. Run: pip install pre-commit"; \
+	fi
 
 setup-dev: dev-setup install-hooks ## Complete development environment setup
 	@echo "🎉 Development environment ready!"
