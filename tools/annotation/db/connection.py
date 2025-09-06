@@ -4,6 +4,7 @@ import os
 import sqlite3
 from pathlib import Path
 from typing import Optional
+import logging
 
 # Determine default DB path relative to project root: <repo_root>/data/models/annotation.db
 # This must work both when running from the source tree and inside the Docker image
@@ -74,6 +75,8 @@ def get_connection(custom_path: Optional[Path] = None) -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous = NORMAL;")  # Balance safety/speed
     conn.execute("PRAGMA cache_size = -64000;")  # 64MB cache
     conn.execute("PRAGMA temp_store = MEMORY;")
+    logging.getLogger("annotation.db").debug("opened sqlite connection db=%s", db_path)
     return conn
   except Exception as e:
+    logging.getLogger("annotation.db").exception("db_connection_error")
     raise RuntimeError(f"Failed to connect to database: {e}") from e

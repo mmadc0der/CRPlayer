@@ -10,6 +10,9 @@ import argparse
 import threading
 import atexit
 import os
+import logging
+
+from logging_setup import setup_logging, install_flask_request_hooks
 
 from core.session_manager import SessionManager
 from api import create_annotation_api
@@ -25,6 +28,11 @@ app = Flask(
   static_url_path="/annotation/static",
   template_folder=str(BASE_DIR / "templates"),
 )
+
+# Initialize logging as early as possible
+setup_logging(app_debug=None)
+install_flask_request_hooks(app)
+logger = logging.getLogger("annotation.app")
 
 # Configure Flask to work behind reverse proxy with URL prefix
 app.config["APPLICATION_ROOT"] = "/annotation"
@@ -55,7 +63,7 @@ try:
     _conn.close()
 except Exception as _e:
   # Keep app running even if DB init fails; API can still operate in file-only mode
-  print(f"[DB] Initialization skipped due to error: {_e}")
+  logger.exception("DB initialization skipped due to error")
 
 # -------------------- Background Indexer --------------------
 _indexer_stop_event = threading.Event()
@@ -74,8 +82,9 @@ def _start_indexer():
       daemon=True,
     )
     t.start()
-  except Exception as e:
-    print(f"[indexer] failed to start: {e}")
+    logger.info("Background indexer thread started")
+  except Exception:
+    logger.exception("Background indexer failed to start")
 
 
 def _stop_indexer():
@@ -145,10 +154,10 @@ if __name__ == "__main__":
 
   args = parser.parse_args()
 
-  print("Game State Annotation Tool")
-  print("=" * 40)
-  print(f"Starting web server at http://{args.host}:{args.port}")
-  print("Open this URL in your browser to start annotating!")
-  print()
+  setup_logging(app_debug=bool(args.debug))
+  logger.info("Game State Annotation Tool")
+  logger.info("%s", "=" * 40)
+  logger.info("Starting web server at http://%s:%s", args.host, args.port)
+  logger.info("Open this URL in your browser to start annotating!")
 
   app.run(host=args.host, port=args.port, debug=args.debug)

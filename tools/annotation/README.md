@@ -45,6 +45,22 @@ python app.py --host 0.0.0.0 --port 8080
 python app.py --debug
 ```
 
+### Logging
+
+- The application uses a centralized logging system with request correlation and structured output.
+- Environment variables:
+  - `ANNOTATION_LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default INFO; DEBUG when `--debug`)
+  - `ANNOTATION_LOG_JSON`: set to `1` to enable JSON logs (requires `python-json-logger`)
+  - `ANNOTATION_LOG_FILE`: path to write logs (defaults to stdout)
+
+- Log format (text):
+  `2025-01-01T12:00:00Z INFO annotation.api.annotation_api:api_save_multilabel [req=... ] - message`
+  Includes logger name and method via `%(name)s:%(funcName)s` but omits file/line positions per policy.
+
+- Request logs:
+  - Access lines at INFO with method, path and status code
+  - Detailed debug lines per endpoint when `DEBUG` is enabled
+
 ### Annotation Workflow
 
 1. **Select Session** - Choose from automatically discovered sessions

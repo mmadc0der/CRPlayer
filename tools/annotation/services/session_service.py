@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
+import logging
 
 from core.session_manager import SessionManager
 from db.connection import get_connection
@@ -13,14 +14,17 @@ class SessionService:
 
   def __init__(self, session_manager: SessionManager):
     self.sm = session_manager
+    self._log = logging.getLogger("annotation.service.SessionService")
 
   def resolve_session_dir_by_id(self, session_id: str) -> Path:
+    self._log.debug("resolve_session_dir_by_id session_id=%s", session_id)
     p = self.sm.get_session_path_by_id(session_id)
     if not p:
       raise FileNotFoundError(f"Session not found by id: {session_id}")
     return Path(p)
 
   def get_session_info(self, session_id: str) -> Dict[str, Any]:
+    self._log.debug("get_session_info session_id=%s", session_id)
     info = self.sm.find_session_by_id(session_id)
     if not info:
       raise FileNotFoundError(f"Session not found by id: {session_id}")
@@ -56,6 +60,7 @@ class SessionService:
 
         Returns dict with at least: frame_id, filename (if available), timestamp (seconds, if derivable).
         """
+    self._log.debug("get_frame_by_idx session_id=%s idx=%s", session_id, idx)
     frame_id, ts_ms = self._get_frame_row_by_idx(session_id, idx)
     info = self.get_session_info(session_id)
     md_frames = info["metadata"].get("frames", []) or []
@@ -82,6 +87,7 @@ class SessionService:
 
         Raises FileNotFoundError or IndexError on errors.
         """
+    self._log.debug("get_frame_for_image session_id=%s idx=%s", session_id, idx)
     frame = self.get_frame_by_idx(session_id, idx)
     info = self.get_session_info(session_id)
     session_dir = Path(info["session_dir"])

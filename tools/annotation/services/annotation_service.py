@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional, Dict, Any, List
+import logging
 
 from core.session_manager import SessionManager
 from db.connection import get_connection
@@ -27,6 +28,7 @@ class AnnotationService:
     self.sm = session_manager
     # Lazily initialize DB per call to avoid long-lived connections in Flask workers
     self._settings = SettingsService()
+    self._log = logging.getLogger("annotation.service.AnnotationService")
 
   # No filesystem-based methods remain
 
@@ -50,6 +52,7 @@ class AnnotationService:
 
   def get_annotation_db(self, session_id: str, dataset_id: int, frame_id: str) -> Optional[Dict[str, Any]]:
     """Return unified view for a single frame: status + payloads + effective settings."""
+    self._log.debug("get_annotation_db session_id=%s dataset_id=%s frame_id=%s", session_id, dataset_id, frame_id)
     conn = self._conn()
     sid, fid = self._resolve_ids(conn, session_id, frame_id)
     # Reuse list query for single item
@@ -65,6 +68,8 @@ class AnnotationService:
                                    session_id: str,
                                    dataset_id: int,
                                    labeled_only: bool = False) -> List[Dict[str, Any]]:
+    self._log.debug("list_annotations_for_session session_id=%s dataset_id=%s labeled_only=%s", session_id,
+                    dataset_id, labeled_only)
     conn = self._conn()
     sid = get_session_db_id(conn, session_id)
     if sid is None:
@@ -79,6 +84,8 @@ class AnnotationService:
     value: float,
     override_settings: Optional[Dict[str, Any]] = None,
   ) -> Dict[str, Any]:
+    self._log.debug("save_regression session_id=%s dataset_id=%s frame_id=%s value=%s", session_id, dataset_id,
+                    frame_id, value)
     conn = self._conn()
     try:
       with transaction(conn):
@@ -113,6 +120,8 @@ class AnnotationService:
     class_id: int,
     override_settings: Optional[Dict[str, Any]] = None,
   ) -> Dict[str, Any]:
+    self._log.debug("save_single_label session_id=%s dataset_id=%s frame_id=%s class_id=%s", session_id,
+                    dataset_id, frame_id, class_id)
     conn = self._conn()
     try:
       with transaction(conn):
@@ -133,6 +142,8 @@ class AnnotationService:
     class_ids: List[int],
     override_settings: Optional[Dict[str, Any]] = None,
   ) -> Dict[str, Any]:
+    self._log.debug("save_multilabel session_id=%s dataset_id=%s frame_id=%s class_ids=%s", session_id, dataset_id,
+                    frame_id, class_ids)
     conn = self._conn()
     try:
       with transaction(conn):
@@ -146,6 +157,8 @@ class AnnotationService:
       conn.close()
 
   def set_status(self, session_id: str, dataset_id: int, frame_id: str, status: str) -> None:
+    self._log.debug("set_status session_id=%s dataset_id=%s frame_id=%s status=%s", session_id, dataset_id,
+                    frame_id, status)
     conn = self._conn()
     try:
       with transaction(conn):
@@ -157,6 +170,8 @@ class AnnotationService:
 
   def set_frame_override_settings(self, session_id: str, dataset_id: int, frame_id: str,
                                   settings: Optional[Dict[str, Any]]) -> None:
+    self._log.debug("set_frame_override_settings session_id=%s dataset_id=%s frame_id=%s has_settings=%s",
+                    session_id, dataset_id, frame_id, settings is not None)
     conn = self._conn()
     try:
       with transaction(conn):

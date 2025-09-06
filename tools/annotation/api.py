@@ -3,6 +3,7 @@ from __future__ import annotations
 from flask import Blueprint, request, jsonify, send_file
 from pathlib import Path
 from typing import Optional
+import logging
 
 from core.session_manager import SessionManager
 from services.session_service import SessionService
@@ -46,6 +47,22 @@ from db.classes import (
 
 def create_annotation_api(session_manager: SessionManager, name: str = "annotation_api") -> Blueprint:
   bp = Blueprint(name, __name__)
+  log = logging.getLogger(f"annotation.api.{name}")
+
+  @bp.before_request
+  def _bp_log_request():
+    try:
+      log.debug("request %s %s qs=%s", request.method, request.path, request.query_string)
+    except Exception:
+      pass
+
+  @bp.after_request
+  def _bp_log_response(resp):
+    try:
+      log.debug("response %s %s -> %s", request.method, request.path, resp.status_code)
+    except Exception:
+      pass
+    return resp
 
   session_service = SessionService(session_manager)
   annotation_service = AnnotationService(session_manager)
@@ -155,16 +172,18 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
     try:
       conn = get_connection()
       try:
-        print(f"[api][reindex] db_path={get_db_path()}", flush=True)
+        log.info("reindex start db_path=%s", get_db_path())
       except Exception:
         pass
       summary = reindex_sessions(conn, Path(session_manager.data_root))
-      print(f"[api][reindex] {summary}", flush=True)
+      log.info("reindex summary sessions=%s frames=%s", summary.get("sessions_indexed"),
+               summary.get("frames_indexed"))
       return jsonify({
         "ok": True,
         "summary": summary,
       })
     except Exception as e:
+      log.exception("reindex_error")
       err = ErrorResponse(code="reindex_error", message="Failed to reindex", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
@@ -580,10 +599,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       try:
         from flask import request as _rq
 
-        print(
-          f"[api][frame] request.path={_rq.path} full_path={_rq.full_path} query_string={_rq.query_string}",
-          flush=True,
-        )
+        log.debug("frame request path=%s full_path=%s qs=%s", _rq.path, _rq.full_path, _rq.query_string)
       except Exception:
         pass
       q = FrameQuery(session_id=request.args.get("session_id", ""), idx=int(request.args.get("idx", "-1")))
@@ -613,6 +629,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       err = ErrorResponse(code="not_found", message=str(e))
       return jsonify(err.model_dump()), 404
     except Exception as e:
+      log.exception("frame_error")
       err = ErrorResponse(code="frame_error", message="Failed to fetch frame", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
@@ -631,6 +648,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       err = ErrorResponse(code="not_found", message=str(e))
       return jsonify(err.model_dump()), 404
     except Exception as e:
+      log.exception("image_error")
       err = ErrorResponse(code="image_error", message="Failed to load image", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
