@@ -275,13 +275,13 @@ JOIN datasets d ON d.id = a.dataset_id;
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA_SQL)
-    # Backfill: add settings_json if missing
-    try:
-        cur = conn.execute("PRAGMA table_info(annotations);")
-        cols = [row[1] for row in cur.fetchall()]
-        if 'settings_json' not in cols:
-            conn.execute("ALTER TABLE annotations ADD COLUMN settings_json TEXT;")
-    except Exception:
-        pass
-    conn.commit()
+  conn.executescript(SCHEMA_SQL)
+  # Backfill: add settings_json if missing
+  try:
+    cur = conn.execute("PRAGMA table_info(annotations);")
+    cols = [row[1] for row in cur.fetchall()]
+    if "settings_json" not in cols:
+      conn.execute("ALTER TABLE annotations ADD COLUMN settings_json TEXT;")
+  except Exception:
+    pass
+  conn.commit()
