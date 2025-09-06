@@ -1,0 +1,11 @@
+exclude_dirs:
+  - tools/annotation/tests
+  - tests
+
+# Skip assert_used (B101) in common test file patterns
+assert_used:
+  skips:
+    - "test_*.py"
+    - "*_test.py"
+    - "**/tests/*.py"
+    - "**/tests/**/*.py"
