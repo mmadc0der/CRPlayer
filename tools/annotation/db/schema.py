@@ -283,5 +283,8 @@ def init_db(conn: sqlite3.Connection) -> None:
     if "settings_json" not in cols:
       conn.execute("ALTER TABLE annotations ADD COLUMN settings_json TEXT;")
   except Exception:
-    pass
+    # Benign if column already exists or older SQLite without json_valid in check
+    # Leave as warning-level at most; keep schema usable
+    # (Logging deferred to caller's logger configuration if needed)
+    ...
   conn.commit()

@@ -68,8 +68,8 @@ class AnnotationService:
                                    session_id: str,
                                    dataset_id: int,
                                    labeled_only: bool = False) -> List[Dict[str, Any]]:
-    self._log.debug("list_annotations_for_session session_id=%s dataset_id=%s labeled_only=%s", session_id,
-                    dataset_id, labeled_only)
+    self._log.debug("list_annotations_for_session session_id=%s dataset_id=%s labeled_only=%s", session_id, dataset_id,
+                    labeled_only)
     conn = self._conn()
     sid = get_session_db_id(conn, session_id)
     if sid is None:
@@ -104,7 +104,7 @@ class AnnotationService:
               raise ValueError(f"regression value {value} > max {vmax}")
         except Exception:
           # Do not fail on settings retrieval errors; only enforce when valid bounds are present
-          pass
+          self._log.debug("failed to fetch effective settings for bounds enforcement", exc_info=True)
         upsert_regression(conn, dataset_id, fid, float(value))
         if override_settings is not None:
           repo_set_annotation_frame_settings(conn, dataset_id, fid, override_settings)
@@ -120,8 +120,8 @@ class AnnotationService:
     class_id: int,
     override_settings: Optional[Dict[str, Any]] = None,
   ) -> Dict[str, Any]:
-    self._log.debug("save_single_label session_id=%s dataset_id=%s frame_id=%s class_id=%s", session_id,
-                    dataset_id, frame_id, class_id)
+    self._log.debug("save_single_label session_id=%s dataset_id=%s frame_id=%s class_id=%s", session_id, dataset_id,
+                    frame_id, class_id)
     conn = self._conn()
     try:
       with transaction(conn):
@@ -157,8 +157,8 @@ class AnnotationService:
       conn.close()
 
   def set_status(self, session_id: str, dataset_id: int, frame_id: str, status: str) -> None:
-    self._log.debug("set_status session_id=%s dataset_id=%s frame_id=%s status=%s", session_id, dataset_id,
-                    frame_id, status)
+    self._log.debug("set_status session_id=%s dataset_id=%s frame_id=%s status=%s", session_id, dataset_id, frame_id,
+                    status)
     conn = self._conn()
     try:
       with transaction(conn):
@@ -170,8 +170,8 @@ class AnnotationService:
 
   def set_frame_override_settings(self, session_id: str, dataset_id: int, frame_id: str,
                                   settings: Optional[Dict[str, Any]]) -> None:
-    self._log.debug("set_frame_override_settings session_id=%s dataset_id=%s frame_id=%s has_settings=%s",
-                    session_id, dataset_id, frame_id, settings is not None)
+    self._log.debug("set_frame_override_settings session_id=%s dataset_id=%s frame_id=%s has_settings=%s", session_id,
+                    dataset_id, frame_id, settings is not None)
     conn = self._conn()
     try:
       with transaction(conn):

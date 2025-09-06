@@ -349,7 +349,7 @@ def list_frames_with_annotations(
     Returns rows for the selected session and dataset.
     Includes frame identity, timestamps, status and payloads using annotations_view.
     """
-  base_sql = ("""
+  sql = ("""
         SELECT
           f.id   AS frame_db_id,
           f.frame_id AS frame_id,
@@ -363,7 +363,8 @@ def list_frames_with_annotations(
           ON a.frame_id = f.id AND a.dataset_id = ?
         LEFT JOIN annotations_view av
           ON av.dataset_id = a.dataset_id AND av.frame_id = a.frame_id
-        WHERE f.session_id = ?
-        """ + (" AND a.status = 'labeled'" if labeled_only else "") + " ORDER BY f.frame_id")
-  cur = conn.execute(base_sql, (dataset_id, session_db_id))
+        WHERE f.session_id = ? AND (? = 0 OR a.status = 'labeled')
+        ORDER BY f.frame_id
+    """)
+  cur = conn.execute(sql, (dataset_id, session_db_id, 1 if labeled_only else 0))
   return [dict(row) for row in cur.fetchall()]

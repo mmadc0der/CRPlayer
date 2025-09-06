@@ -91,7 +91,7 @@ def _stop_indexer():
   try:
     _indexer_stop_event.set()
   except Exception:
-    pass
+    logger.warning("Failed to signal indexer stop", exc_info=True)
 
 
 def _should_start_indexer() -> bool:

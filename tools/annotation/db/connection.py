@@ -24,18 +24,21 @@ def _detect_repo_root() -> Path:
   try:
     candidates.append(here.parents[3])  # repo root in source checkout
   except IndexError:
-    pass
+    logging.getLogger("annotation.db").debug("no parent[3] for %s", here, exc_info=True)
   try:
     candidates.append(here.parents[1])  # /app in Docker image
   except IndexError:
-    pass
+    logging.getLogger("annotation.db").debug("no parent[1] for %s", here, exc_info=True)
 
   for base in candidates:
+    is_match = False
     try:
-      if (base / "data").exists() or base.name in ("CRPlayer", "app"):
-        return base
+      is_match = (base / "data").exists() or base.name in ("CRPlayer", "app")
     except Exception:
-      continue
+      logging.getLogger("annotation.db").debug("failed to inspect candidate base=%s", base, exc_info=True)
+      is_match = False
+    if is_match:
+      return base
   # Fallback to immediate parent
   return here.parent
 
@@ -58,7 +61,7 @@ def get_db_path(custom_path: Optional[Path] = None) -> Path:
         if not new_path.exists():
           new_path.parent.mkdir(parents=True, exist_ok=True)
       except Exception:
-        pass
+        logging.getLogger("annotation.db").debug("failed to ensure db directory %s", new_path.parent, exc_info=True)
       path = new_path
   path.parent.mkdir(parents=True, exist_ok=True)
   return path

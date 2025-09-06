@@ -54,14 +54,14 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
     try:
       log.debug("request %s %s qs=%s", request.method, request.path, request.query_string)
     except Exception:
-      pass
+      log.debug("failed to log request", exc_info=True)
 
   @bp.after_request
   def _bp_log_response(resp):
     try:
       log.debug("response %s %s -> %s", request.method, request.path, resp.status_code)
     except Exception:
-      pass
+      log.debug("failed to log response", exc_info=True)
     return resp
 
   session_service = SessionService(session_manager)
@@ -174,10 +174,9 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       try:
         log.info("reindex start db_path=%s", get_db_path())
       except Exception:
-        pass
+        log.debug("failed to log db path", exc_info=True)
       summary = reindex_sessions(conn, Path(session_manager.data_root))
-      log.info("reindex summary sessions=%s frames=%s", summary.get("sessions_indexed"),
-               summary.get("frames_indexed"))
+      log.info("reindex summary sessions=%s frames=%s", summary.get("sessions_indexed"), summary.get("frames_indexed"))
       return jsonify({
         "ok": True,
         "summary": summary,
@@ -380,7 +379,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
             db_sync_dataset_classes(conn, dataset_id, [str(c) for c in cats])
       except Exception:
         # Do not fail enrollment on class sync issues; continue
-        pass
+        log.warning("class sync failed during enrollment", exc_info=True)
       summary = db_enroll_session_frames(conn, dataset_id, session_id, settings)
       return jsonify({"ok": True, "summary": summary})
     except ValueError as ve:
@@ -403,6 +402,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
         row = conn.execute("SELECT COUNT(1) FROM dataset_classes WHERE dataset_id = ?", (dataset_id, )).fetchone()
         classes_count = int(row[0]) if row and row[0] is not None else 0
       except Exception:
+        log.debug("failed to count dataset classes in progress", exc_info=True)
         classes_count = 0
       # Per-session breakdown
       sess_rows = conn.execute(
@@ -492,6 +492,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
             row = conn.execute("SELECT COUNT(1) FROM dataset_classes WHERE dataset_id = ?", (did, )).fetchone()
             classes_count = int(row[0]) if row and row[0] is not None else 0
           except Exception:
+            log.debug("failed to count classes for dataset %s", did, exc_info=True)
             classes_count = 0
           datasets.append({
             "id":
@@ -512,7 +513,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
           })
         result["datasets"] = datasets
       except Exception:
-        pass
+        log.warning("failed to build project datasets summary", exc_info=True)
       return jsonify(result)
     except Exception as e:
       err = ErrorResponse(code="progress_error", message="Failed to get project progress", details={"error": str(e)})
@@ -601,7 +602,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
 
         log.debug("frame request path=%s full_path=%s qs=%s", _rq.path, _rq.full_path, _rq.query_string)
       except Exception:
-        pass
+        log.debug("failed to log frame request attributes", exc_info=True)
       q = FrameQuery(session_id=request.args.get("session_id", ""), idx=int(request.args.get("idx", "-1")))
       dataset_id_raw = request.args.get("dataset_id")
       dataset_id = (int(dataset_id_raw) if (dataset_id_raw is not None and str(dataset_id_raw).strip() != "") else None)
@@ -618,6 +619,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
           frame_id = str(frame["frame_id"])
           ann = annotation_service.get_annotation_db(sid, int(dataset_id), frame_id)
         except Exception:
+          log.exception("failed to fetch annotation for frame during /api/frame")
           ann = None
         return jsonify({"frame": frame, "annotation": ann})
       # Backward compatibility: only frame when no dataset_id
@@ -707,7 +709,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
         conn.close()
       except Exception:
         # Non-fatal; DB triggers will still protect integrity
-        pass
+        log.warning("failed to align dataset target_type to single-label; continuing", exc_info=True)
 
       frame_id = payload.frame_id
       if frame_id is None and payload.frame_idx is not None:
@@ -727,6 +729,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
           class_id = int(cls["id"])
           conn.close()
         except Exception:
+          log.warning("failed to resolve class_id from category_name; continuing", exc_info=True)
           class_id = None
       if class_id is None:
         err = ErrorResponse(code="bad_request", message="class_id or category_name must resolve to a class")
@@ -782,7 +785,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
           class_ids = dedup
           conn.commit()
         except Exception:
-          pass
+          log.warning("failed to resolve some category_names to class_ids; continuing", exc_info=True)
       res = annotation_service.save_multilabel(
         session_id=payload.session_id,
         dataset_id=payload.dataset_id,

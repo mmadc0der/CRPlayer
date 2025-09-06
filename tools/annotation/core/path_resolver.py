@@ -7,9 +7,12 @@ Avoids expensive recursive scans and enforces canonical layout:
 from __future__ import annotations
 
 from pathlib import Path
+import logging
 from typing import Optional, Tuple
 
 from .session_manager import SessionManager
+
+logger = logging.getLogger("annotation.core.PathResolver")
 
 
 def resolve_session_dir(session_manager: SessionManager,
@@ -83,7 +86,7 @@ def resolve_frame_relative_path(
       if abs_path.exists():
         return rel
     except Exception:
-      continue
+      logger.debug("exists() check failed for %s", abs_path, exc_info=True)
 
   # No match found
   return None
@@ -114,6 +117,6 @@ def resolve_frame_absolute_path(
       if p.exists():
         return p
     except Exception:
-      continue
+      logger.debug("exists() check failed for %s", p, exc_info=True)
 
   return None

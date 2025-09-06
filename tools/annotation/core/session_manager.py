@@ -50,6 +50,7 @@ class SessionManager:
       try:
         md = json.loads(md_json) if md_json else {}
       except Exception:
+        self._log.debug("invalid metadata_json for session_id=%s", session_id, exc_info=True)
         md = {}
       # frames count via DB
       cnt = conn.execute("SELECT COUNT(1) FROM frames WHERE session_id = ?", (sid_db, )).fetchone()[0]
@@ -211,6 +212,6 @@ class SessionManager:
         with open(status_file, "r") as f:
           status_data = json.load(f)
         return status_data
-      except:
-        pass
+      except Exception:
+        self._log.debug("failed to read status.json at %s", status_file, exc_info=True)
     return {"status": "captured", "collection_status": "unknown", "annotation_status": "not_started"}

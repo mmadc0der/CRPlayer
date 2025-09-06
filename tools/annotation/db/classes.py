@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 from typing import List, Dict, Any
+import logging
+
+logger = logging.getLogger("annotation.db.classes")
 
 
 def list_dataset_classes(conn: sqlite3.Connection, dataset_id: int) -> List[Dict[str, Any]]:
@@ -25,6 +28,7 @@ def list_dataset_classes(conn: sqlite3.Connection, dataset_id: int) -> List[Dict
         "idx": (r[2] if isinstance(r, tuple) else r["idx"]),
       })
     except Exception:
+      logger.debug("fallback tuple conversion for row=%s", r, exc_info=True)
       out.append({"id": int(r[0]), "name": r[1], "idx": r[2]})
   return out
 
@@ -100,6 +104,7 @@ def sync_dataset_classes(conn: sqlite3.Connection, dataset_id: int, names: List[
         "idx": (r[2] if isinstance(r, tuple) else r["idx"]),
       })
     except Exception:
+      logger.debug("fallback tuple conversion for row=%s", r, exc_info=True)
       out2.append({"id": int(r[0]), "name": r[1], "idx": r[2]})
   return out2
 
@@ -118,7 +123,7 @@ def get_dataset_classes_map(conn: sqlite3.Connection, dataset_id: int) -> Dict[s
       if isinstance(name, str):
         out[name] = {"id": rid, "name": name, "idx": idx}
     except Exception:
-      pass
+      logger.debug("failed to map dataset class row=%s", r, exc_info=True)
   return out
 
 

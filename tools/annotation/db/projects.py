@@ -18,18 +18,11 @@ def create_project(conn: sqlite3.Connection, name: str, description: Optional[st
 
 
 def update_project(conn: sqlite3.Connection, project_id: int, name: Optional[str], description: Optional[str]) -> int:
-  fields = []
-  params = []
-  if name is not None:
-    fields.append("name = ?")
-    params.append(name)
-  if description is not None:
-    fields.append("description = ?")
-    params.append(description)
-  if not fields:
-    return 0
-  params.append(project_id)
-  cur = conn.execute(f"UPDATE projects SET {', '.join(fields)} WHERE id = ?", params)
+  # Use COALESCE to avoid dynamic SQL while allowing partial updates
+  cur = conn.execute(
+    "UPDATE projects SET name = COALESCE(?, name), description = COALESCE(?, description) WHERE id = ?",
+    (name, description, project_id),
+  )
   return int(cur.rowcount)
 
 
@@ -101,21 +94,11 @@ def update_dataset(
   description: Optional[str] = None,
   target_type_id: Optional[int] = None,
 ) -> int:
-  fields = []
-  params = []
-  if name is not None:
-    fields.append("name = ?")
-    params.append(name)
-  if description is not None:
-    fields.append("description = ?")
-    params.append(description)
-  if target_type_id is not None:
-    fields.append("target_type_id = ?")
-    params.append(target_type_id)
-  if not fields:
-    return 0
-  params.append(dataset_id)
-  cur = conn.execute(f"UPDATE datasets SET {', '.join(fields)} WHERE id = ?", params)
+  # Use COALESCE to avoid dynamic SQL while allowing partial updates
+  cur = conn.execute(
+    "UPDATE datasets SET name = COALESCE(?, name), description = COALESCE(?, description), target_type_id = COALESCE(?, target_type_id) WHERE id = ?",
+    (name, description, target_type_id, dataset_id),
+  )
   return int(cur.rowcount)
 
 

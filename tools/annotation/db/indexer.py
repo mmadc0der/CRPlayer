@@ -8,6 +8,7 @@ from typing import Optional
 import threading
 import sqlite3
 import logging
+
 logger = logging.getLogger("annotation.indexer")
 
 from .connection import get_connection
@@ -20,6 +21,7 @@ def _safe_load_json(path: Path) -> Optional[dict]:
     with open(path, "r", encoding="utf-8") as f:
       return json.load(f)
   except Exception:
+    logger.debug("failed to read json file %s", path, exc_info=True)
     return None
 
 
@@ -34,7 +36,7 @@ def _load_json_stable(path: Path, retries: int = 3, sleep_s: float = 0.05) -> Op
       if (stat_before.st_mtime_ns, stat_before.st_size) == (stat_after.st_mtime_ns, stat_after.st_size):
         return json.loads(data.decode("utf-8"))
     except Exception:
-      pass
+      logger.debug("stable read failed for %s (attempt)", path, exc_info=True)
     time.sleep(sleep_s)
   return _safe_load_json(path)
 
@@ -50,7 +52,7 @@ def _derive_ts_ms(frame_entry: dict) -> Optional[int]:
     try:
       return int(ts)
     except Exception:
-      pass
+      logger.debug("failed to coerce ts_ms=%s to int", ts, exc_info=True)
   sec = frame_entry.get("timestamp")
   if sec is not None:
     try:
@@ -58,6 +60,7 @@ def _derive_ts_ms(frame_entry: dict) -> Optional[int]:
       sec_f = float(sec)
       return int(round(sec_f * 1000.0))
     except Exception:
+      logger.debug("failed to derive ts_ms from timestamp=%s", sec, exc_info=True)
       return None
   return None
 
@@ -88,12 +91,17 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
     for session_dir in raw_dir.iterdir():
       if not session_dir.is_dir():
         continue
+      skip_dir = False
       try:
         # Ignore system/hidden folders
         if session_dir.name.startswith("."):
-          continue
+          skip_dir = True
       except Exception:
+        logger.debug("failed to check hidden folder for %s", session_dir, exc_info=True)
+        skip_dir = True
+      if skip_dir:
         continue
+      meta_error = False
       try:
         metadata_file = session_dir / "metadata.json"
         md = _load_json_stable(metadata_file) if metadata_file.exists() else {}
@@ -101,9 +109,12 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
         try:
           sid = str(sid).strip()
         except Exception:
-          pass
+          logger.debug("failed to normalize session_id %s", sid, exc_info=True)
         session_map[sid] = session_dir
       except Exception:
+        logger.debug("failed to load metadata for %s", session_dir, exc_info=True)
+        meta_error = True
+      if meta_error:
         continue
 
   inserted_sessions = 0
@@ -129,9 +140,14 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
         if len(sample_ids) < 5:
           sample_ids.append(str(frame_id))
       try:
-        print(f"[indexer][session={sid}] frames_from=metadata count={len(frames)} sample={sample_ids}", flush=True)
+        logger.info(
+          "frames_from=metadata session=%s count=%s sample=%s",
+          sid,
+          len(frames),
+          sample_ids,
+        )
       except Exception:
-        pass
+        logger.debug("failed to log metadata frames summary", exc_info=True)
       details.append({
         "session_id": sid,
         "source": "metadata",
@@ -154,18 +170,19 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
             if p.is_file() and p.suffix.lower() in exts:
               candidates.append(p.name)
       except Exception:
+        logger.warning("failed to enumerate frames under %s", sdir, exc_info=True)
         candidates = []
       try:
         origin = str(frames_dir) if frames_dir.exists() else str(sdir)
         logger.info(
-          "session=%s frames_from=filesystem dir=%s count=%s sample=%s",
+          "frames_from=filesystem session=%s dir=%s count=%s sample=%s",
           sid,
           origin,
           len(candidates),
           candidates[:5],
         )
       except Exception:
-        pass
+        logger.debug("failed to log filesystem frames summary", exc_info=True)
       details.append({
         "session_id": sid,
         "source": "filesystem",
@@ -208,16 +225,13 @@ def run_indexer_loop(
     t0 = time.time()
     try:
       stats = reindex_sessions(None, data_root)
-      logger.info(
-        "indexed sessions=%s frames=%s",
-        stats.get('sessions_indexed', 0),
-        stats.get('frames_indexed', 0),
-      )
+      logger.info("indexer stats sessions=%s frames=%s", stats.get("sessions_indexed", 0),
+                  stats.get("frames_indexed", 0))
     except Exception:
       logger.exception("indexer_loop_error")
     # Sleep with small jitter to avoid sync with writers
     elapsed = time.time() - t0
-    delay = max(0.5, interval_s - elapsed) + (random.random() * jitter_s)
+    delay = max(0.5, interval_s - elapsed) + (random.random() * jitter_s)  # nosec B311 - non-crypto jitter
     # Allow prompt shutdown
     if stop_event is not None:
       # Wait in small increments so we can react to stop_event
