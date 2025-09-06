@@ -2,15 +2,15 @@ name: Annotation Tool CI
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [main, dev]
     paths:
-      - 'tools/annotation/**'
-      - '.github/workflows/annotation-tool-ci.yml'
+      - "tools/annotation/**"
+      - ".github/workflows/annotation-tool-ci.yml"
   pull_request:
-    branches: [ main, dev ]
+    branches: [main, dev]
     paths:
-      - 'tools/annotation/**'
-      - '.github/workflows/annotation-tool-ci.yml'
+      - "tools/annotation/**"
+      - ".github/workflows/annotation-tool-ci.yml"
 
 env:
   ANNOTATION_TOOL_PATH: tools/annotation
@@ -28,191 +28,192 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12']
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    - name: Cache pip dependencies
-      uses: actions/cache@v3
-      with:
-        path: ~/.cache/pip
-        key: ${{ runner.os }}-pip-${{ hashFiles('tools/annotation/requirements*.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('tools/annotation/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y python3-dev python3-pip
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-dev python3-pip
 
-    - name: Install Python dependencies
-      run: |
-        python -m venv .venv
-        . .venv/bin/activate
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt -r requirements-test.txt
+      - name: Install Python dependencies
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-test.txt
 
-    - name: Lint with flake8
-      run: |
-        . .venv/bin/activate
-        pip install flake8
-        # Stop the build if there are Python syntax errors or undefined names
-        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude .venv,htmlcov,tests/fixtures
-        # Exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics --exclude .venv,htmlcov,tests/fixtures
+      - name: Lint with flake8
+        run: |
+          . .venv/bin/activate
+          pip install flake8
+          # Stop the build if there are Python syntax errors or undefined names
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude .venv,htmlcov,tests/fixtures
+          # Exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics --exclude .venv,htmlcov,tests/fixtures
 
-    - name: Format check with Black
-      run: |
-        . .venv/bin/activate
-        pip install black
-        black --check --line-length=120 . || (echo "Code formatting issues found. Run 'black --line-length=120 .' to fix." && exit 1)
+      - name: Format check with YAPF
+        run: |
+          . .venv/bin/activate
+          pip install yapf
+          yapf --diff --recursive --style ../../pyproject.toml . | tee /tmp/yapf.diff
+          if [ -s /tmp/yapf.diff ]; then echo "Code formatting issues found. Run 'yapf --in-place --recursive --style ../../pyproject.toml .' to fix."; exit 1; fi
 
-    - name: Type check with mypy (optional)
-      continue-on-error: true
-      run: |
-        . .venv/bin/activate
-        pip install mypy
-        mypy . --ignore-missing-imports || echo "Type checking completed with warnings"
+      - name: Type check with mypy (optional)
+        continue-on-error: true
+        run: |
+          . .venv/bin/activate
+          pip install mypy
+          mypy . --ignore-missing-imports || echo "Type checking completed with warnings"
 
-    - name: Run test suite with coverage (production pytest config)
-      run: |
-        . .venv/bin/activate
-        export PYTHONPATH=$PWD:$PYTHONPATH
-        export PYTEST_ADDOPTS='-c pytest-production.ini -m "not skip_for_ci"'
-        python -m pytest -n auto -v --tb=short --cov=. --cov-branch --cov-report=xml --cov-report=term-missing:skip-covered tests/
+      - name: Run test suite with coverage (production pytest config)
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=$PWD:$PYTHONPATH
+          export PYTEST_ADDOPTS='-c pytest-production.ini -m "not skip_for_ci"'
+          python -m pytest -n auto -v --tb=short --cov=. --cov-branch --cov-report=xml --cov-report=term-missing:skip-covered tests/
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: ./tools/annotation/coverage.xml
-        directory: ./tools/annotation/
-        flags: annotation-tool
-        name: annotation-tool-coverage
-        fail_ci_if_error: false
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./tools/annotation/coverage.xml
+          directory: ./tools/annotation/
+          flags: annotation-tool
+          name: annotation-tool-coverage
+          fail_ci_if_error: false
 
-    - name: Generate test report
-      if: always()
-      run: |
-        . .venv/bin/activate
-        export PYTHONPATH=$PWD:$PYTHONPATH
-        python -m pytest tests/ --tb=short --junitxml=pytest-results.xml -c pytest-production.ini -m "not skip_for_ci"
+      - name: Generate test report
+        if: always()
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=$PWD:$PYTHONPATH
+          python -m pytest tests/ --tb=short --junitxml=pytest-results.xml -c pytest-production.ini -m "not skip_for_ci"
 
-    - name: Publish test results
-      uses: EnricoMi/publish-unit-test-result-action@v2
-      if: always()
-      with:
-        files: tools/annotation/pytest-results.xml
-        check_name: "Annotation Tool Test Results (Python ${{ matrix.python-version }})"
+      - name: Publish test results
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        if: always()
+        with:
+          files: tools/annotation/pytest-results.xml
+          check_name: "Annotation Tool Test Results (Python ${{ matrix.python-version }})"
 
   security:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.11
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
 
-    - name: Install security tools
-      run: |
-        python -m venv .venv
-        . .venv/bin/activate
-        pip install bandit safety
+      - name: Install security tools
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          pip install bandit safety
 
-    - name: Run Bandit security scan
-      run: |
-        . .venv/bin/activate
-        bandit -r . -f json -o bandit-results.json || true
-        bandit -r . -f txt
+      - name: Run Bandit security scan
+        run: |
+          . .venv/bin/activate
+          bandit -r . -f json -o bandit-results.json || true
+          bandit -r . -f txt
 
-    - name: Run Safety check
-      run: |
-        . .venv/bin/activate
-        safety check --json --output safety-results.json || true
-        safety check
+      - name: Run Safety check
+        run: |
+          . .venv/bin/activate
+          safety check --json --output safety-results.json || true
+          safety check
 
-    - name: Upload security scan results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: security-scan-results
-        path: |
-          tools/annotation/bandit-results.json
-          tools/annotation/safety-results.json
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-scan-results
+          path: |
+            tools/annotation/bandit-results.json
+            tools/annotation/safety-results.json
 
   build-check:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.11
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
 
-    - name: Install dependencies
-      run: |
-        python -m venv .venv
-        . .venv/bin/activate
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-    - name: Check import structure
-      run: |
-        . .venv/bin/activate
-        export PYTHONPATH=$PWD:$PYTHONPATH
-        python -c "
-        import sys
-        import importlib
-        import os
-        
-        # Test core imports
-        modules_to_test = [
-            'api', 'app', 'dto',
-            'core.session_manager', 'core.path_resolver', 'core.annotation_store', 'core.dataset_builder',
-            'services.annotation_service', 'services.session_service', 'services.dataset_service', 'services.settings_service',
-            'db.connection', 'db.schema', 'db.repository', 'db.projects', 'db.datasets', 'db.classes', 'db.indexer',
-            'models.annotation', 'models.dataset'
-        ]
-        
-        failed_imports = []
-        for module in modules_to_test:
-            try:
-                importlib.import_module(module)
-                print(f'✅ {module}')
-            except Exception as e:
-                print(f'❌ {module}: {e}')
-                failed_imports.append(module)
-        
-        if failed_imports:
-            print(f'\\nFailed to import {len(failed_imports)} modules: {failed_imports}')
-            sys.exit(1)
-        else:
-            print('\\n✅ All core modules imported successfully')
-        "
+      - name: Check import structure
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=$PWD:$PYTHONPATH
+          python -c "
+          import sys
+          import importlib
+          import os
 
-    - name: Test Flask app startup
-      run: |
-        . .venv/bin/activate
-        export PYTHONPATH=$PWD:$PYTHONPATH
-        timeout 10 python -c "
-        from app import app
-        print('✅ Flask app created successfully')
-        
-        # Test that routes are registered
-        with app.app_context():
-            routes = [str(rule) for rule in app.url_map.iter_rules()]
-            print(f'📍 Registered routes: {len(routes)}')
-            for route in sorted(routes):
-                print(f'  {route}')
-        " || echo "⚠️ App startup test completed with timeout (expected for server startup)"
+          # Test core imports
+          modules_to_test = [
+              'api', 'app', 'dto',
+              'core.session_manager', 'core.path_resolver', 'core.annotation_store', 'core.dataset_builder',
+              'services.annotation_service', 'services.session_service', 'services.dataset_service', 'services.settings_service',
+              'db.connection', 'db.schema', 'db.repository', 'db.projects', 'db.datasets', 'db.classes', 'db.indexer',
+              'models.annotation', 'models.dataset'
+          ]
+
+          failed_imports = []
+          for module in modules_to_test:
+              try:
+                  importlib.import_module(module)
+                  print(f'✅ {module}')
+              except Exception as e:
+                  print(f'❌ {module}: {e}')
+                  failed_imports.append(module)
+
+          if failed_imports:
+              print(f'\\nFailed to import {len(failed_imports)} modules: {failed_imports}')
+              sys.exit(1)
+          else:
+              print('\\n✅ All core modules imported successfully')
+          "
+
+      - name: Test Flask app startup
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=$PWD:$PYTHONPATH
+          timeout 10 python -c "
+          from app import app
+          print('✅ Flask app created successfully')
+
+          # Test that routes are registered
+          with app.app_context():
+              routes = [str(rule) for rule in app.url_map.iter_rules()]
+              print(f'📍 Registered routes: {len(routes)}')
+              for route in sorted(routes):
+                  print(f'  {route}')
+          " || echo "⚠️ App startup test completed with timeout (expected for server startup)"
