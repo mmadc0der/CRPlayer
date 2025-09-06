@@ -1,9 +1,16 @@
 __pycache__
+.vscode
 .venv/
 *.pyc
 *_data
 *.log
 .env
+
+# Tests results
+.pytest_cache/
+.coverage
+htmlcov
+coverage.xml
 
 # Data directories
 data/raw/

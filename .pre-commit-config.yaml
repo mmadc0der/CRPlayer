@@ -1,0 +1,10 @@
+repos:
+  - repo: https://github.com/google/yapf
+    rev: v0.40.2
+    hooks:
+      - id: yapf
+        name: yapf (format python)
+        args: ["--in-place", "--recursive", "--style", "pyproject.toml"]
+        files: \.(py)$
+        exclude: |
+          ^\.venv/|^tools/annotation/(\.venv|htmlcov)/
