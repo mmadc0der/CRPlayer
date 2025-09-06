@@ -66,15 +66,16 @@ jobs:
           . .venv/bin/activate
           pip install flake8
           # Stop the build if there are Python syntax errors or undefined names
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude .venv,htmlcov,tests/fixtures
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics --exclude .venv,venv,**/.venv,**/venv,htmlcov,tests/fixtures
           # Exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
-          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics --exclude .venv,htmlcov,tests/fixtures
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics --exclude .venv,venv,**/.venv,**/venv,htmlcov,tests/fixtures
 
       - name: Format check with YAPF
         run: |
           . .venv/bin/activate
           pip install yapf
-          yapf --diff --recursive --style ../../pyproject.toml . | tee /tmp/yapf.diff
+          # Exclude venv-like directories when diffing
+          git ls-files -z "*.py" | tr '\0' '\n' | grep -Ev '^\.venv/|^venv/|/\.venv/|/venv/' | xargs -I{} yapf --diff --style ../../pyproject.toml {} | tee /tmp/yapf.diff
           if [ -s /tmp/yapf.diff ]; then echo "Code formatting issues found. Run 'yapf --in-place --recursive --style ../../pyproject.toml .' to fix."; exit 1; fi
 
       - name: Type check with mypy (optional)
@@ -82,7 +83,7 @@ jobs:
         run: |
           . .venv/bin/activate
           pip install mypy
-          mypy . --ignore-missing-imports || echo "Type checking completed with warnings"
+          mypy . --ignore-missing-imports --exclude '(^|.*/)\.venv/|(^|.*/)venv/' || echo "Type checking completed with warnings"
 
       - name: Run test suite with coverage (production pytest config)
         run: |
