@@ -69,7 +69,8 @@ def get_connection(custom_path: Optional[Path] = None) -> sqlite3.Connection:
         conn.row_factory = sqlite3.Row
         # Ensure foreign keys and optimize for concurrent access
         conn.execute('PRAGMA foreign_keys = ON;')
-        conn.execute('PRAGMA journal_mode = WAL;')  # Better concurrency
+        # Use DELETE journal mode instead of WAL for better compatibility
+        conn.execute('PRAGMA journal_mode = DELETE;')
         conn.execute('PRAGMA synchronous = NORMAL;')  # Balance safety/speed
         conn.execute('PRAGMA cache_size = -64000;')  # 64MB cache
         conn.execute('PRAGMA temp_store = MEMORY;')

@@ -74,7 +74,7 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
     should_close = False
     if conn is None:
         conn = get_connection()
-        init_db(conn)
+        # Don't init_db here - database should already be initialized
         should_close = True
 
     raw_dir = data_root / 'raw'

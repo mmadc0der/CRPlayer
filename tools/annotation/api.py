@@ -205,6 +205,9 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 if row:
                     return jsonify(dict(row)), 200
                 raise
+            except Exception as e:
+                conn.rollback()
+                raise
         except Exception as e:
             err = ErrorResponse(code='create_project_error', message='Failed to create project', details={'error': str(e)})
             return jsonify(err.model_dump()), 500

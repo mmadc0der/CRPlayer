@@ -156,12 +156,27 @@ def client(app: Flask) -> FlaskClient:
         try:
             from db.connection import get_connection
             conn = get_connection()
-            # Clear all tables to ensure clean state
-            conn.execute("DELETE FROM annotations")
-            conn.execute("DELETE FROM frames")
-            conn.execute("DELETE FROM sessions")
-            conn.execute("DELETE FROM datasets")
-            conn.execute("DELETE FROM projects")
+            # Clear all tables to ensure clean state (in reverse dependency order)
+            try:
+                conn.execute("DELETE FROM annotations")
+            except:
+                pass
+            try:
+                conn.execute("DELETE FROM frames")
+            except:
+                pass
+            try:
+                conn.execute("DELETE FROM sessions")
+            except:
+                pass
+            try:
+                conn.execute("DELETE FROM datasets")
+            except:
+                pass
+            try:
+                conn.execute("DELETE FROM projects")
+            except:
+                pass
             conn.commit()
             conn.close()
         except Exception as e:
