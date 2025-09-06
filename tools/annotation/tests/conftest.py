@@ -94,7 +94,7 @@ def dataset_service(mock_session_manager: SessionManager) -> DatasetService:
 
 @pytest.fixture(scope="function")
 def app(temp_data_dir: Path) -> Flask:
-    """Create a Flask application configured for testing with isolated database."""
+    """Create a Flask application configured for testing with isolated in-memory database."""
     import tempfile
     import os
     from db.schema import init_db
@@ -146,9 +146,20 @@ def app(temp_data_dir: Path) -> Flask:
 
 
 @pytest.fixture
-def client(app: Flask) -> FlaskClient:
+def client(app: Flask, temp_data_dir: Path) -> FlaskClient:
     """Create a test client for the Flask application with clean database."""
-    # The app fixture already provides database isolation via mocking
+    import os
+    import uuid
+    test_db_path = temp_data_dir / f"client_test_{uuid.uuid4().hex}.db"
+    os.environ['ANNOTATION_DB_PATH'] = str(test_db_path)
+
+    # Initialize the test database
+    conn = sqlite3.connect(str(test_db_path))
+    conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON;')
+    init_db(conn)
+    conn.close()
+
     test_client = app.test_client()
 
     # Clean up database before each test

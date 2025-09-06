@@ -53,17 +53,17 @@ class TestDatabaseConnection:
         """Test that get_connection creates a valid SQLite connection."""
         db_path = temp_data_dir / "test.db"
         conn = get_connection(db_path)
-        
+
         try:
             # Test that connection is valid
             assert isinstance(conn, sqlite3.Connection)
             assert conn.row_factory == sqlite3.Row
-            
+
             # Test that pragmas are set correctly
             cursor = conn.execute("PRAGMA foreign_keys")
             foreign_keys = cursor.fetchone()[0]
             assert foreign_keys == 1  # Foreign keys should be enabled
-            
+
             cursor = conn.execute("PRAGMA journal_mode")
             journal_mode = cursor.fetchone()[0]
             assert journal_mode == "wal"  # WAL mode should be enabled
