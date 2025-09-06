@@ -11,6 +11,7 @@ import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 import sqlite3
+import logging
 
 from db.connection import get_connection
 from db.schema import init_db
@@ -23,6 +24,7 @@ class SessionManager:
     self.data_root = Path(data_root)
     self.raw_dir = self.data_root / "raw"
     self._external_conn = conn
+    self._log = logging.getLogger("annotation.core.SessionManager")
 
   def _conn(self) -> sqlite3.Connection:
     if self._external_conn is not None:
@@ -39,6 +41,7 @@ class SessionManager:
         - metadata fields (game_name, start_time) parsed from sessions.metadata_json if present
         - status is read from status.json on disk if available (read-only)
         """
+    self._log.debug("discover_sessions")
     conn = self._conn()
     cur = conn.execute("SELECT id, session_id, root_path, metadata_json FROM sessions")
     rows = cur.fetchall()
@@ -67,6 +70,7 @@ class SessionManager:
 
   def get_session_path_by_id(self, session_id: str) -> Optional[str]:
     """Resolve a session directory by session_id from DB."""
+    self._log.debug("get_session_path_by_id session_id=%s", session_id)
     conn = self._conn()
     row = conn.execute(
       "SELECT root_path FROM sessions WHERE session_id = ?",
@@ -82,6 +86,7 @@ class SessionManager:
         Returns metadata stored in DB (captured from metadata.json by the indexer).
         Frames are not expanded here; callers should query frames table if needed.
         """
+    self._log.debug("find_session_by_id session_id=%s", session_id)
     conn = self._conn()
     row = conn.execute(
       "SELECT id, root_path, metadata_json FROM sessions WHERE session_id = ?",
@@ -109,6 +114,7 @@ class SessionManager:
 
   def get_session_db_id(self, session_id: str) -> Optional[int]:
     """Return internal sessions.id for a given session_id string."""
+    self._log.debug("get_session_db_id session_id=%s", session_id)
     conn = self._conn()
     row = conn.execute(
       "SELECT id FROM sessions WHERE session_id = ?",
@@ -118,6 +124,7 @@ class SessionManager:
 
   def get_frames_for_session(self, session_id: str) -> List[Dict[str, Any]]:
     """Get all frames for a session."""
+    self._log.debug("get_frames_for_session session_id=%s", session_id)
     conn = self._conn()
     cur = conn.execute(
       """
@@ -138,6 +145,7 @@ class SessionManager:
         This remains as a helper for tools operating directly on data/raw. It does
         not write to metadata.json and is not used for persistence.
         """
+    self._log.debug("load_session session_path=%s", session_path)
     session_dir = Path(session_path)
     metadata_file = session_dir / "metadata.json"
     if not metadata_file.exists():

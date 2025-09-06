@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Optional
 import threading
 import sqlite3
+import logging
+logger = logging.getLogger("annotation.indexer")
 
 from .connection import get_connection
 from .schema import init_db
@@ -155,9 +157,12 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
         candidates = []
       try:
         origin = str(frames_dir) if frames_dir.exists() else str(sdir)
-        print(
-          f"[indexer][session={sid}] frames_from=filesystem dir={origin} count={len(candidates)} sample={candidates[:5]}",
-          flush=True,
+        logger.info(
+          "session=%s frames_from=filesystem dir=%s count=%s sample=%s",
+          sid,
+          origin,
+          len(candidates),
+          candidates[:5],
         )
       except Exception:
         pass
@@ -203,12 +208,13 @@ def run_indexer_loop(
     t0 = time.time()
     try:
       stats = reindex_sessions(None, data_root)
-      print(
-        f"[indexer] sessions={stats.get('sessions_indexed',0)} frames={stats.get('frames_indexed',0)}",
-        flush=True,
+      logger.info(
+        "indexed sessions=%s frames=%s",
+        stats.get('sessions_indexed', 0),
+        stats.get('frames_indexed', 0),
       )
-    except Exception as e:
-      print(f"[indexer][error] {e}", flush=True)
+    except Exception:
+      logger.exception("indexer_loop_error")
     # Sleep with small jitter to avoid sync with writers
     elapsed = time.time() - t0
     delay = max(0.5, interval_s - elapsed) + (random.random() * jitter_s)
