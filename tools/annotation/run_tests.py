@@ -71,7 +71,7 @@ def main():
     args = parser.parse_args()
     
     # Base pytest command
-    pytest_cmd = ["python", "-m", "pytest"]
+    pytest_cmd = [sys.executable, "-m", "pytest"]
     
     # Add verbosity
     if args.verbose:

@@ -81,6 +81,9 @@ def _stop_indexer():
 
 def _should_start_indexer() -> bool:
     try:
+        # Don't start indexer during testing
+        if app.config.get('TESTING'):
+            return False
         # If debug reloader is active, only start in the reloader main process
         if app.debug:
             return os.environ.get("WERKZEUG_RUN_MAIN") == "true"

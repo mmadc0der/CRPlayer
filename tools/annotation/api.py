@@ -56,7 +56,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     def api_list_target_types():
         try:
             conn = get_connection()
-            init_db(conn)
             rows = conn.execute("SELECT id, name FROM target_types ORDER BY id").fetchall()
             return jsonify([{'id': int(r['id']), 'name': r['name']} for r in rows])
         except Exception as e:
@@ -114,7 +113,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             name = payload.get('name')
             description = payload.get('description')
             conn = get_connection()
-            init_db(conn)
             # ensure exists
             exists = conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone()
             if not exists:
@@ -135,7 +133,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     def api_delete_project(project_id: int):
         try:
             conn = get_connection()
-            init_db(conn)
             # Optional force delete: when true, rely on FK ON DELETE CASCADE from datasets -> projects
             force = str(request.args.get('force', '0')).lower() in ('1', 'true', 'yes')
             if not force:
@@ -156,7 +153,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
         """Scan data directories and populate SQLite with sessions/frames."""
         try:
             conn = get_connection()
-            init_db(conn)
             try:
                 print(f"[api][reindex] db_path={get_db_path()}", flush=True)
             except Exception:
@@ -176,7 +172,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     def api_list_projects():
         try:
             conn = get_connection()
-            init_db(conn)
             return jsonify(db_list_projects(conn))
         except Exception as e:
             err = ErrorResponse(code='projects_error', message='Failed to list projects', details={'error': str(e)})
@@ -192,7 +187,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 err = ErrorResponse(code='bad_request', message='name is required')
                 return jsonify(err.model_dump()), 400
             conn = get_connection()
-            init_db(conn)
             try:
                 pid = db_create_project(conn, name, description)
                 conn.commit()
@@ -219,7 +213,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     def api_list_datasets(project_id: int):
         try:
             conn = get_connection()
-            init_db(conn)
             return jsonify(db_list_datasets(conn, project_id))
         except Exception as e:
             err = ErrorResponse(code='datasets_error', message='Failed to list datasets', details={'error': str(e)})
@@ -229,7 +222,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     def api_get_dataset(dataset_id: int):
         try:
             conn = get_connection()
-            init_db(conn)
             d = db_get_dataset(conn, dataset_id)
             if not d:
                 err = ErrorResponse(code='not_found', message='Dataset not found')
@@ -250,7 +242,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 err = ErrorResponse(code='bad_request', message='name and target_type_id are required')
                 return jsonify(err.model_dump()), 400
             conn = get_connection()
-            init_db(conn)
             # Ensure the parent project exists; otherwise, the insert will raise a FK error
             proj_row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
             if not proj_row:
@@ -292,13 +283,11 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 ttid_val = int(ttid)
                 # Validate target type exists in DB
                 conn = get_connection()
-                init_db(conn)
                 tt_exists = conn.execute("SELECT 1 FROM target_types WHERE id = ?", (ttid_val,)).fetchone()
                 if not tt_exists:
                     err = ErrorResponse(code='bad_request', message='unknown target_type_id', details={'target_type_id': ttid_val})
                     return jsonify(err.model_dump()), 400
             conn = get_connection()
-            init_db(conn)
             existing = db_get_dataset(conn, dataset_id)
             if not existing:
                 err = ErrorResponse(code='not_found', message='Dataset not found')
@@ -318,7 +307,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     def api_delete_dataset(dataset_id: int):
         try:
             conn = get_connection()
-            init_db(conn)
             # Optional force delete: when true, rely on FK ON DELETE CASCADE from dependents -> datasets
             force = str(request.args.get('force', '0')).lower() in ('1', 'true', 'yes')
             if not force:
@@ -344,7 +332,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
                 err = ErrorResponse(code='bad_request', message='session_id is required')
                 return jsonify(err.model_dump()), 400
             conn = get_connection()
-            init_db(conn)
             # Ensure dataset exists
             d = db_get_dataset(conn, dataset_id)
             if not d:
@@ -373,7 +360,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     def api_dataset_progress(dataset_id: int):
         try:
             conn = get_connection()
-            init_db(conn)
             # Base progress
             base = db_dataset_progress(conn, dataset_id)
             # Enrich with dataset meta
@@ -434,7 +420,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
         """
         try:
             conn = get_connection()
-            init_db(conn)
             # Total annotations across datasets in the project
             total_row = conn.execute(
                 """
@@ -500,7 +485,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
         """
         try:
             conn = get_connection()
-            init_db(conn)
             rows = conn.execute(
                 """
                 SELECT DISTINCT s.session_id
@@ -522,7 +506,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
         """Return whether the given session is enrolled in the dataset."""
         try:
             conn = get_connection()
-            init_db(conn)
             row = conn.execute(
                 """
                 SELECT 1
@@ -553,7 +536,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
     def api_list_dataset_classes(dataset_id: int):
         try:
             conn = get_connection()
-            init_db(conn)
             # Ensure dataset exists
             d = db_get_dataset(conn, dataset_id)
             if not d:
@@ -671,7 +653,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             # Ensure dataset target_type matches single-label; if not, auto-align to SingleLabelClassification (1)
             try:
                 conn = get_connection()
-                init_db(conn)
                 d = db_get_dataset(conn, int(payload.dataset_id))
                 if d and d.get('target_type_name') != 'SingleLabelClassification':
                     db_update_dataset(conn, int(payload.dataset_id), target_type_id=1)
@@ -694,7 +675,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             if class_id is None and payload.category_name:
                 try:
                     conn = get_connection()
-                    init_db(conn)
                     cls = db_get_or_create_dataset_class(conn, int(payload.dataset_id), str(payload.category_name))
                     conn.commit()
                     class_id = int(cls['id'])
@@ -739,7 +719,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = 'annotati
             if getattr(payload, 'category_names', None):
                 try:
                     conn = get_connection()
-                    init_db(conn)
                     for nm in payload.category_names or []:
                         if not nm:
                             continue
