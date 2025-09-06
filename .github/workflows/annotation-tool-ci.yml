@@ -15,6 +15,11 @@ on:
 env:
   ANNOTATION_TOOL_PATH: tools/annotation
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -104,10 +109,11 @@ jobs:
 
       - name: Publish test results
         uses: EnricoMi/publish-unit-test-result-action@v2
-        if: always()
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         with:
           files: tools/annotation/pytest-results.xml
-          check_name: "Annotation Tool Test Results"
+          check_name: "Annotation Tool Test Results (Python 3.11)"
+          check_run: true
 
   security:
     runs-on: ubuntu-latest
