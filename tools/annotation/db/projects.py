@@ -18,6 +18,10 @@ def create_project(conn: sqlite3.Connection, name: str, description: Optional[st
 
 
 def update_project(conn: sqlite3.Connection, project_id: int, name: Optional[str], description: Optional[str]) -> int:
+  # If no fields provided, do not execute an UPDATE
+  if name is None and description is None:
+    return 0
+
   # Use COALESCE to avoid dynamic SQL while allowing partial updates
   cur = conn.execute(
     "UPDATE projects SET name = COALESCE(?, name), description = COALESCE(?, description) WHERE id = ?",
