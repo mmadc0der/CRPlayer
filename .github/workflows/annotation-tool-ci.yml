@@ -117,6 +117,7 @@ jobs:
           check_run: true
 
   security:
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.base_ref == 'main')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -131,7 +132,7 @@ jobs:
         run: |
           python -m venv .venv
           . .venv/bin/activate
-          pip install bandit safety
+          pip install "bandit>=1.7.6" "safety>=3.5.0"
 
       - name: Run Bandit security scan
         run: |
@@ -139,11 +140,10 @@ jobs:
           bandit -r . -f json -o bandit-results.json || true
           bandit -r . -f txt
 
-      - name: Run Safety check
-        run: |
-          . .venv/bin/activate
-          safety check --json --output safety-results.json || true
-          safety check
+      - name: Run Safety scan
+        uses: pyupio/safety-action@v1
+        with:
+          api-key: ${{ secrets.SAFETY_API_KEY }}
 
       - name: Upload security scan results
         uses: actions/upload-artifact@v4
