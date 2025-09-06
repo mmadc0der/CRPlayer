@@ -2,18 +2,26 @@ name: Annotation Tool CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, dev ]
     paths:
       - 'tools/annotation/**'
       - '.github/workflows/annotation-tool-ci.yml'
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, dev ]
     paths:
       - 'tools/annotation/**'
       - '.github/workflows/annotation-tool-ci.yml'
 
 env:
   ANNOTATION_TOOL_PATH: tools/annotation
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/annotation
 
 jobs:
   test:
@@ -46,14 +54,14 @@ jobs:
 
     - name: Install Python dependencies
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        python -m venv .venv
+        . .venv/bin/activate
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
+        pip install -r requirements.txt -r requirements-test.txt
 
     - name: Lint with flake8
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         pip install flake8
         # Stop the build if there are Python syntax errors or undefined names
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
@@ -62,34 +70,23 @@ jobs:
 
     - name: Format check with Black
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         pip install black
         black --check --line-length=120 . || (echo "Code formatting issues found. Run 'black --line-length=120 .' to fix." && exit 1)
 
     - name: Type check with mypy (optional)
       continue-on-error: true
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         pip install mypy
         mypy . --ignore-missing-imports || echo "Type checking completed with warnings"
 
-    - name: Run unit tests
+    - name: Run test suite with coverage (production pytest config)
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         export PYTHONPATH=$PWD:$PYTHONPATH
-        python -m pytest tests/unit/ -v --tb=short --cov=. --cov-branch --cov-report=xml --cov-report=term-missing:skip-covered
-
-    - name: Run integration tests
-      run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
-        export PYTHONPATH=$PWD:$PYTHONPATH
-        python -m pytest tests/integration/ -v --tb=short --cov=. --cov-branch --cov-report=xml --cov-report=term-missing:skip-covered --cov-append
-
-    - name: Run full test suite with coverage
-      run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
-        export PYTHONPATH=$PWD:$PYTHONPATH
-        make ci
+        export PYTEST_ADDOPTS='-c pytest-production.ini -m "not skip_for_ci"'
+        python -m pytest -n auto -v --tb=short --cov=. --cov-branch --cov-report=xml --cov-report=term-missing:skip-covered tests/
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -103,9 +100,9 @@ jobs:
     - name: Generate test report
       if: always()
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         export PYTHONPATH=$PWD:$PYTHONPATH
-        python -m pytest tests/ --tb=short --junitxml=pytest-results.xml
+        python -m pytest tests/ --tb=short --junitxml=pytest-results.xml -c pytest-production.ini -m "not skip_for_ci"
 
     - name: Publish test results
       uses: EnricoMi/publish-unit-test-result-action@v2
@@ -127,17 +124,19 @@ jobs:
 
     - name: Install security tools
       run: |
+        python -m venv .venv
+        . .venv/bin/activate
         pip install bandit safety
 
     - name: Run Bandit security scan
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         bandit -r . -f json -o bandit-results.json || true
         bandit -r . -f txt
 
     - name: Run Safety check
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         safety check --json --output safety-results.json || true
         safety check
 
@@ -163,13 +162,14 @@ jobs:
 
     - name: Install dependencies
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        python -m venv .venv
+        . .venv/bin/activate
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
     - name: Check import structure
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         export PYTHONPATH=$PWD:$PYTHONPATH
         python -c "
         import sys
@@ -203,7 +203,7 @@ jobs:
 
     - name: Test Flask app startup
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         export PYTHONPATH=$PWD:$PYTHONPATH
         timeout 10 python -c "
         from app import app

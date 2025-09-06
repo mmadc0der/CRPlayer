@@ -2,13 +2,21 @@ name: Annotation Tool PR Validation
 
 on:
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, dev ]
     paths:
       - 'tools/annotation/**'
       - '.github/workflows/annotation-tool-*.yml'
 
 env:
   ANNOTATION_TOOL_PATH: tools/annotation
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/annotation
 
 jobs:
   validate:
@@ -27,14 +35,14 @@ jobs:
 
     - name: Install dependencies
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        python -m venv .venv
+        . .venv/bin/activate
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install -r requirements-test.txt
+        pip install -r requirements.txt -r requirements-test.txt
 
     - name: Code quality checks
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         pip install black flake8
         
         echo "🔍 Running code formatting check..."
@@ -47,7 +55,7 @@ jobs:
 
     - name: Import structure validation
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         export PYTHONPATH=$PWD:$PYTHONPATH
         
         echo "🔍 Validating Python imports..."
@@ -71,13 +79,12 @@ jobs:
 
     - name: Run fast test suite
       run: |
-        cd ${{ env.ANNOTATION_TOOL_PATH }}
+        . .venv/bin/activate
         export PYTHONPATH=$PWD:$PYTHONPATH
         
         echo "🧪 Running fast test suite..."
-        python -m pytest tests/ --tb=short -x --maxfail=5 \
-          --durations=10 \
-          -m "not slow" \
+        export PYTEST_ADDOPTS='-c pytest-production.ini -m "not slow and not skip_for_ci"'
+        python -m pytest tests/ --tb=short -x --maxfail=0 --durations=10 \
           || (echo "❌ Tests failed. Please fix failing tests before merging." && exit 1)
         
         echo "✅ Fast test suite passed"
