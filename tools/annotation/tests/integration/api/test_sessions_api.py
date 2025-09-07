@@ -262,6 +262,35 @@ class TestSessionsAPI:
       assert frame_counts["small_session"] == 5
       assert frame_counts["large_session"] == 1000
 
+  def test_reindex_prunes_missing_sessions(self, client: FlaskClient, tmp_path):
+    """Sessions removed from disk should be pruned from DB on reindex."""
+    import os
+    from db.connection import get_connection
+    from db.repository import upsert_session, upsert_frame
+
+    # Create a session pointing to a temp dir, then remove the dir
+    sess_dir = tmp_path / "raw" / "ghost_session"
+    sess_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = get_connection()
+    try:
+      sid = upsert_session(conn, "ghost_session", str(sess_dir), {"frames": []})
+      upsert_frame(conn, sid, "frame_001", 1000)
+      conn.commit()
+    finally:
+      conn.close()
+
+    # Remove directory to simulate missing session
+    os.rmdir(sess_dir)
+
+    # Run reindex
+    resp = client.post("/api/reindex")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert "sessions_removed" in data["summary"]
+    assert data["summary"]["sessions_removed"] >= 1
+
   def test_concurrent_session_requests(self, client: FlaskClient):
     """Test that concurrent session discovery requests work correctly."""
     mock_sessions = [{"session_id": "test_session", "path": "/test", "frames_count": 1}]

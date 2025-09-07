@@ -12,7 +12,8 @@ Base path: all routes are mounted by `tools/annotation/api.py`.
 
 - POST /api/reindex
   - Scans `data/raw/` to populate SQLite `sessions` and `frames` tables.
-  - Response: `{ ok: true, summary: {...} }`
+  - Also prunes DB sessions whose `root_path` is missing on disk.
+  - Response: `{ ok: true, summary: { sessions_indexed, sessions_removed, frames_indexed, details } }`
 
 ## Projects & Datasets
 

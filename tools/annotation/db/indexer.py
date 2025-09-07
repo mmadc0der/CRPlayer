@@ -118,7 +118,32 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
 
   inserted_sessions = 0
   inserted_frames = 0
+  removed_sessions = 0
   details: list[dict] = []
+
+  # First, remove sessions in DB whose root_path no longer exists on disk
+  try:
+    cur = conn.execute("SELECT id, session_id, root_path FROM sessions")
+    rows = cur.fetchall() or []
+    for r in rows:
+      try:
+        sid_db = str(r[1]) if not isinstance(r, dict) else str(r["session_id"])  # type: ignore[index]
+        root = Path(r[2] if not isinstance(r, dict) else r["root_path"])  # type: ignore[index]
+      except Exception:
+        # Fallback extract via dict-style
+        sid_db = str(r["session_id"]) if isinstance(r, dict) else str(r[1])
+        root = Path(r["root_path"]) if isinstance(r, dict) else Path(r[2])
+      # Remove if the recorded root path no longer exists
+      if not root.exists():
+        try:
+          conn.execute("DELETE FROM sessions WHERE id = ?", (int(r[0] if not isinstance(r, dict) else r["id"]), ))
+          removed_sessions += int(conn.total_changes > 0)
+        except Exception:
+          logger.warning("failed to delete missing session sid=%s root=%s", sid_db, root, exc_info=True)
+    if removed_sessions:
+      conn.commit()
+  except Exception:
+    logger.warning("failed to prune missing sessions", exc_info=True)
 
   for sid, sdir in session_map.items():
     md = _load_json_stable(sdir / "metadata.json") or {}
@@ -200,6 +225,7 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
 
   return {
     "sessions_indexed": inserted_sessions,
+    "sessions_removed": removed_sessions,
     "frames_indexed": inserted_frames,
     "details": details,
   }
