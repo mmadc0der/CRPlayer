@@ -1,8 +1,10 @@
-from .streamer import AndroidStreamer, StreamerConfig
+"""
+Streamer Module - Android Stream Processing
 
-__version__ = "0.1.0"
+Exposes GPU-accelerated Android streaming components for capturing
+and decoding game frames in real-time with optional hardware acceleration.
+"""
 
-__all__ = [
-  "AndroidStreamer",
-  "StreamerConfig",
-]
+from .android_stream_gpu import GPUAndroidStreamer
+
+__all__ = ['GPUAndroidStreamer']

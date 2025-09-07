@@ -15,12 +15,7 @@ from services.session_service import SessionService
 from services.annotation_service import AnnotationService
 from services.settings_service import SettingsService
 from services.dataset_service import DatasetService
-from services.download_service import DownloadService
-from services.autolabel_service import AutoLabelService, AutoLabelUnavailable
 
-# Global storage for autolabel job status (in production, use Redis/database)
-_autolabel_jobs: Dict[str, Dict[str, Any]] = {}
-_autolabel_jobs_lock = threading.Lock()
 from dto import (
   FrameQuery,
   ImageQuery,

@@ -1,37 +1,72 @@
-# Streamer Module
+### Streamer Tool (Android GPU-accelerated streaming)
 
-This module streams Android frames via the scrcpy socket and decodes them with PyAV. It exposes a simple API for RL pipelines and provides a CLI for basic operations.
+High-performance Android screen streaming using the scrcpy server and PyAV, optionally decoding on GPU and returning PyTorch tensors suitable for RL agents.
 
-## API
+### Features
 
-```python
-from streamer import AndroidStreamer, StreamerConfig
+- **Direct scrcpy socket**: minimal overhead raw H264 stream
+- **Optional GPU decode**: NVDEC via PyAV when available
+- **PyTorch tensors**: normalized, CHW format on device (CPU/GPU)
+- **Callback pipeline**: per-frame hook for downstream processing
 
-streamer = AndroidStreamer(StreamerConfig(use_gpu=True, buffer_size=8))
-streamer.start()
-frame = streamer.get_latest_frame()
-stats = streamer.get_stats()
-streamer.stop()
-```
+### Requirements
 
-## CLI
+- ADB-accessible Android device (USB or over TCP/IP)
+- Python 3.10+
+- System `ffmpeg` available (installed in Dockerfile)
+
+### Install (local)
 
 ```bash
-python -m streamer.cli start --device-id XYZ --use-gpu
+pip install -r tools/streamer/requirements.txt
 ```
 
-## Docker
+### Quick start
 
-- CPU image: `python:3.12-slim` with `adb` and `ffmpeg` installed
-- For GPU: follow Dockerfile notes to switch to an NVIDIA CUDA base and run with `--gpus all`
+```python
+from streamer import GPUAndroidStreamer
 
-## Requirements
+def on_frame(tensor, pts, ts):
+    # tensor: torch.FloatTensor, CHW, [0,1], on CPU/GPU depending on config
+    pass
 
-- System: `adb`, `ffmpeg`
-- Python: `av`, `numpy`, `torch` (optional if you only need numpy outputs)
+streamer = GPUAndroidStreamer(max_fps=60, max_size=1920, video_codec="h264", use_gpu=True)
+streamer.start_streaming(frame_callback=on_frame)
+```
 
-## Notes
+### Docker (CPU by default)
 
-- Non-blocking socket reads with bounded buffer and frame-drop policy
-- Minimal logging by default; enable `--debug` for verbose logs
+Build from the `tools/streamer` directory:
 
+```bash
+docker build -t crplayer-streamer .
+```
+
+Run with host ADB available (recommended: use `adb connect <device_ip>:5555` on the host):
+
+```bash
+docker run --rm -it \
+  --network=host \
+  -e ADB_SERVER_SOCKET=tcp:127.0.0.1:5037 \
+  crplayer-streamer
+```
+
+If you need to run ADB inside the container, ensure device access is configured on your host OS; on Windows, prefer ADB over TCP/IP.
+
+### GPU notes
+
+- For CUDA/NVDEC, use an NVIDIA CUDA base image and run with `--gpus=all`.
+- Install PyTorch CUDA wheels per upstream docs, and provide FFmpeg with NVDEC.
+- When GPU is unavailable or disabled, the streamer automatically falls back to CPU decoding.
+
+### Troubleshooting
+
+- No frames: verify scrcpy server pushes and that `adb forward` is active.
+- Timeout/no data: the tool sends periodic wake signals; make sure the device is unlocked.
+- Decoding errors: ensure codec matches (`video_codec`), and FFmpeg/PyAV versions are recent.
+
+### Development
+
+- Single module entrypoint: `streamer/GPUAndroidStreamer` in `android_stream_gpu.py`.
+- Keep imports minimal; avoid unused heavy deps.
+- Tests and CI can mock ADB and socket layers; decode paths can use small test bitstreams.

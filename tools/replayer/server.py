@@ -15,10 +15,6 @@ class ReplayerServer:
     # Protect client list in async context
     self._clients_lock = asyncio.Lock()
 
-  @property
-  def url(self) -> str:
-    return f"ws://{self.host}:{self.port}"
-
   async def _handler(self, websocket: websockets.WebSocketServerProtocol):
     """Handle incoming WebSocket connection."""
     async with self._clients_lock:
@@ -56,7 +52,8 @@ class ReplayerServer:
     if self._server is not None:
       return
     self._server = await websockets.serve(self._handler, self.host, self.port, ping_interval=None)
-    print(f"[ReplayerServer] Listening on {self.url}")
+
+    print(f"[ReplayerServer] Listening on ws://{self.host}:{self.port}")
 
   async def stop(self):
     """Stop server and close client connections."""

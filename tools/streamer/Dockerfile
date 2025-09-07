@@ -17,8 +17,9 @@ RUN pip install --upgrade pip \
 # Copy the streamer module
 COPY . /app
 
+USER madc0der
 # Default command: import check
-CMD ["python", "-c", "from streamer import AndroidStreamer; print('Streamer module ready')"]
+CMD ["python", "-c", "from streamer import GPUAndroidStreamer; print('Streamer module ready')"]
 
 # Notes for GPU/NVIDIA usage:
 # - To enable CUDA/NVDEC inside Docker, use an NVIDIA CUDA base image and ensure
