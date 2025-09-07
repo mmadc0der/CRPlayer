@@ -960,14 +960,26 @@
       left.appendChild(title);
       left.appendChild(meta);
       const right = document.createElement('div');
-      const btn = document.createElement('button');
-      btn.className = 'btn';
-      btn.setAttribute('data-select', '');
-      btn.textContent = 'Use';
-      right.appendChild(btn);
+      // Action buttons: Use, Edit, Delete
+      const useBtn = document.createElement('button');
+      useBtn.className = 'btn';
+      useBtn.setAttribute('data-select', '');
+      useBtn.textContent = 'Use';
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn';
+      editBtn.setAttribute('data-edit', '');
+      editBtn.textContent = 'Edit';
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn';
+      delBtn.setAttribute('data-delete', '');
+      delBtn.textContent = 'Delete';
+      right.appendChild(useBtn);
+      right.appendChild(editBtn);
+      right.appendChild(delBtn);
       row.appendChild(left);
       row.appendChild(right);
-      row.querySelector('[data-select]').onclick = async () => {
+      const selectEl = row.querySelector('[data-select]');
+      if (selectEl) selectEl.onclick = async () => {
         try {
           const sel = els.projectSelect();
           if (sel) {
@@ -991,7 +1003,8 @@
           }
         } catch {}
       };
-      row.querySelector('[data-edit]').onclick = async () => {
+      const editEl = row.querySelector('[data-edit]');
+      if (editEl) editEl.onclick = async () => {
         const newName = prompt('New project name', p.name) || p.name;
         const newDesc = prompt('Description (optional)', p.description || '') || '';
         try {
@@ -1001,7 +1014,8 @@
           toast('Project updated');
         } catch { toast('Update failed'); }
       };
-      row.querySelector('[data-delete]').onclick = async () => {
+      const deleteEl = row.querySelector('[data-delete]');
+      if (deleteEl) deleteEl.onclick = async () => {
         if (!confirm(`Delete project '${p.name}'?`)) return;
         let url = `projects/${p.id}`;
         const force = confirm('Force delete and cascade all datasets and their annotations?');
@@ -1078,14 +1092,26 @@
       left.appendChild(title);
       left.appendChild(meta);
       const right = document.createElement('div');
-      const btn = document.createElement('button');
-      btn.className = 'btn';
-      btn.setAttribute('data-select', '');
-      btn.textContent = 'Select';
-      right.appendChild(btn);
+      // Action buttons: Select, Edit, Delete
+      const selectBtn = document.createElement('button');
+      selectBtn.className = 'btn';
+      selectBtn.setAttribute('data-select', '');
+      selectBtn.textContent = 'Select';
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn';
+      editBtn.setAttribute('data-edit', '');
+      editBtn.textContent = 'Edit';
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn';
+      delBtn.setAttribute('data-delete', '');
+      delBtn.textContent = 'Delete';
+      right.appendChild(selectBtn);
+      right.appendChild(editBtn);
+      right.appendChild(delBtn);
       row.appendChild(left);
       row.appendChild(right);
-      row.querySelector('[data-select]').onclick = async () => {
+      const selectEl = row.querySelector('[data-select]');
+      if (selectEl) selectEl.onclick = async () => {
         const dsId = d.id;
         const dsName = d.name;
         const sel = els.datasetSelect();
@@ -1113,7 +1139,8 @@
           toast('Dataset selected');
         }
       };
-      row.querySelector('[data-edit]').onclick = async () => {
+      const editEl = row.querySelector('[data-edit]');
+      if (editEl) editEl.onclick = async () => {
         const result = await showDatasetModal({ title: 'Edit Dataset', name: d.name, description: d.description || '', target_type_id: d.target_type_id });
         if (!result) return;
         const { name: newName, description: newDesc, target_type_id } = result;
@@ -1137,7 +1164,8 @@
           toast('Dataset updated');
         } catch { toast('Update failed'); }
       };
-      row.querySelector('[data-delete]').onclick = async () => {
+      const deleteEl = row.querySelector('[data-delete]');
+      if (deleteEl) deleteEl.onclick = async () => {
         if (!confirm(`Delete dataset '${d.name}'?`)) return;
         let url = `datasets/${d.id}`;
         const force = confirm('Force delete and cascade all annotations in this dataset?');
@@ -1482,6 +1510,19 @@
   async function loadFrame(idx) {
     if (idx < 0) idx = 0;
     try {
+      // Reset per-frame saved visuals before fetching new data to avoid stale green highlights
+      state.savedCategoryForFrame = null;
+      state.savedMultilabelIdsForFrame = [];
+      state.savedRegressionValueForFrame = null;
+      try { highlightCategoryStates(); } catch {}
+      try { highlightMultilabelStates(); } catch {}
+      try { highlightRegressionSavedState(); } catch {}
+      // Also clear multi-label checkbox checks to avoid stale selections while loading
+      try {
+        const checks = document.querySelectorAll('#category-list input[type="checkbox"][data-class-id]');
+        checks.forEach(cb => { cb.checked = false; });
+      } catch {}
+
       // Use unified /api/frame; include dataset_id when available to retrieve annotation payload
       const params = {
         session_id: state.session_id,
@@ -1823,6 +1864,9 @@
       input.value = '';
     });
     els.newCategoryInput().addEventListener('keypress', (e) => { if (e.key === 'Enter') els.addCategoryBtn().click(); });
+    // First/Prev/Next/Last navigation
+    const firstBtn = els.firstBtn();
+    if (firstBtn) firstBtn.addEventListener('click', () => goToFrame(0));
     els.prevBtn().addEventListener('click', () => goToFrame(state.currentIdx - 1));
     els.nextBtn().addEventListener('click', () => goToFrame(state.currentIdx + 1));
     els.lastBtn().addEventListener('click', () => { if (state.totalFrames) goToFrame(state.totalFrames - 1); });
