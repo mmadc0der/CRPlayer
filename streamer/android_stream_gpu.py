@@ -4,6 +4,7 @@ Optimized for RTX 3060 with H265 hardware decoding and PyTorch integration.
 """
 
 import subprocess  # nosec B404 - used with constant arguments for device control
+import os
 import secrets
 import socket
 import struct
@@ -117,10 +118,32 @@ class GPUAndroidStreamer:
     device_arg = f"-s {self.device_id}" if self.device_id else ""
 
     # Push scrcpy server to device
-    server_locations = ["/usr/share/scrcpy/scrcpy-server", "/usr/local/bin/scrcpy-server", "/opt/scrcpy/scrcpy-server"]
+    env_path = os.environ.get("SCRCPY_SERVER_PATH")
+    server_locations = [
+      env_path if env_path else None,
+      "/usr/share/scrcpy/scrcpy-server.jar",
+      "/usr/share/scrcpy/scrcpy-server",
+      "/usr/local/share/scrcpy/scrcpy-server.jar",
+      "/usr/local/share/scrcpy/scrcpy-server",
+      "/usr/local/bin/scrcpy-server",
+      "/usr/bin/scrcpy-server",
+      "/opt/scrcpy/scrcpy-server",
+      "/snap/scrcpy/current/usr/share/scrcpy/scrcpy-server",
+      "/snap/scrcpy/current/usr/share/scrcpy/scrcpy-server.jar",
+    ]
 
     server_pushed = False
     for location in server_locations:
+      if not location:
+        continue
+      if not os.path.isfile(location):
+        # Try without .jar suffix if given
+        alt = location[:-4] if location.endswith('.jar') else f"{location}.jar"
+        if alt and os.path.isfile(alt):
+          location = alt
+        else:
+          print(f"[DEBUG] scrcpy-server not found at: {location}")
+          continue
       try:
         print(f"Pushing scrcpy server to device: {location} with args: {device_arg}")
         push_cmd = f"adb {device_arg} push {location} /data/local/tmp/scrcpy-server.jar"
