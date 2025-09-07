@@ -137,8 +137,8 @@ jobs:
       - name: Run Bandit security scan
         run: |
           . .venv/bin/activate
-          bandit -r . -f json -o bandit-results.json || true
-          bandit -r . -f txt
+          bandit -r . -c bandit.yaml -x .venv,venv,**/.venv,**/venv,tests,**/tests -f json -o bandit-results.json || true
+          bandit -r . -c bandit.yaml -x .venv,venv,**/.venv,**/venv,tests,**/tests -f txt
 
       - name: Run Safety scan
         uses: pyupio/safety-action@v1

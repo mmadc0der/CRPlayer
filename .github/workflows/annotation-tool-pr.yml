@@ -51,7 +51,8 @@ jobs:
           pip install flake8
 
           echo "🔍 Running linting..."
-          flake8 --max-line-length=120 --extend-ignore=E203,W503 --exclude .venv,venv,**/.venv,**/venv . || (echo "❌ Linting issues found. Run 'make lint' to see details." && exit 1)
+          # Let per-directory flake8 configs (like tools/annotation/.flake8) apply
+          flake8 --config .flake8 --max-line-length=120 --extend-ignore=E203,W503 --exclude .venv,venv,**/.venv,**/venv . || (echo "❌ Linting issues found. Run 'make lint' to see details." && exit 1)
 
           echo "✅ Code quality checks passed"
 
