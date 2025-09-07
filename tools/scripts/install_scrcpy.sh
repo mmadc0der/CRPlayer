@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# Re-exec with bash if not already running under bash (e.g., when invoked via `sh`)
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 # Install latest scrcpy release (Linux tarball + server), with SHA256 validation
