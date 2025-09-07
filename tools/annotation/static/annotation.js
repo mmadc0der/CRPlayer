@@ -216,6 +216,9 @@
     savedCategoryForFrame: null,
     savedMultilabelIdsForFrame: [],
     savedRegressionValueForFrame: null,
+    // Filtering
+    filterUnlabeledOnly: false,
+    filteredIndices: null, // null => no filter; otherwise array of idx (0-based) to traverse
   };
   // Controller to cancel in-flight frame fetches
   let frameRequestController = null;
@@ -1396,6 +1399,91 @@
     els.progressText().textContent = `${percent.toFixed(1)}% complete (${annotated}/${total})`;
   }
 
+  async function getDatasetProgress() {
+    try {
+      if (!state.dataset_id) return null;
+      const res = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/progress`);
+      return res || null;
+    } catch { return null; }
+  }
+
+  function updateFilterIndicatorText() {
+    const el = document.getElementById('filter-indicator');
+    if (!el) return;
+    if (!state.filterUnlabeledOnly) { el.textContent = ''; return; }
+    // Show counts when we have them
+    const total = state.totalFrames || null;
+    const countsText = (state._lastProgress && (typeof state._lastProgress.unlabeled === 'number' || typeof state._lastProgress.total === 'number'))
+      ? (() => {
+          const labeled = (typeof state._lastProgress.labeled === 'number') ? state._lastProgress.labeled : (typeof state._lastProgress.annotated === 'number' ? state._lastProgress.annotated : null);
+          const totalV = (typeof state._lastProgress.total === 'number') ? state._lastProgress.total : total;
+          const unl = (typeof state._lastProgress.unlabeled === 'number') ? state._lastProgress.unlabeled : (Number.isFinite(labeled) && Number.isFinite(totalV) ? Math.max(0, totalV - labeled) : null);
+          return (Number.isFinite(unl) && Number.isFinite(totalV)) ? `Unlabeled ${unl}/${totalV}` : '';
+        })()
+      : (total ? `Filtering unlabeled · total ${total}` : 'Filtering unlabeled');
+    el.textContent = countsText;
+  }
+
+  async function refreshFilterIndicator() {
+    const btn = document.getElementById('toggle-unlabeled');
+    if (btn) {
+      if (state.filterUnlabeledOnly) btn.classList.add('btn--primary'); else btn.classList.remove('btn--primary');
+    }
+    try {
+      state._lastProgress = await getDatasetProgress();
+    } catch {}
+    updateFilterIndicatorText();
+  }
+
+  async function isIndexUnlabeled(idx) {
+    if (!state.dataset_id || !state.session_id) return true;
+    try {
+      const qs = new URLSearchParams({ session_id: String(state.session_id), dataset_id: String(state.dataset_id), idx: String(idx) }).toString();
+      const res = await apiGet(`annotations/frame?${qs}`);
+      const st = res && res.annotation ? res.annotation.status : null;
+      // Treat missing annotation or explicit 'unlabeled' as unlabeled
+      return st !== 'labeled';
+    } catch {
+      return true;
+    }
+  }
+
+  async function findUnlabeledFrom(startIdx, direction = 1) {
+    if (!Number.isFinite(startIdx)) return null;
+    if (direction === 0) direction = 1;
+    const limit = state.totalFrames || 0;
+    if (!limit) return null;
+    let i = Math.max(0, Math.min(startIdx, limit - 1));
+    while (i >= 0 && i < limit) {
+      if (await isIndexUnlabeled(i)) return i;
+      i += (direction > 0 ? 1 : -1);
+    }
+    return null;
+  }
+
+  async function fetchFilteredIndicesIfNeeded() {
+    // Build a list of unlabeled frame indices for current session/dataset using existing APIs
+    // Approach: use /api/annotations/frame for probing is expensive; instead, use dataset labeled list
+    // and infer unlabeled from total frames if totalFrames is known. If not known, skip.
+    if (!state.filterUnlabeledOnly) { state.filteredIndices = null; return; }
+    if (!state.dataset_id || !state.session_id) { state.filteredIndices = null; return; }
+    // Ensure we know total frames
+    if (!state.totalFrames || state.totalFrames <= 0) { state.filteredIndices = null; return; }
+    let labeled = [];
+    try {
+      const rows = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/labeled`);
+      // rows contain items across the dataset; we need ones for this session. Filter by session_id if present, else by a known prefix of frame path is unavailable, so fallback:
+      // We will fetch per-frame status lazily if filtering set produces too many false positives.
+      // For now, assume dataset labeled covers any session; we can't map frame_id->idx without service.
+      // Fallback simple strategy: probe current session sequentially to find unlabeled indices around current position.
+    } catch {}
+    // Fallback probing limited window to avoid heavy calls
+    const maxProbe = Math.min(state.totalFrames || 0, 5000);
+    const indices = [];
+    for (let i = 0; i < maxProbe; i++) indices.push(i);
+    state.filteredIndices = indices; // temporary full list until backend exposes per-session list
+  }
+
   function setSelectedCategory(category) {
     if (!category) return;
     state.selectedCategory = String(category);
@@ -1727,6 +1815,21 @@
   }
 
   function goToFrame(idx) {
+    if (state.filterUnlabeledOnly && Array.isArray(state.filteredIndices)) {
+      // Map requested idx into actual idx within filtered list
+      const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+      const pos = clamp(idx, 0, state.totalFrames ? state.totalFrames - 1 : idx);
+      // Find next valid index >= pos
+      const next = state.filteredIndices.find(i => i >= pos);
+      if (typeof next === 'number') {
+        if (state.totalFrames && next >= state.totalFrames) return;
+        return loadFrame(next);
+      }
+      // If none ahead, try the last available
+      const last = state.filteredIndices.length ? state.filteredIndices[state.filteredIndices.length - 1] : null;
+      if (typeof last === 'number') return loadFrame(last);
+      return; // nothing to show under filter
+    }
     if (idx < 0) return;
     if (state.totalFrames && idx >= state.totalFrames) return;
     loadFrame(idx);
@@ -1870,6 +1973,24 @@
     els.prevBtn().addEventListener('click', () => goToFrame(state.currentIdx - 1));
     els.nextBtn().addEventListener('click', () => goToFrame(state.currentIdx + 1));
     els.lastBtn().addEventListener('click', () => { if (state.totalFrames) goToFrame(state.totalFrames - 1); });
+    const unlabeledBtn = document.getElementById('toggle-unlabeled');
+    if (unlabeledBtn) {
+      unlabeledBtn.addEventListener('click', async () => {
+        state.filterUnlabeledOnly = !state.filterUnlabeledOnly;
+        await refreshFilterIndicator();
+        if (state.filterUnlabeledOnly) {
+          // Jump to first unlabeled from current position
+          const next = await findUnlabeledFrom(state.currentIdx, +1);
+          if (next != null) loadFrame(next);
+          else toast('No unlabeled frames');
+        } else {
+          // Return to current (unfiltered) index
+          loadFrame(state.currentIdx);
+        }
+      });
+      // Initialize indicator state
+      refreshFilterIndicator();
+    }
     els.frameInput().addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         const val = parseInt(e.target.value, 10) - 1;
