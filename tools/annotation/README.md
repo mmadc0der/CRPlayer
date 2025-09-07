@@ -15,11 +15,13 @@ A Flask web application for annotating collected game frame data in-place via br
 ## Quick Start
 
 1. **Install dependencies:**
+
    ```bash
    pip install flask
    ```
 
 2. **Start the annotation server:**
+
    ```bash
    cd tools/annotation
    python app.py
@@ -49,6 +51,7 @@ python app.py --debug
 
 - The application uses a centralized logging system with request correlation and structured output.
 - Environment variables:
+
   - `ANNOTATION_LOG_LEVEL`: DEBUG, INFO, WARNING, ERROR (default INFO; DEBUG when `--debug`)
   - `ANNOTATION_LOG_JSON`: set to `1` to enable JSON logs (requires `python-json-logger`)
   - `ANNOTATION_LOG_FILE`: path to write logs (defaults to stdout)
@@ -82,10 +85,16 @@ python app.py --debug
 - `GET /api/sessions` - List available sessions
 - `POST /api/load_session` - Load specific session
 - `GET /api/frame/<idx>` - Get frame data and annotation
-- `GET /api/image/<idx>` - Serve frame image
+- `GET /api/image/<idx>` - Serve frame image (now served with long-lived cache headers)
 - `POST /api/annotate` - Save frame annotation
 - `POST /api/export` - Export annotated dataset
 - `GET /api/stats` - Get annotation statistics
+
+### DB-backed (current)
+
+- `GET /api/datasets/{dataset_id}/progress` - Dataset progress summary
+- `GET /api/datasets/{dataset_id}/labeled` - Labeled items view
+- `GET /api/datasets/{dataset_id}/sessions/{session_id}/unlabeled_indices` - Indices of unlabeled frames for filtering
 
 ## File Structure
 
@@ -100,6 +109,7 @@ tools/annotation/
 ## Session Discovery
 
 The tool automatically searches for annotation sessions in:
+
 - `production_data/`
 - `collected_data/`
 - `markup_data/`
@@ -124,10 +134,11 @@ Annotations are saved as `annotations.json` in each session directory:
 ```
 
 Exported datasets follow this structure:
+
 ```
 exported_dataset/
 ├── menu/           # Menu state frames
-├── loading/        # Loading state frames  
+├── loading/        # Loading state frames
 ├── battle/         # Battle state frames
 ├── final/          # Final state frames
 └── dataset_info.json

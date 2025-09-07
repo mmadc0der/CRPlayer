@@ -7,6 +7,7 @@ Base path: all routes are mounted by `tools/annotation/api.py`.
 ## Sessions and Indexing
 
 - GET /api/sessions
+
   - List discovered sessions from `data/raw/` with metadata.
 
 - POST /api/reindex
@@ -17,18 +18,26 @@ Base path: all routes are mounted by `tools/annotation/api.py`.
 
 - GET /api/projects
 - POST /api/projects
+
   - Body: `{ name: string, description?: string }`
 
 - GET /api/projects/{project_id}/datasets
 - POST /api/projects/{project_id}/datasets
+
   - Body: `{ name: string, description?: string, target_type_id: number }`
     - target_type_id: 1=Regression, 2=SingleLabelClassification, 3=MultiLabelClassification
 
 - GET /api/datasets/{dataset_id}/progress
+
   - Returns aggregate counts of labeled/unlabeled for the dataset.
 
 - GET /api/datasets/{dataset_id}/labeled
+
   - Lists labeled items using `dataset_labeled_view`.
+
+- GET /api/datasets/{dataset_id}/sessions/{session_id}/unlabeled_indices
+  - Returns indices of unlabeled frames for the given dataset-session pair.
+  - Response: `{ indices: number[], total: number, labeled: number, unlabeled: number }`
 
 ## Enrollment
 
@@ -41,19 +50,23 @@ Base path: all routes are mounted by `tools/annotation/api.py`.
 ## Frames & Images
 
 - GET /api/frame?session_id=...&project_name=...&idx=number
+
   - Returns `{ frame: {...} }` by index within session.
   - Note: legacy filesystem annotations are removed.
 
 - GET /api/image?session_id=...&idx=number
   - Sends the frame image file for the given session/index.
+  - Caching: `Cache-Control: public, max-age=31536000, immutable` with conditional responses enabled.
 
 ## Annotations (DB-backed)
 
 All annotation write endpoints support resolving the target frame via `frame_id` or `frame_idx`:
+
 - If `frame_id` omitted and `frame_idx` provided, the server resolves `frame_id` using session metadata.
 - On write, membership in `annotations` is ensured; status is updated accordingly by repository logic.
 
 - POST /api/annotations/regression
+
   - Body:
     ```json
     {
@@ -62,12 +75,13 @@ All annotation write endpoints support resolving the target frame via `frame_id`
       "frame_id": "optional string",
       "frame_idx": 12,
       "value": 0.73,
-      "override_settings": { "hotkeys": {"A": 1} }
+      "override_settings": { "hotkeys": { "A": 1 } }
     }
     ```
   - Response: unified frame annotation object including `status`, payloads, and `effective_settings`.
 
 - POST /api/annotations/single_label
+
   - Body:
     ```json
     {
@@ -89,7 +103,7 @@ All annotation write endpoints support resolving the target frame via `frame_id`
       "dataset_id": 1,
       "frame_id": "optional string",
       "frame_idx": 12,
-      "class_ids": [1,4,5],
+      "class_ids": [1, 4, 5],
       "override_settings": { "multi": true }
     }
     ```
@@ -98,10 +112,12 @@ All annotation write endpoints support resolving the target frame via `frame_id`
 ## Dataset-Session Settings
 
 - PUT /api/datasets/{dataset_id}/sessions/{session_id}/settings
+
   - Body: `{ "settings": object }`
   - Upserts baseline settings for the dataset-session pair in `dataset_session_settings`.
 
 - GET /api/datasets/{dataset_id}/sessions/{session_id}/settings
+
   - Response: `{ settings: object | null }`
 
 - DELETE /api/datasets/{dataset_id}/sessions/{session_id}/settings

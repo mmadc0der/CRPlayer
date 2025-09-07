@@ -48,6 +48,47 @@ class TestAnnotationsAPI:
 
     return project_id, dataset_id
 
+  def test_unlabeled_indices_endpoint(self, client: FlaskClient):
+    """Verify unlabeled indices listing for a dataset-session pair."""
+    project_id, dataset_id = self.setup_project_and_dataset(client, target_type_id=1)
+
+    # Enroll a session with 5 frames
+    enroll_payload = {"session_id": "test_session_000"}
+    resp_enroll = client.post(f"/api/datasets/{dataset_id}/enroll_session",
+                              data=json.dumps(enroll_payload),
+                              content_type="application/json")
+    assert resp_enroll.status_code == 200
+
+    # Label two frames (0 and 2)
+    with patch("services.session_service.SessionService.get_frame_by_idx") as mock_get_frame:
+      mock_get_frame.side_effect = [
+        {
+          "frame_id": "frame_001",
+          "ts_ms": 1000
+        },
+        {
+          "frame_id": "frame_003",
+          "ts_ms": 3000
+        },
+      ]
+      # frame 0
+      req0 = {"session_id": "test_session_000", "dataset_id": dataset_id, "frame_idx": 0, "category_name": "battle"}
+      r0 = client.post("/api/annotations/single_label", data=json.dumps(req0), content_type="application/json")
+      assert r0.status_code == 200
+      # frame 2
+      req2 = {"session_id": "test_session_000", "dataset_id": dataset_id, "frame_idx": 2, "category_name": "battle"}
+      r2 = client.post("/api/annotations/single_label", data=json.dumps(req2), content_type="application/json")
+      assert r2.status_code == 200
+
+    # Request unlabeled indices
+    resp = client.get(f"/api/datasets/{dataset_id}/sessions/test_session_000/unlabeled_indices")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert "indices" in data
+    # Total 5 frames => unlabeled should be 3 at indices 1,3,4
+    assert data["unlabeled"] == 3
+    assert set(data["indices"]) == {1, 3, 4}
+
   def test_get_annotation_for_frame_not_found(self, client: FlaskClient):
     """Test getting annotation for nonexistent frame."""
     response = client.get("/api/annotations/frame?session_id=nonexistent&dataset_id=1&idx=0")
