@@ -28,17 +28,17 @@ class GPUAndroidStreamer:
                use_gpu: bool = True,
                buffer_size: int = 30):
     """
-        Initialize GPU-accelerated Android streamer.
-        
-        Args:
-            device_id: ADB device ID (None for first available)
-            max_fps: Maximum frame rate (60 recommended)
-            max_size: Maximum resolution (1920 recommended for performance)
-            video_codec: Video codec (h265 for better quality/compression)
-            bit_rate: Video bitrate (8M recommended for 60fps)
-            use_gpu: Enable GPU acceleration
-            buffer_size: Frame buffer size for smooth playback
-        """
+    Initialize GPU-accelerated Android streamer.
+    
+    Args:
+      device_id: ADB device ID (None for first available)
+      max_fps: Maximum frame rate (60 recommended)
+      max_size: Maximum resolution (1920 recommended for performance)
+      video_codec: Video codec (h265 for better quality/compression)
+      bit_rate: Video bitrate (8M recommended for 60fps)
+      use_gpu: Enable GPU acceleration
+      buffer_size: Frame buffer size for smooth playback
+    """
     self.device_id = device_id
     self.max_fps = max_fps
     self.max_size = max_size
