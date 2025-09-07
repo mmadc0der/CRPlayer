@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from flask import Blueprint, request, jsonify, send_file
 from pathlib import Path
-from typing import Optional
 import logging
 
 from core.session_manager import SessionManager
@@ -10,7 +9,6 @@ from services.session_service import SessionService
 from services.annotation_service import AnnotationService
 from services.settings_service import SettingsService
 from services.dataset_service import DatasetService
-from core.path_resolver import resolve_frame_absolute_path
 from dto import (
   FrameQuery,
   ImageQuery,
@@ -21,7 +19,6 @@ from dto import (
 )
 from db.connection import get_connection
 from db.connection import get_db_path
-from db.schema import init_db
 from db.indexer import reindex_sessions
 from db.projects import (
   list_projects as db_list_projects,
@@ -37,7 +34,7 @@ from db.projects import (
   delete_dataset as db_delete_dataset,
 )
 import sqlite3
-from db.datasets import enroll_session_frames as db_enroll_session_frames, list_labeled as db_list_labeled
+from db.datasets import enroll_session_frames as db_enroll_session_frames
 from db.classes import (
   list_dataset_classes as db_list_dataset_classes,
   sync_dataset_classes as db_sync_dataset_classes,
@@ -224,7 +221,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
         if row:
           return jsonify(dict(row)), 200
         raise
-      except Exception as e:
+      except Exception:
         conn.rollback()
         raise
     except Exception as e:
