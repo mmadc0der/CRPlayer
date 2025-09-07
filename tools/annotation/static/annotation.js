@@ -377,6 +377,10 @@
     return await apiGet(`projects/${encodeURIComponent(projectId)}/datasets`).catch(() => []);
   }
 
+  async function listProjects() {
+    return await apiGet('projects').catch(() => []);
+  }
+
   async function createProject(name, description = '') {
     return await apiPost('projects', { name, description }).catch(() => null);
   }
@@ -647,6 +651,24 @@
       state.regressionMin = initMin; state.regressionMax = initMax;
       syncBounds();
     }
+  }
+
+  function renderRegressionShortcuts() {
+    try {
+      const container = document.getElementById('dynamic-shortcuts');
+      if (!container) return;
+      const shortcuts = Array.isArray(state.regressionShortcuts) ? state.regressionShortcuts : [];
+      if (!shortcuts.length) return;
+      const row = document.createElement('div');
+      row.className = 'shortcut';
+      const left = document.createElement('span');
+      left.textContent = 'Regression presets';
+      const right = document.createElement('span');
+      right.textContent = shortcuts.join(', ');
+      row.appendChild(left);
+      row.appendChild(right);
+      container.appendChild(row);
+    } catch {}
   }
 
   function getRegressionValue() {
