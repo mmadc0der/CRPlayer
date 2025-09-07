@@ -199,12 +199,14 @@
             return;
         }
         const rows = items.map(s => {
-            const id = s.metadata?.session_id || s.session_id || 'unknown';
-            const frames = (s.metadata?.frames || []).length;
-            const t = s.metadata?.start_time || s.metadata?.created_at || '';
+            // Support new API shape with top-level fields and legacy metadata fallback
+            const id = (s && (s.session_id || (s.metadata && s.metadata.session_id))) || 'unknown';
+            const frames = (typeof s.frames_count === 'number' ? s.frames_count : ((s.metadata && Array.isArray(s.metadata.frames)) ? s.metadata.frames.length : 0));
+            const t = (s && (s.start_time || (s.metadata && (s.metadata.start_time || s.metadata.created_at)))) || '';
+            const path = (s && (s.path || (s.metadata && s.metadata.path))) || '';
             return `<div style="padding:6px 8px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:6px;">
                         <div><strong>${id}</strong></div>
-                        <div style="color:#4a5568; font-size:0.9rem;">Frames: ${frames}${t ? ` · ${t}` : ''}</div>
+                        <div style="color:#4a5568; font-size:0.9rem;">Frames: ${frames}${t ? ` · ${t}` : ''}${path ? ` · ${path}` : ''}</div>
                     </div>`;
         }).join('');
         elSessions.innerHTML = rows;
