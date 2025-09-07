@@ -107,6 +107,34 @@ All annotation write endpoints support resolving the target frame via `frame_id`
 - DELETE /api/datasets/{dataset_id}/sessions/{session_id}/settings
   - Deletes the dataset-session baseline settings row.
 
+## Export Labeled Dataset
+
+- GET /api/datasets/{dataset_id}/export?include_images={0|1|true|false}
+  - Downloads a ZIP archive containing a `manifest.json` and, optionally, image files.
+  - Query parameters:
+    - `include_images` (optional): when truthy, embeds image files under `images/<session_id>/<filename>`.
+  - The `manifest.json` structure:
+    ```json
+    {
+      "version": 1,
+      "dataset": { "id": 1, "name": "My Dataset", "target_type": "SingleLabelClassification", "created_at": "..." },
+      "classes": [ { "id": 10, "name": "cat", "idx": 0 } ],
+      "samples": [
+        {
+          "session_id": "sess1",
+          "frame_id": "frame_001",
+          "image": { "included": true, "path": "images/sess1/frame_001.png", "frame_path_rel": "../../raw/sess1/frame_001.png" },
+          "target": { "type": "single_label", "class_id": 10, "class_name": "cat" }
+        }
+      ]
+    }
+    ```
+  - Targets support all label classes:
+    - Regression: `{ "type": "regression", "value": 0.42 }`
+    - Single label: `{ "type": "single_label", "class_id": 10, "class_name": "cat" }`
+    - Multilabel: `{ "type": "multilabel", "class_ids": [10,11], "class_names": ["cat","dog"] }`
+  - Works both inside docker-compose and standalone. Standalone uses `ANNOTATION_DB_PATH` or defaults to `data/annotated/annotated.db`.
+
 ## Data Model Notes
 
 - `annotations` table holds membership per (dataset_id, frame_id) with `status` and optional per-frame `settings_json` (override). Baseline settings live in `dataset_session_settings`.

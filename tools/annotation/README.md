@@ -9,8 +9,8 @@ A Flask web application for annotating collected game frame data in-place via br
 - **Session Management** - Automatically discovers and loads annotation sessions
 - **Real-time Progress** - Live statistics and progress tracking
 - **Keyboard Shortcuts** - Efficient annotation workflow
-- **Auto-save** - Annotations saved automatically to JSON
-- **Dataset Export** - Export to training-ready folder structure
+- **DB-backed storage** - Robust SQLite schema with integrity checks
+- **Dataset Export** - Export labeled dataset as ZIP with manifest (optionally include images)
 
 ## Quick Start
 
@@ -67,7 +67,7 @@ python app.py --debug
 2. **Navigate Frames** - Use arrow keys or navigation buttons
 3. **Annotate** - Select game state, importance, add notes
 4. **Save Progress** - Press Space to save and move to next frame
-5. **Export Dataset** - Create training-ready folder structure
+5. **Export Dataset** - Download ZIP with manifest and labels
 
 ### Keyboard Shortcuts
 
@@ -78,14 +78,34 @@ python app.py --debug
 
 ## API Endpoints
 
-- `GET /` - Main annotation interface
-- `GET /api/sessions` - List available sessions
-- `POST /api/load_session` - Load specific session
-- `GET /api/frame/<idx>` - Get frame data and annotation
-- `GET /api/image/<idx>` - Serve frame image
-- `POST /api/annotate` - Save frame annotation
-- `POST /api/export` - Export annotated dataset
-- `GET /api/stats` - Get annotation statistics
+- See `API.md` for full details.
+- Notable new endpoint:
+  - `GET /api/datasets/{dataset_id}/export?include_images=true|false` – downloads a ZIP with `manifest.json` and optional images.
+
+### Export Format
+
+The ZIP contains a `manifest.json` with the following structure:
+
+```
+{
+  "version": 1,
+  "dataset": { "id": 1, "name": "My Dataset", "target_type": "SingleLabelClassification", "created_at": "..." },
+  "classes": [ { "id": 10, "name": "cat", "idx": 0 } ],
+  "samples": [
+    {
+      "session_id": "sess1",
+      "frame_id": "frame_001",
+      "image": { "included": true, "path": "images/sess1/frame_001.png", "frame_path_rel": "../../raw/sess1/frame_001.png" },
+      "target": { "type": "single_label", "class_id": 10, "class_name": "cat" }
+    }
+  ]
+}
+```
+
+Targets supported:
+- Regression: `{ "type": "regression", "value": 0.42 }`
+- Single label: `{ "type": "single_label", "class_id": 10, "class_name": "cat" }`
+- Multilabel: `{ "type": "multilabel", "class_ids": [10,11], "class_names": ["cat","dog"] }`
 
 ## File Structure
 
@@ -108,27 +128,15 @@ The tool automatically searches for annotation sessions in:
 
 Sessions are identified by the presence of `metadata.json` files.
 
-## Output Format
+## Running Outside Docker
 
-Annotations are saved as `annotations.json` in each session directory:
+The app and export work without Docker. The SQLite DB path is determined by:
+- `ANNOTATION_DB_PATH` environment variable, or
+- default `data/annotated/annotated.db` under the repository root.
 
-```json
-{
-  "frame_id": {
-    "game_state": "battle",
-    "importance": 2,
-    "notes": "Important action sequence",
-    "annotated_at": 42
-  }
-}
-```
-
-Exported datasets follow this structure:
-```
-exported_dataset/
-├── menu/           # Menu state frames
-├── loading/        # Loading state frames  
-├── battle/         # Battle state frames
-├── final/          # Final state frames
-└── dataset_info.json
+Example (in a virtualenv):
+```bash
+export ANNOTATION_DB_PATH=$(pwd)/data/annotated/annotated.db
+python tools/annotation/app.py --host 127.0.0.1 --port 5000
+curl -f -o dataset_1.zip "http://127.0.0.1:5000/api/datasets/1/export?include_images=1"
 ```
