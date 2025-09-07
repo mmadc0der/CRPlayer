@@ -5,6 +5,7 @@ Optimized for RTX 3060 with H265 hardware decoding and PyTorch integration.
 
 import subprocess  # nosec B404 - used with constant arguments for device control
 import os
+import re
 import secrets
 import socket
 import struct
@@ -158,10 +159,25 @@ class GPUAndroidStreamer:
     if not server_pushed:
       raise RuntimeError("Could not find or push scrcpy-server")
 
+    # Detect server version to pass to Server.main
+    def _detect_server_version() -> str:
+      env_ver = os.environ.get("SCRCPY_VERSION")
+      if env_ver:
+        return env_ver
+      server_path = os.environ.get("SCRCPY_SERVER_PATH")
+      if server_path:
+        m = re.search(r"v?(\d+\.\d+\.\d+)", os.path.basename(server_path))
+        if m:
+          return m.group(1)
+      # Fallback to current known release used by installer
+      return "3.3.2"
+
+    server_version = _detect_server_version()
+
     # Start server with working arguments from your analysis
     server_cmd = [
       "adb", "shell", f"CLASSPATH=/data/local/tmp/scrcpy-server.jar", "app_process", "/",
-      "com.genymobile.scrcpy.Server", "3.3.1", "tunnel_forward=true", "control=false", "cleanup=false",
+      "com.genymobile.scrcpy.Server", server_version, "tunnel_forward=true", "control=false", "cleanup=false",
       "raw_stream=true", "audio=false", f"max_size={self.max_size}", f"max_fps={self.max_fps}",
       f"video_bit_rate={int(self.bit_rate[:-1]) * 1024**2 if self.bit_rate[-1] == 'M' else self.bit_rate}",
       f"video_codec={self.video_codec}", "stay_awake=true", "power_off_on_close=false", "show_touches=false",
