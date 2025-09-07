@@ -10,11 +10,8 @@ import struct
 import threading
 import time
 import queue
-import random
 from typing import Optional, Tuple, Callable
-import numpy as np
 import torch
-import cv2
 import av
 from collections import deque
 
