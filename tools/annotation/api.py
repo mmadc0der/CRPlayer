@@ -591,6 +591,33 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       err = ErrorResponse(code="classes_error", message="Failed to list dataset classes", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
+  # -------------------- Dataset export --------------------
+  @bp.route("/api/datasets/<int:dataset_id>/export", methods=["GET"])
+  def api_export_dataset(dataset_id: int):
+    """Download labeled dataset as a ZIP with manifest and optional images.
+
+    Query params:
+      - include_images: bool (default false) to embed image files.
+    """
+    try:
+      include_images = str(request.args.get("include_images", "0")).lower() in ("1", "true", "yes")
+    except Exception as e:
+      err = ErrorResponse(code="bad_request", message="Invalid query parameters", details={"error": str(e)})
+      return jsonify(err.model_dump()), 400
+
+    try:
+      zip_path = dataset_service.export_zip(dataset_id, include_images=include_images)
+      # Suggest a filename
+      filename = f"dataset_{dataset_id}.zip"
+      return send_file(str(zip_path), mimetype="application/zip", as_attachment=True, download_name=filename)
+    except FileNotFoundError as e:
+      err = ErrorResponse(code="not_found", message=str(e))
+      return jsonify(err.model_dump()), 404
+    except Exception as e:
+      log.exception("export_error")
+      err = ErrorResponse(code="export_error", message="Failed to export dataset", details={"error": str(e)})
+      return jsonify(err.model_dump()), 500
+
   @bp.route("/api/frame", methods=["GET"])
   def get_frame():
     try:
