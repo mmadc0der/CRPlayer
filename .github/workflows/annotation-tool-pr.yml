@@ -83,6 +83,7 @@ jobs:
 
       - name: Database schema validation
         run: |
+          . .venv/bin/activate
           export PYTHONPATH=$PWD:$PYTHONPATH
 
           echo "🗄️ Validating database schema..."
@@ -121,6 +122,7 @@ jobs:
 
       - name: API endpoints validation
         run: |
+          . .venv/bin/activate
           export PYTHONPATH=$PWD:$PYTHONPATH
 
           echo "🌐 Validating API endpoints..."
