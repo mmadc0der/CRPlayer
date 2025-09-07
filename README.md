@@ -16,26 +16,45 @@ High-performance GPU-accelerated Android screen streaming for reinforcement lear
 - NVIDIA RTX 3060 (or compatible GPU)
 - Python 3.8+
 - CUDA-enabled PyTorch
-- scrcpy installed and accessible
+- ADB and scrcpy installed and accessible
 
 ## Installation
 
-1. **Install dependencies:**
+1. **Install Python dependencies:**
+
 ```bash
 pip install -r requirements.txt
 ```
 
-2. **Install scrcpy:**
-```bash
-# Ubuntu/Debian
-sudo apt install scrcpy
+2. **Install ADB and scrcpy (Ubuntu/Debian):**
 
-# Or build from source for latest version
+```bash
+sudo apt update
+sudo apt install -y adb scrcpy
 ```
 
-3. **Setup ADB connection:**
+3. **Start ADB server with proper permissions (USB):**
+
 ```bash
-adb devices  # Verify your Android device is connected
+sudo adb kill-server
+sudo adb start-server
+adb devices   # should list your device; if 'unauthorized', accept the prompt on device
+```
+
+Notes:
+
+- Starting the ADB server as root avoids USB permission issues without custom udev rules. You do not need to run Python as root; only the ADB server runs with elevated privileges.
+- Alternatively, set up udev rules instead of running the server as root.
+
+4. **Connect over TCP/IP (optional, no USB):**
+
+```bash
+# On the device (once, via USB):
+adb tcpip 5555
+
+# From your host/server:
+adb connect <device_ip>:5555
+adb devices  # verify the device shows as <ip>:5555
 ```
 
 ## Quick Start
@@ -43,7 +62,7 @@ adb devices  # Verify your Android device is connected
 ### Basic Streaming Test
 
 ```python
-from android_stream_gpu import GPUAndroidStreamer
+from streamer import GPUAndroidStreamer
 
 # Create streamer
 streamer = GPUAndroidStreamer(
@@ -90,8 +109,9 @@ python test_stream.py
 ```
 
 Expected performance on RTX 3060:
+
 - **60fps** sustained streaming
-- **<50ms** end-to-end latency  
+- **<50ms** end-to-end latency
 - **<2GB** GPU memory usage
 - **<30%** CPU utilization
 
@@ -103,8 +123,8 @@ Expected performance on RTX 3060:
 streamer = GPUAndroidStreamer(
     max_fps=60,           # Target framerate
     max_size=1920,        # Resolution (1920x1080)
-    video_codec="h265",   # Better compression
-    bit_rate="12M",       # High quality for RTX 3060
+    video_codec="h264",   # Better compression
+    bit_rate="80M",       # High quality for RTX 3060
     use_gpu=True,         # Enable hardware acceleration
     buffer_size=5         # Low latency buffer
 )
@@ -125,24 +145,34 @@ scrcpy --video-encoder=OMX.qcom.video.encoder.hevc
 ### Common Issues
 
 **No frames received:**
+
 - Verify ADB connection: `adb devices`
+- Ensure ADB server is running as root (for USB): `sudo adb start-server`
 - Check scrcpy works: `scrcpy --no-display`
 - Ensure device screen is unlocked
 
 **Low FPS performance:**
+
 - Check GPU utilization: `nvidia-smi`
 - Reduce resolution: `max_size=1280`
 - Lower bitrate: `bit_rate="8M"`
 
 **High latency:**
+
 - Reduce buffer size: `buffer_size=3`
 - Use USB connection instead of WiFi
 - Close other GPU applications
 
 **GPU acceleration not working:**
+
 - Verify CUDA installation: `torch.cuda.is_available()`
 - Check NVDEC support: `ffmpeg -hwaccels`
 - Fallback to CPU decoding automatically
+
+**USB permissions issues:**
+
+- Prefer starting ADB as root: `sudo adb kill-server && sudo adb start-server`
+- Or set udev rules (e.g., `/etc/udev/rules.d/51-android.rules`) and reload rules.
 
 ### Performance Optimization
 
@@ -161,7 +191,7 @@ GPU Decoder (NVDEC) → PyTorch Tensors → RL Agent
 
 ### Key Components
 
-- **`android_stream_gpu.py`** - Main streaming class with GPU acceleration
+- **`streamer/android_stream_gpu.py`** - Main streaming class with GPU acceleration
 - **`rl_agent_integration.py`** - RL environment wrapper and example agent
 - **`test_stream.py`** - Performance testing and validation
 
@@ -172,17 +202,17 @@ GPU Decoder (NVDEC) → PyTorch Tensors → RL Agent
 ```python
 def advanced_frame_callback(tensor, pts, timestamp):
     # tensor: (3, H, W) on GPU, normalized [0,1]
-    
+
     # Resize for RL agent
     resized = torch.nn.functional.interpolate(
-        tensor.unsqueeze(0), 
-        size=(84, 84), 
+        tensor.unsqueeze(0),
+        size=(84, 84),
         mode='bilinear'
     ).squeeze(0)
-    
+
     # Convert to grayscale
     grayscale = torch.mean(resized, dim=0, keepdim=True)
-    
+
     # Feed to RL agent
     agent.process_observation(grayscale)
 ```
@@ -214,6 +244,7 @@ MIT License - See LICENSE file for details.
 ## Support
 
 For issues and questions:
+
 - Check troubleshooting section
 - Run performance tests
 - Check GPU compatibility
