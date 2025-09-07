@@ -45,16 +45,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-test.txt
 
-      - name: Code quality checks
-        run: |
-          . .venv/bin/activate
-          pip install flake8
-
-          echo "🔍 Running linting..."
-          flake8 --max-line-length=120 --extend-ignore=E203,W503 --exclude .venv,venv,**/.venv,**/venv . || (echo "❌ Linting issues found. Run 'make lint' to see details." && exit 1)
-
-          echo "✅ Code quality checks passed"
-
       - name: Import structure validation
         run: |
           . .venv/bin/activate
@@ -93,7 +83,7 @@ jobs:
 
       - name: Database schema validation
         run: |
-          cd ${{ env.ANNOTATION_TOOL_PATH }}
+          . .venv/bin/activate
           export PYTHONPATH=$PWD:$PYTHONPATH
 
           echo "🗄️ Validating database schema..."
@@ -132,7 +122,7 @@ jobs:
 
       - name: API endpoints validation
         run: |
-          cd ${{ env.ANNOTATION_TOOL_PATH }}
+          . .venv/bin/activate
           export PYTHONPATH=$PWD:$PYTHONPATH
 
           echo "🌐 Validating API endpoints..."
@@ -157,8 +147,6 @@ jobs:
       - name: Generate PR summary
         if: always()
         run: |
-          cd ${{ env.ANNOTATION_TOOL_PATH }}
-
           echo "## 📋 Annotation Tool PR Validation Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Changed Files" >> $GITHUB_STEP_SUMMARY

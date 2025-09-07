@@ -12,7 +12,6 @@ import logging
 logger = logging.getLogger("annotation.indexer")
 
 from .connection import get_connection
-from .schema import init_db
 from .repository import upsert_session, upsert_frame
 
 
