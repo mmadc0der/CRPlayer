@@ -61,7 +61,7 @@ try:
     init_db(_conn)
   finally:
     _conn.close()
-except Exception as _e:
+except Exception:
   # Keep app running even if DB init fails; API can still operate in file-only mode
   logger.exception("DB initialization skipped due to error")
 

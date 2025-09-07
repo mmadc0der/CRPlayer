@@ -5,10 +5,7 @@ This module provides improved fixtures and utilities for perfect test isolation.
 
 import pytest
 import sqlite3
-import tempfile
-import os
-from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 from typing import Dict, Any, Generator
 
 from core.session_manager import SessionManager

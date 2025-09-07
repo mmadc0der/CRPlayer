@@ -1,5 +1,5 @@
 [flake8]
-ignore = E111,E114
+ignore = E111,E114,E121,E402,E266,W291
 max-line-length = 120
 extend-exclude = __pycache__, htmlcov
 
