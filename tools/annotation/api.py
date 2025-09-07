@@ -676,7 +676,14 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
 
     try:
       abs_path, _frame = session_service.get_frame_for_image(q.session_id, q.idx)
-      return send_file(abs_path)
+      # Enable client/proxy caching for immutable frames and 304 handling on revalidation
+      resp = send_file(abs_path, conditional=True, etag=True, max_age=60 * 60 * 24 * 365)
+      try:
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        resp.headers.setdefault("Accept-Ranges", "bytes")
+      except Exception:
+        pass
+      return resp
     except FileNotFoundError as e:
       err = ErrorResponse(code="not_found", message=str(e))
       return jsonify(err.model_dump()), 404

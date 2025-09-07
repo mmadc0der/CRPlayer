@@ -1652,7 +1652,12 @@
       }
 
       // Update image and frame info
-      els.img().src = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`);
+      const imgUrl = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`);
+      // Use priority hints and async decoding where available
+      try { els.img().decoding = 'async'; } catch {}
+      try { els.img().loading = 'eager'; } catch {}
+      try { els.img().fetchPriority = 'high'; } catch {}
+      els.img().src = imgUrl;
       els.frameId().textContent = frame.frame_id ?? '-';
       els.frameFilename().textContent = frame.filename ?? '-';
       const ts = frame.timestamp;
@@ -1733,13 +1738,23 @@
           ? Math.min(idx + 1, state.totalFrames - 1)
           : idx + 1;
         if (nextIdx > idx) {
-          const paramsNext = {
-            session_id: state.session_id,
-            idx: nextIdx,
-          };
+          const paramsNext = { session_id: state.session_id, idx: nextIdx };
           const prefetchUrl = withBase(`/api/image?${new URLSearchParams(paramsNext).toString()}`);
-          const img = new Image();
-          img.src = prefetchUrl;
+          const img1 = new Image();
+          try { img1.decoding = 'async'; } catch {}
+          try { img1.fetchPriority = 'low'; } catch {}
+          img1.src = prefetchUrl;
+          // Prefetch one more ahead when total known
+          const next2 = (typeof state.totalFrames === 'number' && state.totalFrames > 0)
+            ? Math.min(nextIdx + 1, state.totalFrames - 1)
+            : nextIdx + 1;
+          if (next2 > nextIdx) {
+            const prefetchUrl2 = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: next2 }).toString()}`);
+            const img2 = new Image();
+            try { img2.decoding = 'async'; } catch {}
+            try { img2.fetchPriority = 'low'; } catch {}
+            img2.src = prefetchUrl2;
+          }
         }
       } catch {}
 
