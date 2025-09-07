@@ -53,10 +53,11 @@ def upsert_frame(conn: sqlite3.Connection, session_db_id: int, frame_id: str, ts
     (session_db_id, frame_id, ts_ms),
   )
   if cur.rowcount == 0 and ts_ms is not None:
-    # Optionally update timestamp if provided
+    # Preserve existing timestamp if already set; only fill when NULL
     cur.execute(
       """
-      UPDATE frames SET ts_ms = COALESCE(?, ts_ms)
+      UPDATE frames
+      SET ts_ms = COALESCE(ts_ms, ?)
       WHERE session_id = ? AND frame_id = ?
       """,
       (ts_ms, session_db_id, frame_id),
