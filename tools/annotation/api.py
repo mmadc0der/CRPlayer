@@ -576,6 +576,40 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       err = ErrorResponse(code="labeled_error", message="Failed to list labeled items", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
+  @bp.route("/api/datasets/<int:dataset_id>/sessions/<session_id>/unlabeled_indices", methods=["GET"])
+  def api_unlabeled_indices(dataset_id: int, session_id: str):
+    """Return zero-based frame indices (ordered by frame_id) that are not labeled
+       for the given dataset-session pair, plus simple counts.
+
+       This allows the frontend to navigate only unlabeled frames with a single call.
+    """
+    try:
+      # Fetch all rows (ordered by frame_id) for the session with annotation status
+      rows = annotation_service.list_annotations_for_session(session_id=session_id,
+                                                             dataset_id=int(dataset_id),
+                                                             labeled_only=False)
+      indices = []
+      labeled_count = 0
+      for i, r in enumerate(rows):
+        if str(r.get("status")) == "labeled":
+          labeled_count += 1
+        else:
+          indices.append(int(i))
+      total = len(rows)
+      out = {
+        "indices": indices,
+        "total": total,
+        "labeled": labeled_count,
+        "unlabeled": int(max(0, total - labeled_count)),
+      }
+      return jsonify(out)
+    except FileNotFoundError as e:
+      err = ErrorResponse(code="not_found", message=str(e))
+      return jsonify(err.model_dump()), 404
+    except Exception as e:
+      err = ErrorResponse(code="unlabeled_error", message="Failed to list unlabeled indices", details={"error": str(e)})
+      return jsonify(err.model_dump()), 500
+
   @bp.route("/api/datasets/<int:dataset_id>/classes", methods=["GET"])
   def api_list_dataset_classes(dataset_id: int):
     try:

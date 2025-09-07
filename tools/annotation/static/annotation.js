@@ -1427,7 +1427,13 @@
   async function refreshFilterIndicator() {
     const btn = document.getElementById('toggle-unlabeled');
     if (btn) {
-      if (state.filterUnlabeledOnly) btn.classList.add('btn--primary'); else btn.classList.remove('btn--primary');
+      if (state.filterUnlabeledOnly) {
+        btn.classList.add('btn--primary');
+        btn.textContent = 'Showing unlabeled';
+      } else {
+        btn.classList.remove('btn--primary');
+        btn.textContent = 'Unlabeled only';
+      }
     }
     try {
       state._lastProgress = await getDatasetProgress();
@@ -1462,26 +1468,24 @@
   }
 
   async function fetchFilteredIndicesIfNeeded() {
-    // Build a list of unlabeled frame indices for current session/dataset using existing APIs
-    // Approach: use /api/annotations/frame for probing is expensive; instead, use dataset labeled list
-    // and infer unlabeled from total frames if totalFrames is known. If not known, skip.
     if (!state.filterUnlabeledOnly) { state.filteredIndices = null; return; }
     if (!state.dataset_id || !state.session_id) { state.filteredIndices = null; return; }
-    // Ensure we know total frames
-    if (!state.totalFrames || state.totalFrames <= 0) { state.filteredIndices = null; return; }
-    let labeled = [];
     try {
-      const rows = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/labeled`);
-      // rows contain items across the dataset; we need ones for this session. Filter by session_id if present, else by a known prefix of frame path is unavailable, so fallback:
-      // We will fetch per-frame status lazily if filtering set produces too many false positives.
-      // For now, assume dataset labeled covers any session; we can't map frame_id->idx without service.
-      // Fallback simple strategy: probe current session sequentially to find unlabeled indices around current position.
-    } catch {}
-    // Fallback probing limited window to avoid heavy calls
-    const maxProbe = Math.min(state.totalFrames || 0, 5000);
-    const indices = [];
-    for (let i = 0; i < maxProbe; i++) indices.push(i);
-    state.filteredIndices = indices; // temporary full list until backend exposes per-session list
+      const res = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/sessions/${encodeURIComponent(state.session_id)}/unlabeled_indices`);
+      if (res && Array.isArray(res.indices)) {
+        state.filteredIndices = res.indices.map(n => Number(n)).filter(n => Number.isFinite(n));
+        // Persist simple counts if provided
+        state._lastProgress = {
+          total: Number(res.total || state.totalFrames || 0),
+          labeled: Number(res.labeled || 0),
+          unlabeled: Number(res.unlabeled || 0),
+        };
+      } else {
+        state.filteredIndices = null;
+      }
+    } catch {
+      state.filteredIndices = null;
+    }
   }
 
   function setSelectedCategory(category) {
@@ -1977,10 +1981,17 @@
     if (unlabeledBtn) {
       unlabeledBtn.addEventListener('click', async () => {
         state.filterUnlabeledOnly = !state.filterUnlabeledOnly;
+        await fetchFilteredIndicesIfNeeded();
         await refreshFilterIndicator();
         if (state.filterUnlabeledOnly) {
           // Jump to first unlabeled from current position
-          const next = await findUnlabeledFrom(state.currentIdx, +1);
+          let next = null;
+          if (Array.isArray(state.filteredIndices) && state.filteredIndices.length > 0) {
+            next = state.filteredIndices.find(i => i >= state.currentIdx);
+            if (typeof next !== 'number') next = state.filteredIndices[0];
+          } else {
+            next = await findUnlabeledFrom(state.currentIdx, +1);
+          }
           if (next != null) loadFrame(next);
           else toast('No unlabeled frames');
         } else {
@@ -1989,7 +2000,7 @@
         }
       });
       // Initialize indicator state
-      refreshFilterIndicator();
+    (async () => { await fetchFilteredIndicesIfNeeded(); await refreshFilterIndicator(); })();
     }
     els.frameInput().addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
