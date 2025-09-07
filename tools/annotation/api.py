@@ -588,14 +588,17 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       rows = annotation_service.list_annotations_for_session(session_id=session_id,
                                                              dataset_id=int(dataset_id),
                                                              labeled_only=False)
-      indices = []
+      indices: list[int] = []
       labeled_count = 0
+      total = len(rows)
+      # Walk rows in DB order; keep only unlabeled indices
       for i, r in enumerate(rows):
-        if str(r.get("status")) == "labeled":
+        status = str(r.get("status") or "").lower()
+        # Note: dataset_labeled_view may return populated payloads even when status isn't explicitly provided
+        if status == "labeled":
           labeled_count += 1
         else:
           indices.append(int(i))
-      total = len(rows)
       out = {
         "indices": indices,
         "total": total,

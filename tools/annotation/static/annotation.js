@@ -1365,6 +1365,7 @@
     const cats = Array.isArray(state.categories) ? state.categories : [];
     cats.forEach((cat) => {
       const key = state.hotkeys && state.hotkeys[cat] ? state.hotkeys[cat] : '';
+      if (!key) return; // Do not show shortcuts without bindings
       const row = document.createElement('div');
       row.className = 'shortcut';
       const left = document.createElement('span');
@@ -1373,7 +1374,7 @@
       const keySpan = document.createElement('span');
       keySpan.className = 'key';
       const keyText = String(key || '').toUpperCase();
-      keySpan.textContent = keyText || '—';
+      keySpan.textContent = keyText;
       right.appendChild(keySpan);
       row.appendChild(left);
       row.appendChild(right);
