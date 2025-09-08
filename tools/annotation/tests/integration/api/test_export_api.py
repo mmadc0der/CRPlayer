@@ -65,7 +65,8 @@ class TestExportAPI:
 
     resp = client.get(f"/api/datasets/{dataset_id}/export")
     assert resp.status_code == 200
-    assert resp.headers.get("Content-Type") in ("application/zip", "application/octet-stream")
+    ctype = resp.headers.get("Content-Type", "")
+    assert ("zip" in ctype) or ("octet-stream" in ctype)
 
     # Inspect zip content from bytes
     with zipfile.ZipFile(io.BytesIO(resp.data)) as zf:

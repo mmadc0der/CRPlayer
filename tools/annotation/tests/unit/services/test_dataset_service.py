@@ -2,6 +2,7 @@
 Unit tests for DatasetService.export_zip
 """
 
+import os
 import json
 import zipfile
 from pathlib import Path
@@ -10,13 +11,21 @@ from core.session_manager import SessionManager
 from services.dataset_service import DatasetService
 
 
-def _populate_db_for_export(temp_db, temp_data_dir: Path, target_type_id: int = 1):
+def _populate_db_for_export(db_conn, temp_data_dir: Path, target_type_id: int = 1):
   from db.projects import create_project, create_dataset
-  from db.repository import upsert_session, upsert_frame
-  from services.annotation_service import AnnotationService
+  from db.repository import (
+    upsert_session,
+    upsert_frame,
+    get_session_db_id,
+    get_frame_db_id,
+    upsert_regression,
+    upsert_single_label,
+    replace_multilabel_set,
+    ensure_membership,
+  )
 
-  project_id = create_project(temp_db, "P", None)
-  dataset_id = create_dataset(temp_db, project_id, "D", None, target_type_id)
+  project_id = create_project(db_conn, "P", None)
+  dataset_id = create_dataset(db_conn, project_id, "D", None, target_type_id)
 
   # Session and frames with metadata containing filenames
   session_id = "sessA"
@@ -29,36 +38,51 @@ def _populate_db_for_export(temp_db, temp_data_dir: Path, target_type_id: int = 
     (session_dir / fname).write_bytes(b"x")
     frames_md.append({"frame_id": fid, "filename": fname})
 
-  sid_db = upsert_session(temp_db, session_id, str(session_dir), {"frames": frames_md})
+  sid_db = upsert_session(db_conn, session_id, str(session_dir), {"frames": frames_md})
   for i in range(1, 3):
-    upsert_frame(temp_db, sid_db, f"f{i}", i * 10)
-  temp_db.commit()
+    upsert_frame(db_conn, sid_db, f"f{i}", i * 10)
+  db_conn.commit()
 
   # Add annotations depending on target_type
-  ann = AnnotationService(SessionManager(data_root=str(temp_data_dir), conn=temp_db))
+  # Resolve ids for direct repository inserts
+  sid = get_session_db_id(db_conn, session_id)
+  assert sid is not None
+  fid = get_frame_db_id(db_conn, sid, "f1")
+  assert fid is not None
+
   if target_type_id == 0:
-    ann.save_regression(session_id, dataset_id, "f1", 3.14)
+    ensure_membership(db_conn, dataset_id, fid)
+    upsert_regression(db_conn, dataset_id, fid, 3.14)
   elif target_type_id == 1:
     # Single label
     from db.classes import get_or_create_dataset_class
-    cls = get_or_create_dataset_class(temp_db, dataset_id, "cat")
-    temp_db.commit()
-    ann.save_single_label(session_id, dataset_id, "f1", cls["id"])  # type: ignore
+    cls = get_or_create_dataset_class(db_conn, dataset_id, "cat")
+    db_conn.commit()
+    ensure_membership(db_conn, dataset_id, fid)
+    upsert_single_label(db_conn, dataset_id, fid, int(cls["id"]))
   else:
     # Multilabel
     from db.classes import get_or_create_dataset_class
-    c1 = get_or_create_dataset_class(temp_db, dataset_id, "a")
-    c2 = get_or_create_dataset_class(temp_db, dataset_id, "b")
-    temp_db.commit()
-    ann.save_multilabel(session_id, dataset_id, "f1", [c1["id"], c2["id"]])  # type: ignore
+    c1 = get_or_create_dataset_class(db_conn, dataset_id, "a")
+    c2 = get_or_create_dataset_class(db_conn, dataset_id, "b")
+    db_conn.commit()
+    ensure_membership(db_conn, dataset_id, fid)
+    replace_multilabel_set(db_conn, dataset_id, fid, [int(c1["id"]), int(c2["id"])])
 
   return dataset_id
 
 
-def test_export_zip_manifest_regression(temp_db, temp_data_dir: Path):
-  sm = SessionManager(data_root=str(temp_data_dir), conn=temp_db)
+def test_export_zip_manifest_regression(temp_data_dir: Path):
+  # Use a file-backed DB so service connections see the same data
+  from db.connection import get_connection
+  from db.schema import init_db
+  db_path = temp_data_dir / "unit_ds_export.db"
+  os.environ["ANNOTATION_DB_PATH"] = str(db_path)
+  conn = get_connection()
+  init_db(conn)
+  sm = SessionManager(data_root=str(temp_data_dir))
   svc = DatasetService(sm)
-  dsid = _populate_db_for_export(temp_db, temp_data_dir, target_type_id=0)
+  dsid = _populate_db_for_export(conn, temp_data_dir, target_type_id=0)
 
   zip_path = svc.export_zip(dsid, include_images=False)
   try:
@@ -71,10 +95,16 @@ def test_export_zip_manifest_regression(temp_db, temp_data_dir: Path):
     Path(zip_path).unlink(missing_ok=True)
 
 
-def test_export_zip_includes_images(temp_db, temp_data_dir: Path):
-  sm = SessionManager(data_root=str(temp_data_dir), conn=temp_db)
+def test_export_zip_includes_images(temp_data_dir: Path):
+  from db.connection import get_connection
+  from db.schema import init_db
+  db_path = temp_data_dir / "unit_ds_export_img.db"
+  os.environ["ANNOTATION_DB_PATH"] = str(db_path)
+  conn = get_connection()
+  init_db(conn)
+  sm = SessionManager(data_root=str(temp_data_dir))
   svc = DatasetService(sm)
-  dsid = _populate_db_for_export(temp_db, temp_data_dir, target_type_id=0)
+  dsid = _populate_db_for_export(conn, temp_data_dir, target_type_id=0)
 
   zip_path = svc.export_zip(dsid, include_images=True)
   try:
