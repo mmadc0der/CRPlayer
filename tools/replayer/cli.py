@@ -34,8 +34,13 @@ async def _run_live(args):
   buffer = SharedStreamBuffer(max_buffer_size=100)
   server = ReplayerServer(host=args.host, port=args.port)
   adapter = StreamToWebsocketAdapter(buffer, server, fps=args.max_fps)
-  producer = LiveProducer(buffer, device_id=args.device_id, use_gpu=args.use_gpu, max_fps=args.max_fps,
-                          max_size=args.max_size, codec=args.codec, bitrate=args.bitrate)
+  producer = LiveProducer(buffer,
+                          device_id=args.device_id,
+                          use_gpu=args.use_gpu,
+                          max_fps=args.max_fps,
+                          max_size=args.max_size,
+                          codec=args.codec,
+                          bitrate=args.bitrate)
   await server.start()
   producer.start()
   await adapter.start()
@@ -86,4 +91,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
   raise SystemExit(main())
-

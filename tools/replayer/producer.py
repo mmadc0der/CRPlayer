@@ -17,21 +17,27 @@ from tools.streamer import AndroidStreamer, StreamerConfig
 class LiveProducer:
   """Produce frames from an Android device into a SharedStreamBuffer using tools.streamer."""
 
-  def __init__(self, stream_buffer: SharedStreamBuffer, device_id: Optional[str] = None,
-               use_gpu: bool = True, max_fps: Optional[int] = 60, max_size: Optional[int] = 1600,
-               codec: str = "h264", bitrate: Optional[int] = None) -> None:
+  def __init__(self,
+               stream_buffer: SharedStreamBuffer,
+               device_id: Optional[str] = None,
+               use_gpu: bool = True,
+               max_fps: Optional[int] = 60,
+               max_size: Optional[int] = 1600,
+               codec: str = "h264",
+               bitrate: Optional[int] = None) -> None:
     self.stream_buffer = stream_buffer
     self.is_producing = False
     self._lock = threading.Lock()
-    self._streamer = AndroidStreamer(StreamerConfig(
-      device_id=device_id,
-      use_gpu=use_gpu,
-      max_fps=max_fps,
-      max_size=max_size,
-      codec=codec,
-      bitrate=bitrate,
-      buffer_size=4,
-    ))
+    self._streamer = AndroidStreamer(
+      StreamerConfig(
+        device_id=device_id,
+        use_gpu=use_gpu,
+        max_fps=max_fps,
+        max_size=max_size,
+        codec=codec,
+        bitrate=bitrate,
+        buffer_size=4,
+      ))
 
   def start(self) -> None:
     with self._lock:
@@ -139,4 +145,3 @@ class ReplayProducer:
     if self._thread is not None:
       self._thread.join(timeout=5.0)
       self._thread = None
-
