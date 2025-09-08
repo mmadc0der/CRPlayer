@@ -585,20 +585,33 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
     """
     try:
       # Fetch all rows (ordered by frame_id) for the session with annotation status
-      rows = annotation_service.list_annotations_for_session(session_id=session_id,
-                                                             dataset_id=int(dataset_id),
-                                                             labeled_only=False)
+      # Important: Order frames the same way the /api/frame index navigation does so indices align 1:1.
+      conn = get_connection()
+      q = conn.execute(
+        ("""
+          SELECT f.id          AS frame_db_id,
+                 f.frame_id    AS frame_id,
+                 f.ts_ms       AS ts_ms,
+                 a.status      AS status
+            FROM frames f
+            JOIN sessions s ON s.id = f.session_id
+       LEFT JOIN annotations a
+              ON a.frame_id = f.id AND a.dataset_id = ?
+           WHERE s.session_id = ?
+        ORDER BY COALESCE(f.ts_ms, f.frame_id), f.frame_id
+          """),
+        (int(dataset_id), str(session_id)),
+      )
+      rows = [dict(r) for r in q.fetchall()]
       indices: list[int] = []
       labeled_count = 0
       total = len(rows)
-      # Walk rows in DB order; keep only unlabeled indices
       for i, r in enumerate(rows):
-        status = str(r.get("status") or "").lower()
-        # Note: dataset_labeled_view may return populated payloads even when status isn't explicitly provided
+        status = str((r.get("status") or "")).lower()
         if status == "labeled":
           labeled_count += 1
         else:
-          indices.append(int(i))
+          indices.append(i)
       out = {
         "indices": indices,
         "total": total,
