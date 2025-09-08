@@ -2,6 +2,15 @@
 Pytest configuration and shared fixtures for annotation tool tests.
 """
 
+# Ensure the annotation tool root is on sys.path so imports like `from core...` work
+import sys
+from pathlib import Path as _Path
+
+_THIS_DIR = _Path(__file__).resolve().parent
+_TOOL_ROOT = _THIS_DIR.parent
+if str(_TOOL_ROOT) not in sys.path:
+  sys.path.insert(0, str(_TOOL_ROOT))
+
 import pytest
 import tempfile
 import shutil
@@ -13,7 +22,6 @@ from unittest.mock import Mock, patch
 from flask import Flask
 from flask.testing import FlaskClient
 
-from app import app as flask_app
 from core.session_manager import SessionManager
 from db.connection import get_connection, get_db_path
 from db.schema import init_db
@@ -31,6 +39,36 @@ def temp_data_dir() -> Generator[Path, None, None]:
     yield temp_dir
   finally:
     shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _force_test_db_env(temp_data_dir: Path) -> Generator[None, None, None]:
+  """Force all DB connections during tests to use an isolated temp file.
+
+  This guards against accidental writes/cleans on the real database when any
+  code path calls get_connection() before per-test fixtures set env vars.
+  """
+  import os
+  import sqlite3
+
+  original_db_path = os.environ.get("ANNOTATION_DB_PATH")
+  session_db_path = temp_data_dir / "session_default.db"
+
+  # Ensure the file exists and has schema so early imports are safe
+  conn = sqlite3.connect(str(session_db_path))
+  conn.row_factory = sqlite3.Row
+  conn.execute("PRAGMA foreign_keys = ON;")
+  init_db(conn)
+  conn.close()
+
+  os.environ["ANNOTATION_DB_PATH"] = str(session_db_path)
+  try:
+    yield
+  finally:
+    if original_db_path is not None:
+      os.environ["ANNOTATION_DB_PATH"] = original_db_path
+    else:
+      os.environ.pop("ANNOTATION_DB_PATH", None)
 
 
 @pytest.fixture
@@ -93,7 +131,7 @@ def dataset_service(mock_session_manager: SessionManager) -> DatasetService:
 
 
 @pytest.fixture(scope="function")
-def app(temp_data_dir: Path) -> Flask:
+def app(temp_data_dir: Path) -> Generator[Flask, None, None]:
   """Create a Flask application configured for testing with isolated in-memory database."""
   import tempfile
   import os
@@ -117,43 +155,44 @@ def app(temp_data_dir: Path) -> Flask:
   original_db_path = os.environ.get("ANNOTATION_DB_PATH")
   os.environ["ANNOTATION_DB_PATH"] = str(test_db_path)
 
+  # Initialize the test database
+  conn = sqlite3.connect(str(test_db_path))
+  conn.row_factory = sqlite3.Row
+  conn.execute("PRAGMA foreign_keys = ON;")
+  init_db(conn)
+  conn.close()
+
+  # Create a real SessionManager with test database connection
+  mock_sm = SessionManager(data_root=str(temp_data_dir))
+
+  # Import and register blueprint
+  from api import create_annotation_api
+
+  app.register_blueprint(create_annotation_api(mock_sm))
+
+  # Add the main route
+  @app.route("/")
+  def index():
+    return "Test annotation interface"
+
   try:
-    # Initialize the test database
-    conn = sqlite3.connect(str(test_db_path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON;")
-    init_db(conn)
-    conn.close()
-
-    # Create a real SessionManager with test database connection
-    mock_sm = SessionManager(data_root=str(temp_data_dir))
-
-    # Import and register blueprint
-    from api import create_annotation_api
-
-    app.register_blueprint(create_annotation_api(mock_sm))
-
-    # Add the main route
-    @app.route("/")
-    def index():
-      return "Test annotation interface"
-
-    return app
+    yield app
   finally:
     # Restore original environment variable
     if original_db_path is not None:
       os.environ["ANNOTATION_DB_PATH"] = original_db_path
-    elif "ANNOTATION_DB_PATH" in os.environ:
-      del os.environ["ANNOTATION_DB_PATH"]
+    else:
+      os.environ.pop("ANNOTATION_DB_PATH", None)
 
 
 @pytest.fixture
-def client(app: Flask, temp_data_dir: Path) -> FlaskClient:
+def client(app: Flask, temp_data_dir: Path) -> Generator[FlaskClient, None, None]:
   """Create a test client for the Flask application with clean database."""
   import os
   import uuid
 
   test_db_path = temp_data_dir / f"client_test_{uuid.uuid4().hex}.db"
+  original_db_path = os.environ.get("ANNOTATION_DB_PATH")
   os.environ["ANNOTATION_DB_PATH"] = str(test_db_path)
 
   # Initialize the test database
@@ -172,33 +211,31 @@ def client(app: Flask, temp_data_dir: Path) -> FlaskClient:
 
       conn = get_connection()
       # Clear all tables to ensure clean state (in reverse dependency order)
-      try:
-        conn.execute("DELETE FROM annotations")
-      except:
-        pass
-      try:
-        conn.execute("DELETE FROM frames")
-      except:
-        pass
-      try:
-        conn.execute("DELETE FROM sessions")
-      except:
-        pass
-      try:
-        conn.execute("DELETE FROM datasets")
-      except:
-        pass
-      try:
-        conn.execute("DELETE FROM projects")
-      except:
-        pass
+      for stmt in (
+          "DELETE FROM annotations",
+          "DELETE FROM frames",
+          "DELETE FROM sessions",
+          "DELETE FROM datasets",
+          "DELETE FROM projects",
+      ):
+        try:
+          conn.execute(stmt)
+        except Exception:
+          pass
       conn.commit()
       conn.close()
-    except Exception as e:
+    except Exception:
       # If cleanup fails, continue with test
       pass
 
-  return test_client
+  try:
+    yield test_client
+  finally:
+    # Restore original env var after client use to avoid leaking to other tests
+    if original_db_path is not None:
+      os.environ["ANNOTATION_DB_PATH"] = original_db_path
+    else:
+      os.environ.pop("ANNOTATION_DB_PATH", None)
 
 
 @pytest.fixture
