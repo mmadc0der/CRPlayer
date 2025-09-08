@@ -1,6 +1,6 @@
 # Makefile for annotation tool testing
 
-.PHONY: help install-test test test-unit test-integration test-db test-api test-coverage test-fast clean pre-commit install-hooks
+.PHONY: help install-test test test-unit test-integration test-db test-api test-coverage test-fast clean pre-commit install-hooks yapf-format
 
 help: ## Show this help message
 	@echo "Available commands:"
@@ -57,11 +57,22 @@ lint: ## Run code linting (if flake8 is installed)
 		echo "flake8 not installed. Run: pip install flake8"; \
 	fi
 
-format: ## Format code (if black is installed)
+format: yapf-format ## Format code using yapf (preferred) or black fallback
+	@echo "Formatting with yapf if available (see .style.yapf)"
+	@$(MAKE) -s yapf-format || true
 	@if command -v black >/dev/null 2>&1; then \
 		black --line-length=120 .; \
 	else \
 		echo "black not installed. Run: pip install black"; \
+	fi
+
+yapf-format: ## Apply YAPF formatting across the project (requires yapf)
+	@if command -v yapf >/dev/null 2>&1; then \
+		yapf --style .style.yapf -r -i .; \
+		 echo "✅ YAPF formatting applied"; \
+	else \
+		echo "yapf not installed. Run: pip install yapf"; \
+		false; \
 	fi
 
 check: ## Run all quality checks
