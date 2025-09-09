@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, request, jsonify, send_file
+from flask import Blueprint, request, jsonify, send_file, Response
 from pathlib import Path
 import logging
 
@@ -574,6 +574,82 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       return jsonify(rows)
     except Exception as e:
       err = ErrorResponse(code="labeled_error", message="Failed to list labeled items", details={"error": str(e)})
+      return jsonify(err.model_dump()), 500
+
+  # -------------------- Dataset download (export) --------------------
+  @bp.route("/api/datasets/<int:dataset_id>/download", methods=["GET"])
+  def api_download_dataset(dataset_id: int):
+    """Download labeled items for a dataset as CSV or JSONL.
+
+        Query params:
+          - format: "csv" (default) or "jsonl"
+          - filename: optional base filename without extension
+        """
+    try:
+      fmt = str(request.args.get("format", "csv")).strip().lower() or "csv"
+      if fmt not in ("csv", "jsonl"):
+        err = ErrorResponse(code="bad_request", message="format must be 'csv' or 'jsonl'")
+        return jsonify(err.model_dump()), 400
+
+      # Ensure dataset exists
+      conn = get_connection()
+      d = db_get_dataset(conn, int(dataset_id))
+      if not d:
+        err = ErrorResponse(code="not_found", message="Dataset not found")
+        return jsonify(err.model_dump()), 404
+
+      rows = dataset_service.fetch_labeled(int(dataset_id))
+
+      # Build payload
+      import io
+      import csv as _csv
+      import json as _json
+
+      base_name = (str(request.args.get("filename") or "") or f"dataset_{int(dataset_id)}_labeled").strip()
+      if fmt == "csv":
+        # Stable column order
+        fieldnames = [
+          "session_id",
+          "frame_id",
+          "value_real",
+          "single_label_class_id",
+          "multilabel_class_ids_csv",
+          "frame_path_rel",
+        ]
+        sio = io.StringIO()
+        writer = _csv.DictWriter(sio, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in rows:
+          out_row = {
+            "session_id": r.get("session_id"),
+            "frame_id": r.get("frame_id"),
+            "value_real": r.get("value_real"),
+            "single_label_class_id": r.get("single_label_class_id"),
+            "multilabel_class_ids_csv": r.get("multilabel_class_ids_csv"),
+            "frame_path_rel": r.get("frame_path_rel"),
+          }
+          writer.writerow(out_row)
+        data = sio.getvalue().encode("utf-8")
+        filename = f"{base_name}.csv"
+        resp = Response(data, mimetype="text/csv; charset=utf-8")
+      else:
+        # jsonl
+        sio = io.StringIO()
+        for r in rows:
+          sio.write(_json.dumps(r, ensure_ascii=False))
+          sio.write("\n")
+        data = sio.getvalue().encode("utf-8")
+        filename = f"{base_name}.jsonl"
+        resp = Response(data, mimetype="application/x-ndjson; charset=utf-8")
+
+      try:
+        resp.headers["Content-Disposition"] = f"attachment; filename=\"{filename}\""
+        resp.headers.setdefault("Cache-Control", "no-store")
+      except Exception:
+        pass
+      return resp
+    except Exception as e:
+      err = ErrorResponse(code="download_error", message="Failed to download dataset", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
   @bp.route("/api/datasets/<int:dataset_id>/sessions/<session_id>/unlabeled_indices", methods=["GET"])
