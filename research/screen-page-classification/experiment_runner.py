@@ -151,7 +151,7 @@ class ExperimentRunner:
     # Compute class weights if needed
     class_weights = None
     if self.config.use_class_weights:
-      class_weights = self._compute_class_weights(labeled_data)
+      class_weights = self._compute_class_weights(labeled_data, len(class_to_idx))
 
     return {
       'train_loader': train_loader,
@@ -164,11 +164,34 @@ class ExperimentRunner:
       'download_result': download_result
     }
 
-  def _compute_class_weights(self, df) -> torch.Tensor:
+  def _compute_class_weights(self, df, num_classes: int) -> torch.Tensor:
     """Compute class weights for handling imbalanced data."""
-    class_counts = df['class_id'].value_counts().sort_index()
-    class_weights = compute_class_weight('balanced', classes=np.unique(df['class_id']), y=df['class_id'])
-    return torch.FloatTensor(class_weights)
+    # Get all unique class IDs and ensure they're sorted
+    unique_classes = sorted(df['class_id'].unique())
+
+    console.print(
+      f"[blue]Computing class weights: {len(unique_classes)} unique classes in data, {num_classes} total classes expected[/blue]"
+    )
+    console.print(f"[blue]Class IDs in data: {unique_classes}[/blue]")
+
+    # Compute class weights for the classes present in the data
+    class_weights = compute_class_weight('balanced', classes=unique_classes, y=df['class_id'])
+
+    # Create a full weight tensor for all classes (as expected by the model)
+    # Initialize with 1.0 for all classes
+    full_class_weights = torch.ones(num_classes)
+
+    # Map the computed weights to the correct positions
+    # We need to map from the actual class IDs to the model's expected indices
+    for i, class_id in enumerate(unique_classes):
+      # The class_id should be the index in the model's output
+      if class_id < num_classes:
+        full_class_weights[class_id] = class_weights[i]
+      else:
+        console.print(f"[yellow]Warning: Class ID {class_id} is >= {num_classes}, skipping[/yellow]")
+
+    console.print(f"[blue]Final class weights shape: {full_class_weights.shape}[/blue]")
+    return full_class_weights
 
   def _run_single_experiment(self, model_type: str, data_info: Dict[str, Any]) -> Dict[str, Any]:
     """Run experiment for a single model type."""
