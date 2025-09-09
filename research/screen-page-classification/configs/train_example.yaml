@@ -1,0 +1,14 @@
+experiment_name: exp1
+dataset_dir: /tmp/screen_page_ds
+train_split: train.jsonl
+val_split: val.jsonl
+num_classes: 5
+image_size: 224
+batch_size: 64
+num_workers: 4
+max_epochs: 20
+learning_rate: 3.0e-4
+weight_decay: 1.0e-2
+model_name: resnet18
+precision: 16
+output_dir: runs/exp1

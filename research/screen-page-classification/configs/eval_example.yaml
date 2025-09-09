@@ -1,0 +1,6 @@
+dataset_dir: /tmp/screen_page_ds
+split: test.jsonl
+num_classes: 5
+image_size: 224
+batch_size: 128
+num_workers: 4
