@@ -10,10 +10,18 @@ from pathlib import Path
 from typing import Generator, Dict, Any
 from unittest.mock import Mock, patch
 
+import os
+import sys
+
+# Ensure local package imports (e.g., core, db, services) work when running pytest from this directory
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(_PROJECT_ROOT) not in sys.path:
+  sys.path.insert(0, str(_PROJECT_ROOT))
+
 from flask import Flask
 from flask.testing import FlaskClient
 
-from app import app as flask_app
+# removed unused import that caused ModuleNotFoundError during collection
 from core.session_manager import SessionManager
 from db.connection import get_connection, get_db_path
 from db.schema import init_db
@@ -31,6 +39,27 @@ def temp_data_dir() -> Generator[Path, None, None]:
     yield temp_dir
   finally:
     shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _session_temp_db_env(temp_data_dir: Path) -> Generator[None, None, None]:
+  """Force all code using default DB to a session-temp file to avoid touching real DB."""
+  test_db_path = temp_data_dir / "session_default.db"
+  original = os.environ.get("ANNOTATION_DB_PATH")
+  os.environ["ANNOTATION_DB_PATH"] = str(test_db_path)
+  # Initialize once
+  conn = sqlite3.connect(str(test_db_path))
+  conn.row_factory = sqlite3.Row
+  conn.execute("PRAGMA foreign_keys = ON;")
+  init_db(conn)
+  conn.close()
+  try:
+    yield
+  finally:
+    if original is not None:
+      os.environ["ANNOTATION_DB_PATH"] = original
+    else:
+      os.environ.pop("ANNOTATION_DB_PATH", None)
 
 
 @pytest.fixture
