@@ -1,0 +1,118 @@
+# Screen Page Classification Configuration
+# This file contains default configurations for the classification pipeline
+
+# Data Configuration
+data:
+  annotation_api_url: "http://localhost:5000"
+  data_root: "/workspace/data"
+  output_dir: "/workspace/research/screen-page-classification/data"
+  image_size: [224, 224]
+  batch_size: 32
+  num_workers: 4
+  test_size: 0.2
+  val_size: 0.1
+  random_state: 42
+
+# Model Configuration
+models:
+  # Available model types
+  available_models:
+    - resnet50
+    - resnet101
+    - efficientnet_b0
+    - efficientnet_b3
+    - vit_base
+    - vit_large
+    - convnext_tiny
+    - convnext_small
+    - lightweight
+  
+  # Default model configurations
+  resnet50:
+    pretrained: true
+    dropout_rate: 0.5
+    freeze_backbone: false
+  
+  efficientnet_b0:
+    pretrained: true
+    dropout_rate: 0.5
+    freeze_backbone: false
+  
+  lightweight:
+    dropout_rate: 0.3
+
+# Training Configuration
+training:
+  num_epochs: 100
+  learning_rate: 1e-4
+  weight_decay: 1e-4
+  use_class_weights: true
+  use_data_augmentation: true
+  early_stopping_patience: 10
+  early_stopping_min_delta: 0.001
+
+# Data Augmentation
+augmentation:
+  horizontal_flip_prob: 0.5
+  rotation_degrees: 10
+  color_jitter:
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+    hue: 0.1
+
+# Distillation Configuration
+distillation:
+  temperature: 3.0
+  alpha: 0.7
+  beta: 0.3
+  gamma: 0.1
+  use_attention_transfer: false
+  use_feature_matching: false
+  use_relation_knowledge: false
+
+# Auto-labeling Configuration
+auto_labeling:
+  confidence_threshold: 0.9
+  active_learning_samples: 100
+  diversity_weight: 0.5
+  batch_size: 32
+
+# Experiment Configuration
+experiments:
+  output_dir: "/workspace/research/screen-page-classification/experiments"
+  use_wandb: false
+  use_tensorboard: true
+  save_checkpoints: true
+  save_best_model: true
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: null  # Set to file path to enable file logging
+
+# Hardware Configuration
+hardware:
+  device: "auto"  # auto, cpu, cuda
+  mixed_precision: false
+  dataloader_pin_memory: true
+
+# Evaluation Configuration
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+    - confusion_matrix
+  save_predictions: true
+  save_embeddings: false
+
+# Visualization Configuration
+visualization:
+  figure_size: [15, 10]
+  dpi: 300
+  style: "seaborn-v0_8"
+  save_plots: true
+  plot_format: "png"
