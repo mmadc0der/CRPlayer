@@ -147,21 +147,12 @@ class ScreenPageDataset(Dataset):
     # Load image - resolve relative path properly
     frame_path_rel = item['frame_path_rel']
 
-    # Debug: print the paths to understand the issue
-    if idx < 3:  # Only print for first few items
-      print(f"Debug - frame_path_rel: {frame_path_rel}")
-      print(f"Debug - data_root: {self.data_root}")
-
     # Handle relative paths that start with ../
     while frame_path_rel.startswith('../'):
       # Remove the ../ prefix and use the path as-is from data_root
       frame_path_rel = frame_path_rel[3:]  # Remove '../'
 
     image_path = self.data_root / frame_path_rel
-
-    if idx < 3:  # Only print for first few items
-      print(f"Debug - final image_path: {image_path}")
-      print(f"Debug - path exists: {image_path.exists()}")
 
     if not image_path.exists():
       raise FileNotFoundError(f"Image not found: {image_path}")
