@@ -10,6 +10,7 @@ import requests
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
+import yaml
 import pandas as pd
 from PIL import Image
 import torch
@@ -35,6 +36,35 @@ class DatasetConfig:
     test_size: float = 0.2
     val_size: float = 0.1
     random_state: int = 42
+    # Optional paths loaded from config.yaml
+    experiments_output_dir: Optional[str] = None
+
+    def __post_init__(self):
+        """Optionally load defaults from config.yaml if present."""
+        try:
+            config_path = Path(__file__).parent / "config.yaml"
+            if config_path.exists():
+                with open(config_path, "r") as f:
+                    cfg = yaml.safe_load(f) or {}
+
+                # Data section
+                data_cfg = cfg.get("data", {})
+                self.annotation_api_url = data_cfg.get("annotation_api_url", self.annotation_api_url)
+                self.data_root = data_cfg.get("data_root", self.data_root)
+                self.output_dir = data_cfg.get("output_dir", self.output_dir)
+                if isinstance(data_cfg.get("image_size"), (list, tuple)) and len(data_cfg.get("image_size")) == 2:
+                    self.image_size = tuple(data_cfg.get("image_size"))  # type: ignore
+                self.batch_size = int(data_cfg.get("batch_size", self.batch_size))
+                self.num_workers = int(data_cfg.get("num_workers", self.num_workers))
+                self.test_size = float(data_cfg.get("test_size", self.test_size))
+                self.val_size = float(data_cfg.get("val_size", self.val_size))
+                self.random_state = int(data_cfg.get("random_state", self.random_state))
+
+                # Experiments section
+                exp_cfg = cfg.get("experiments", {})
+                self.experiments_output_dir = exp_cfg.get("output_dir", self.experiments_output_dir)
+        except Exception as e:
+            logger.warning(f"Failed to load config.yaml, using defaults: {e}")
 
 
 class AnnotationAPIClient:
