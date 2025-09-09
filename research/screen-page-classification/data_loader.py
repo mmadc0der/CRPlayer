@@ -153,7 +153,7 @@ class ScreenPageDataset(Dataset):
       print(f"Debug - data_root: {self.data_root}")
 
     # Handle relative paths that start with ../
-    if frame_path_rel.startswith('../'):
+    while frame_path_rel.startswith('../'):
       # Remove the ../ prefix and use the path as-is from data_root
       frame_path_rel = frame_path_rel[3:]  # Remove '../'
 
