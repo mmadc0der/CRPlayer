@@ -18,3 +18,8 @@ data/annotated/
 data/datasets/
 data/models/
 data/temp/
+
+research/screen-page-classification/config.yaml
+research/screen-page-classification/experiments/
+research/screen-page-classification/data/
+research/screen-page-classification/logs/
