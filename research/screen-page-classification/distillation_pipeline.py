@@ -475,9 +475,17 @@ class DistillationPipeline:
     
     def _save_best_student_model(self):
         """Save the best student model."""
-        # This would save to a specific path
-        # Implementation depends on your file structure
-        pass
+        # Derive output directory similar to trainer
+        base_dir = Path(self.data_config.experiments_output_dir or (Path(self.data_config.output_dir) / "experiments"))
+        exp_dir = base_dir / "distillation"
+        exp_dir.mkdir(parents=True, exist_ok=True)
+
+        save_path = exp_dir / "best_student_model.pth"
+        torch.save({
+            'model_state_dict': self.student_model.state_dict(),
+            'model_info': get_model_info(self.student_model)
+        }, save_path)
+        console.print(f"[green]Saved best student model to {save_path}[/green]")
     
     def compare_models(
         self,

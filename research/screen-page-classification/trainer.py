@@ -143,8 +143,9 @@ class ClassificationTrainer:
         self.use_wandb = use_wandb
         self.use_tensorboard = use_tensorboard
         
-        # Setup directories
-        self.output_dir = Path(config.output_dir) / "experiments" / experiment_name
+        # Setup directories (prefer experiments.output_dir from config.yaml if provided)
+        base_experiments_dir = config.experiments_output_dir or (Path(config.output_dir) / "experiments")
+        self.output_dir = Path(base_experiments_dir) / experiment_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
         # Setup logging
