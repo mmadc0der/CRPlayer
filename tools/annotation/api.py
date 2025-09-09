@@ -3,12 +3,15 @@ from __future__ import annotations
 from flask import Blueprint, request, jsonify, send_file, Response
 from pathlib import Path
 import logging
+import json
+from datetime import datetime
 
 from core.session_manager import SessionManager
 from services.session_service import SessionService
 from services.annotation_service import AnnotationService
 from services.settings_service import SettingsService
 from services.dataset_service import DatasetService
+from services.download_service import DownloadService
 from dto import (
   FrameQuery,
   ImageQuery,
@@ -65,6 +68,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
   annotation_service = AnnotationService(session_manager)
   dataset_service = DatasetService(session_manager)
   settings_service = SettingsService()
+  download_service = DownloadService(session_manager)
 
   @bp.route("/api/target_types", methods=["GET"])
   def api_list_target_types():
@@ -959,6 +963,118 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       return jsonify({"ok": True})
     except Exception as e:
       err = ErrorResponse(code="settings_error", message="Failed to delete settings", details={"error": str(e)})
+      return jsonify(err.model_dump()), 500
+
+  # -------------------- Dataset Download Endpoint --------------------
+  @bp.route("/api/datasets/<int:dataset_id>/download", methods=["GET"])
+  def api_download_dataset(dataset_id: int):
+    """
+    Download a complete labeled dataset in various formats.
+    
+    Query parameters:
+      - format: Export format ('json', 'csv', 'coco') - default: 'json'
+      - include_images: Include image paths/data ('true'/'false') - default: 'false'  
+      - sessions: Comma-separated list of session IDs to include (optional)
+      - status: Comma-separated list of statuses to include - default: 'labeled'
+      - limit: Maximum number of records to export (optional)
+      - offset: Number of records to skip for pagination (optional)
+      - download: Return as file attachment ('true'/'false') - default: 'false'
+    """
+    try:
+      # Parse query parameters
+      format_type = request.args.get("format", "json").lower()
+      if format_type not in ["json", "csv", "coco"]:
+        err = ErrorResponse(code="bad_request", message="Invalid format. Must be 'json', 'csv', or 'coco'")
+        return jsonify(err.model_dump()), 400
+
+      include_images = request.args.get("include_images", "false").lower() in ("true", "1", "yes")
+      download_as_file = request.args.get("download", "false").lower() in ("true", "1", "yes")
+
+      # Parse session filter
+      session_filter = None
+      sessions_param = request.args.get("sessions", "").strip()
+      if sessions_param:
+        session_filter = [s.strip() for s in sessions_param.split(",") if s.strip()]
+
+      # Parse status filter
+      status_filter = None
+      status_param = request.args.get("status", "labeled").strip()
+      if status_param:
+        status_filter = [s.strip() for s in status_param.split(",") if s.strip()]
+
+      # Parse pagination
+      limit = None
+      offset = None
+      try:
+        if request.args.get("limit"):
+          limit = int(request.args.get("limit"))
+          if limit <= 0:
+            raise ValueError("Limit must be positive")
+      except ValueError:
+        err = ErrorResponse(code="bad_request", message="Invalid limit parameter")
+        return jsonify(err.model_dump()), 400
+
+      try:
+        if request.args.get("offset"):
+          offset = int(request.args.get("offset"))
+          if offset < 0:
+            raise ValueError("Offset must be non-negative")
+      except ValueError:
+        err = ErrorResponse(code="bad_request", message="Invalid offset parameter")
+        return jsonify(err.model_dump()), 400
+
+      # Export the dataset
+      export_result = download_service.export_dataset(
+        dataset_id=dataset_id,
+        format_type=format_type,
+        include_images=include_images,
+        session_filter=session_filter,
+        status_filter=status_filter,
+        limit=limit,
+        offset=offset,
+      )
+
+      # Return as file download or JSON response
+      if download_as_file:
+        from flask import Response
+        import tempfile
+        import os
+
+        # Generate filename
+        dataset_name = export_result["metadata"]["dataset"]["name"]
+        safe_name = "".join(c for c in dataset_name if c.isalnum() or c in (' ', '-', '_')).strip()
+        safe_name = safe_name.replace(' ', '_')
+        timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
+
+        if format_type == "csv":
+          filename = f"{safe_name}_dataset_{timestamp}.csv"
+          content = export_result["data"]
+          mimetype = "text/csv"
+        elif format_type == "coco":
+          filename = f"{safe_name}_dataset_{timestamp}_coco.json"
+          content = json.dumps(export_result["data"], indent=2, ensure_ascii=False)
+          mimetype = "application/json"
+        else:  # json
+          filename = f"{safe_name}_dataset_{timestamp}.json"
+          content = json.dumps(export_result, indent=2, ensure_ascii=False)
+          mimetype = "application/json"
+
+        return Response(content,
+                        mimetype=mimetype,
+                        headers={
+                          "Content-Disposition": f"attachment; filename={filename}",
+                          "Content-Type": mimetype,
+                        })
+      else:
+        # Return as JSON response
+        return jsonify(export_result)
+
+    except ValueError as e:
+      err = ErrorResponse(code="validation_error", message=str(e))
+      return jsonify(err.model_dump()), 400
+    except Exception as e:
+      log.exception("dataset_download_error")
+      err = ErrorResponse(code="download_error", message="Failed to download dataset", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
   return bp
