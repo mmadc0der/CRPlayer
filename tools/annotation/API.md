@@ -36,6 +36,15 @@ Base path: all routes are mounted by `tools/annotation/api.py`.
 
   - Lists labeled items using `dataset_labeled_view`.
 
+- GET /api/datasets/{dataset_id}/download
+
+  - Download labeled items as a file for training pipelines.
+  - Query params:
+    - `format`: `csv` (default) or `jsonl`
+    - `filename`: optional base name (extension auto-added)
+  - CSV columns (stable order): `session_id, frame_id, value_real, single_label_class_id, multilabel_class_ids_csv, frame_path_rel`
+  - JSONL lines: one JSON object per labeled item (same fields as `/labeled` with `frame_path_rel`).
+
 - GET /api/datasets/{dataset_id}/sessions/{session_id}/unlabeled_indices
   - Returns indices of unlabeled frames for the given dataset-session pair.
   - Response: `{ indices: number[], total: number, labeled: number, unlabeled: number }`

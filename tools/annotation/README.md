@@ -9,8 +9,8 @@ A Flask web application for annotating collected game frame data in-place via br
 - **Session Management** - Automatically discovers and loads annotation sessions
 - **Real-time Progress** - Live statistics and progress tracking
 - **Keyboard Shortcuts** - Efficient annotation workflow
-- **Auto-save** - Annotations saved automatically to JSON
-- **Dataset Export** - Export to training-ready folder structure
+- **DB-backed storage** - Annotations stored in SQLite with views and triggers
+- **Dataset Download** - Download labeled items as CSV or JSONL
 
 ## Quick Start
 
@@ -70,7 +70,7 @@ python app.py --debug
 2. **Navigate Frames** - Use arrow keys or navigation buttons
 3. **Annotate** - Select game state, importance, add notes
 4. **Save Progress** - Press Space to save and move to next frame
-5. **Export Dataset** - Create training-ready folder structure
+5. **Download Labeled Data** - Use API to fetch CSV/JSONL for training
 
 ### Keyboard Shortcuts
 
@@ -95,6 +95,7 @@ python app.py --debug
 - `GET /api/datasets/{dataset_id}/progress` - Dataset progress summary
 - `GET /api/datasets/{dataset_id}/labeled` - Labeled items view
 - `GET /api/datasets/{dataset_id}/sessions/{session_id}/unlabeled_indices` - Indices of unlabeled frames for filtering
+- `GET /api/datasets/{dataset_id}/download?format=csv|jsonl` - Download labeled items as file
 
 ## File Structure
 
@@ -118,28 +119,7 @@ The tool automatically searches for annotation sessions in:
 
 Sessions are identified by the presence of `metadata.json` files.
 
-## Output Format
+## Download Formats
 
-Annotations are saved as `annotations.json` in each session directory:
-
-```json
-{
-  "frame_id": {
-    "game_state": "battle",
-    "importance": 2,
-    "notes": "Important action sequence",
-    "annotated_at": 42
-  }
-}
-```
-
-Exported datasets follow this structure:
-
-```
-exported_dataset/
-├── menu/           # Menu state frames
-├── loading/        # Loading state frames
-├── battle/         # Battle state frames
-├── final/          # Final state frames
-└── dataset_info.json
-```
+- CSV columns (stable order): `session_id, frame_id, value_real, single_label_class_id, multilabel_class_ids_csv, frame_path_rel`
+- JSONL: one JSON object per labeled item with the same fields as `/api/datasets/{dataset_id}/labeled` plus `frame_path_rel` when resolvable.
