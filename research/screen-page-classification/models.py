@@ -45,10 +45,10 @@ class ResNetClassifier(BaseClassifier):
     # Load pretrained model
     if model_name.startswith("resnet"):
       self.backbone = getattr(models, model_name)(pretrained=pretrained)
+      # Get the feature size from the original model before modifying
+      self.embedding_size = self.backbone.fc.in_features
       # Remove the original classifier and avgpool
       self.backbone = nn.Sequential(*list(self.backbone.children())[:-2])  # Remove avgpool and fc
-      # Get the feature size from the last conv layer
-      self.embedding_size = self.backbone[-1].num_features
     else:
       raise ValueError(f"Unsupported ResNet model: {model_name}")
 
