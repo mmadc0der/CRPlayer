@@ -581,80 +581,10 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       return jsonify(err.model_dump()), 500
 
   # -------------------- Dataset download (export) --------------------
-  @bp.route("/api/datasets/<int:dataset_id>/download", methods=["GET"])
-  def api_download_dataset(dataset_id: int):
-    """Download labeled items for a dataset as CSV or JSONL.
-
-        Query params:
-          - format: "csv" (default) or "jsonl"
-          - filename: optional base filename without extension
-        """
-    try:
-      fmt = str(request.args.get("format", "csv")).strip().lower() or "csv"
-      if fmt not in ("csv", "jsonl"):
-        err = ErrorResponse(code="bad_request", message="format must be 'csv' or 'jsonl'")
-        return jsonify(err.model_dump()), 400
-
-      # Ensure dataset exists
-      conn = get_connection()
-      d = db_get_dataset(conn, int(dataset_id))
-      if not d:
-        err = ErrorResponse(code="not_found", message="Dataset not found")
-        return jsonify(err.model_dump()), 404
-
-      rows = dataset_service.fetch_labeled(int(dataset_id))
-
-      # Build payload
-      import io
-      import csv as _csv
-      import json as _json
-
-      base_name = (str(request.args.get("filename") or "") or f"dataset_{int(dataset_id)}_labeled").strip()
-      if fmt == "csv":
-        # Stable column order
-        fieldnames = [
-          "session_id",
-          "frame_id",
-          "value_real",
-          "single_label_class_id",
-          "multilabel_class_ids_csv",
-          "frame_path_rel",
-        ]
-        sio = io.StringIO()
-        writer = _csv.DictWriter(sio, fieldnames=fieldnames)
-        writer.writeheader()
-        for r in rows:
-          out_row = {
-            "session_id": r.get("session_id"),
-            "frame_id": r.get("frame_id"),
-            "value_real": r.get("value_real"),
-            "single_label_class_id": r.get("single_label_class_id"),
-            "multilabel_class_ids_csv": r.get("multilabel_class_ids_csv"),
-            "frame_path_rel": r.get("frame_path_rel"),
-          }
-          writer.writerow(out_row)
-        data = sio.getvalue().encode("utf-8")
-        filename = f"{base_name}.csv"
-        resp = Response(data, mimetype="text/csv; charset=utf-8")
-      else:
-        # jsonl
-        sio = io.StringIO()
-        for r in rows:
-          sio.write(_json.dumps(r, ensure_ascii=False))
-          sio.write("\n")
-        data = sio.getvalue().encode("utf-8")
-        filename = f"{base_name}.jsonl"
-        resp = Response(data, mimetype="application/x-ndjson; charset=utf-8")
-
-      try:
-        resp.headers["Content-Disposition"] = f"attachment; filename=\"{filename}\""
-        resp.headers.setdefault("Cache-Control", "no-store")
-      except Exception:
-        pass
-      return resp
-    except Exception as e:
-      err = ErrorResponse(code="download_error", message="Failed to download dataset", details={"error": str(e)})
-      return jsonify(err.model_dump()), 500
+  # NOTE: The lightweight CSV/JSONL download endpoint implemented earlier has
+  # been removed to avoid duplicate route registration with the advanced
+  # export endpoint below. Keep only one implementation to prevent Flask
+  # endpoint overwrite assertions during tests.
 
   @bp.route("/api/datasets/<int:dataset_id>/sessions/<session_id>/unlabeled_indices", methods=["GET"])
   def api_unlabeled_indices(dataset_id: int, session_id: str):
@@ -983,10 +913,82 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
     try:
       # Parse query parameters
       format_type = request.args.get("format", "json").lower()
-      if format_type not in ["json", "csv", "coco"]:
+      if format_type not in ["json", "csv", "coco", "jsonl"]:
         err = ErrorResponse(code="bad_request", message="Invalid format. Must be 'json', 'csv', or 'coco'")
         return jsonify(err.model_dump()), 400
 
+      # Backward-compatible lightweight CSV/JSONL paths expected by tests
+      if format_type in ("csv", "jsonl"):
+        try:
+          # Ensure dataset exists
+          conn = get_connection()
+          d = db_get_dataset(conn, int(dataset_id))
+          if not d:
+            err = ErrorResponse(code="not_found", message="Dataset not found")
+            return jsonify(err.model_dump()), 404
+        finally:
+          try:
+            conn.close()
+          except Exception:
+            pass
+
+        rows = dataset_service.fetch_labeled(int(dataset_id))
+
+        base_name = (str(request.args.get("filename") or "")
+                     or f"dataset_{int(dataset_id)}_labeled").strip()
+
+        if format_type == "csv":
+          import io
+          import csv as _csv
+
+          fieldnames = [
+            "session_id",
+            "frame_id",
+            "value_real",
+            "single_label_class_id",
+            "multilabel_class_ids_csv",
+            "frame_path_rel",
+          ]
+          sio = io.StringIO()
+          writer = _csv.DictWriter(sio, fieldnames=fieldnames)
+          writer.writeheader()
+          for r in rows:
+            writer.writerow({
+              "session_id": r.get("session_id"),
+              "frame_id": r.get("frame_id"),
+              "value_real": r.get("value_real"),
+              "single_label_class_id": r.get("single_label_class_id"),
+              "multilabel_class_ids_csv": r.get("multilabel_class_ids_csv"),
+              "frame_path_rel": r.get("frame_path_rel"),
+            })
+          data = sio.getvalue()
+          from flask import Response as _Resp
+          resp = _Resp(data, mimetype="text/csv; charset=utf-8")
+          filename = f"{base_name}.csv"
+          try:
+            resp.headers["Content-Disposition"] = f"attachment; filename=\"{filename}\""
+          except Exception:
+            pass
+          return resp
+        else:
+          # jsonl
+          import io
+          import json as _json
+          sio = io.StringIO()
+          for r in rows:
+            sio.write(_json.dumps(r, ensure_ascii=False))
+            sio.write("\n")
+          data = sio.getvalue()
+          from flask import Response as _Resp
+          resp = _Resp(data, mimetype="application/x-ndjson; charset=utf-8")
+          filename = f"{base_name}.jsonl"
+          try:
+            resp.headers["Content-Disposition"] = f"attachment; filename=\"{filename}\""
+          except Exception:
+            pass
+          return resp
+
+      # Advanced export flow (JSON/CSV/COCO via DownloadService)
       include_images = request.args.get("include_images", "false").lower() in ("true", "1", "yes")
       download_as_file = request.args.get("download", "false").lower() in ("true", "1", "yes")
 
@@ -1023,7 +1025,18 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
         err = ErrorResponse(code="bad_request", message="Invalid offset parameter")
         return jsonify(err.model_dump()), 400
 
-      # Export the dataset
+      # Pre-check dataset existence to return 404 consistently
+      try:
+        _conn_chk = get_connection()
+        if not db_get_dataset(_conn_chk, int(dataset_id)):
+          err = ErrorResponse(code="not_found", message="Dataset not found")
+          return jsonify(err.model_dump()), 404
+      finally:
+        try:
+          _conn_chk.close()
+        except Exception:
+          pass
+
       export_result = download_service.export_dataset(
         dataset_id=dataset_id,
         format_type=format_type,
@@ -1034,13 +1047,9 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
         offset=offset,
       )
 
-      # Return as file download or JSON response
       if download_as_file:
         from flask import Response
-        import tempfile
-        import os
 
-        # Generate filename
         dataset_name = export_result["metadata"]["dataset"]["name"]
         safe_name = "".join(c for c in dataset_name if c.isalnum() or c in (' ', '-', '_')).strip()
         safe_name = safe_name.replace(' ', '_')
@@ -1065,9 +1074,8 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
                           "Content-Disposition": f"attachment; filename={filename}",
                           "Content-Type": mimetype,
                         })
-      else:
-        # Return as JSON response
-        return jsonify(export_result)
+
+      return jsonify(export_result)
 
     except ValueError as e:
       err = ErrorResponse(code="validation_error", message=str(e))
