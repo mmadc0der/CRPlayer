@@ -73,11 +73,13 @@ class MetricsTracker:
                                                                      zero_division=0)
 
     # Per-class metrics
+    # Ensure per-class arrays are aligned to all classes [0..num_classes-1]
+    all_labels = list(range(self.num_classes))
     precision_per_class, recall_per_class, f1_per_class, support_per_class = precision_recall_fscore_support(
-      targets, predictions, average=None, zero_division=0)
+      targets, predictions, labels=all_labels, average=None, zero_division=0)
 
     # Confusion matrix
-    cm = confusion_matrix(targets, predictions)
+    cm = confusion_matrix(targets, predictions, labels=all_labels)
 
     # Average loss
     avg_loss = np.mean(self.losses)
@@ -416,11 +418,17 @@ class ClassificationTrainer:
       per_class_table.add_column("F1", style="magenta")
       per_class_table.add_column("Support", style="yellow")
 
-      for i, class_name in enumerate(metrics['class_names']):
-        per_class_table.add_row(class_name, f"{metrics['per_class_metrics']['precision'][i]:.3f}",
-                                f"{metrics['per_class_metrics']['recall'][i]:.3f}",
-                                f"{metrics['per_class_metrics']['f1_score'][i]:.3f}",
-                                f"{metrics['per_class_metrics']['support'][i]}")
+      # Robustly iterate over available classes
+      num_classes = len(metrics.get('class_names', []))
+      prec = metrics['per_class_metrics']['precision']
+      rec = metrics['per_class_metrics']['recall']
+      f1c = metrics['per_class_metrics']['f1_score']
+      sup = metrics['per_class_metrics']['support']
+      limit = min(num_classes, len(prec), len(rec), len(f1c), len(sup))
+
+      for i in range(limit):
+        class_name = metrics['class_names'][i]
+        per_class_table.add_row(class_name, f"{prec[i]:.3f}", f"{rec[i]:.3f}", f"{f1c[i]:.3f}", f"{sup[i]}")
 
       console.print(per_class_table)
 
