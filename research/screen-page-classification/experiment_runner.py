@@ -36,7 +36,7 @@ class ExperimentConfig:
                use_class_weights: bool = True,
                use_data_augmentation: bool = True,
                experiment_name: str = None,
-               output_dir: str = "/workspace/research/screen-page-classification/experiments"):
+               output_dir: str = "./experiments"):
     self.dataset_id = dataset_id
     self.model_types = model_types or ['resnet50', 'efficientnet_b0', 'vit_base']
     self.num_epochs = num_epochs
