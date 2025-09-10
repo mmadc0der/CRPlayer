@@ -139,9 +139,24 @@ class ExperimentRunner:
 
     console.print(f"[green]Dataset loaded: {len(labeled_data)} samples, {len(class_to_idx)} classes[/green]")
 
+    # Normalize labels to 0-based contiguous indices using metadata class IDs
+    # Build mapping from API class_id -> 0..num_classes-1 (sorted by class_id)
+    all_class_ids_sorted = sorted(idx_to_class.keys())
+    id_to_idx = {cid: i for i, cid in enumerate(all_class_ids_sorted)}
+
+    labeled_data_norm = labeled_data.copy()
+    labeled_data_norm['class_id_norm'] = labeled_data_norm['class_id'].map(id_to_idx)
+
+    # Prepare records with explicit normalized 'single_label_class_id' so Dataset uses it
+    records_norm = []
+    for row in labeled_data_norm.to_dict('records'):
+      rec = dict(row)
+      rec['single_label_class_id'] = int(row['class_id_norm']) if row['class_id_norm'] is not None else 0
+      records_norm.append(rec)
+
     # Create data loaders
     console.print("[blue]Creating data loaders...[/blue]")
-    train_loader, val_loader, test_loader = create_data_loaders(labeled_data.to_dict('records'),
+    train_loader, val_loader, test_loader = create_data_loaders(records_norm,
                                                                 self.data_config.data_root,
                                                                 class_to_idx,
                                                                 self.data_config,
@@ -151,7 +166,7 @@ class ExperimentRunner:
     # Compute class weights if needed
     class_weights = None
     if self.config.use_class_weights:
-      class_weights = self._compute_class_weights(labeled_data, len(class_to_idx))
+      class_weights = self._compute_class_weights(labeled_data_norm, len(class_to_idx))
 
     return {
       'train_loader': train_loader,
@@ -166,29 +181,28 @@ class ExperimentRunner:
 
   def _compute_class_weights(self, df, num_classes: int) -> torch.Tensor:
     """Compute class weights for handling imbalanced data."""
-    # Get all unique class IDs and ensure they're sorted
-    unique_classes = sorted(df['class_id'].unique())
+    # Use normalized 0-based class indices for weighting
+    if 'class_id_norm' not in df.columns:
+      raise ValueError("Expected 'class_id_norm' column in dataframe for class weighting")
+
+    y = df['class_id_norm'].astype(int).values
+    unique_classes = np.sort(df['class_id_norm'].astype(int).unique())
 
     console.print(
-      f"[blue]Computing class weights: {len(unique_classes)} unique classes in data, {num_classes} total classes expected[/blue]"
+      f"[blue]Computing class weights: {unique_classes.size} unique classes in data (normalized), {num_classes} total classes expected[/blue]"
     )
-    console.print(f"[blue]Class IDs in data: {unique_classes}[/blue]")
+    console.print(f"[blue]Normalized class indices present: {unique_classes.tolist()}[/blue]")
 
-    # Compute class weights for the classes present in the data
-    class_weights = compute_class_weight('balanced', classes=unique_classes, y=df['class_id'])
+    # Compute class weights for the classes present in the data (expects numpy arrays)
+    class_weights_present = compute_class_weight(class_weight='balanced', classes=unique_classes, y=y)
 
     # Create a full weight tensor for all classes (as expected by the model)
-    # Initialize with 1.0 for all classes
     full_class_weights = torch.ones(num_classes)
 
-    # Map the computed weights to the correct positions
-    # We need to map from the actual class IDs to the model's expected indices
-    for i, class_id in enumerate(unique_classes):
-      # The class_id should be the index in the model's output
-      if class_id < num_classes:
-        full_class_weights[class_id] = class_weights[i]
-      else:
-        console.print(f"[yellow]Warning: Class ID {class_id} is >= {num_classes}, skipping[/yellow]")
+    # Map the computed weights to the correct positions (already normalized indices)
+    for idx, w in zip(unique_classes.tolist(), class_weights_present.tolist()):
+      if 0 <= idx < num_classes:
+        full_class_weights[idx] = float(w)
 
     console.print(f"[blue]Final class weights shape: {full_class_weights.shape}[/blue]")
     return full_class_weights
