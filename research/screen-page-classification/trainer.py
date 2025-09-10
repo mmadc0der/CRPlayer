@@ -29,7 +29,12 @@ console = Console()
 
 def get_device() -> torch.device:
   """Get the appropriate device for training."""
-  return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  try:
+    from device_utils import get_global_device_manager
+    return get_global_device_manager().get_device()
+  except ImportError:
+    # Fallback to simple device detection
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class MetricsTracker:
