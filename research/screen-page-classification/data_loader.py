@@ -359,15 +359,29 @@ def create_data_loaders(data: List[Dict[str, Any]],
                         val_size: float = 0.1) -> Tuple[DataLoader, DataLoader, DataLoader]:
   """Create train, validation, and test data loaders."""
 
-  # Split data
-  train_data, test_data = train_test_split(data,
-                                           test_size=test_size,
-                                           random_state=config.random_state,
-                                           stratify=[item.get('single_label_class_id', 0) for item in data])
-  train_data, val_data = train_test_split(train_data,
-                                          test_size=val_size / (1 - test_size),
-                                          random_state=config.random_state,
-                                          stratify=[item.get('single_label_class_id', 0) for item in train_data])
+  # Split data with stratify when feasible; fallback to random split if some classes have <2 samples
+  labels_all = [item.get('single_label_class_id', 0) for item in data]
+  try:
+    train_data, test_data = train_test_split(data,
+                                             test_size=test_size,
+                                             random_state=config.random_state,
+                                             stratify=labels_all)
+  except ValueError as e:
+    logger.warning(f"Stratified train/test split failed ({e}); falling back to random split without stratify")
+    train_data, test_data = train_test_split(data, test_size=test_size, random_state=config.random_state, stratify=None)
+
+  labels_train = [item.get('single_label_class_id', 0) for item in train_data]
+  try:
+    train_data, val_data = train_test_split(train_data,
+                                            test_size=val_size / (1 - test_size),
+                                            random_state=config.random_state,
+                                            stratify=labels_train)
+  except ValueError as e:
+    logger.warning(f"Stratified train/val split failed ({e}); falling back to random split without stratify")
+    train_data, val_data = train_test_split(train_data,
+                                            test_size=val_size / (1 - test_size),
+                                            random_state=config.random_state,
+                                            stratify=None)
 
   # Define transforms
   train_transform = transforms.Compose([
