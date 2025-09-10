@@ -14,23 +14,27 @@ This infrastructure supports the complete workflow for screen page classificatio
 ## Features
 
 ### 🔍 Data Inspection & Analysis
+
 - **Dataset Inspector**: Comprehensive analysis of class balance, data quality, and statistics
 - **Visualization**: Automatic generation of charts and reports
 - **API Integration**: Direct integration with annotation API for data download
 
 ### 🚀 Model Training
+
 - **Multiple Architectures**: ResNet, EfficientNet, Vision Transformer, ConvNeXt, and custom lightweight models
 - **Advanced Training**: Support for class weights, data augmentation, and early stopping
 - **Experiment Tracking**: Integration with TensorBoard and Weights & Biases
 - **Comprehensive Metrics**: Accuracy, precision, recall, F1-score, and confusion matrices
 
 ### 🏷️ Auto-labeling System
+
 - **Confidence-based Filtering**: Filter predictions based on confidence thresholds
 - **Active Learning**: Select samples for manual review using uncertainty and diversity
 - **Batch Processing**: Efficient processing of large image corpus
 - **Class-based Filtering**: Organize results by predicted class
 
 ### 🎓 Knowledge Distillation
+
 - **Advanced Distillation**: Multiple distillation techniques including attention transfer and feature matching
 - **Model Compression**: Create lightweight models for production deployment
 - **Performance Comparison**: Compare teacher and student model performance
@@ -38,11 +42,13 @@ This infrastructure supports the complete workflow for screen page classificatio
 ## Installation
 
 1. **Install Dependencies**:
+
 ```bash
 pip install -r requirements.txt
 ```
 
 2. **Setup Annotation API** (if using labeled data):
+
 ```bash
 cd /workspace/tools/annotation
 python app.py
@@ -113,17 +119,17 @@ python main.py distill \
 
 ### Model Architectures
 
-| Model | Parameters | Description |
-|-------|------------|-------------|
-| ResNet-50 | 25M | Standard ResNet architecture |
-| ResNet-101 | 44M | Deeper ResNet variant |
-| EfficientNet-B0 | 5M | EfficientNet with compound scaling |
-| EfficientNet-B3 | 12M | Larger EfficientNet variant |
-| ViT-Base | 86M | Vision Transformer base model |
-| ViT-Large | 307M | Vision Transformer large model |
-| ConvNeXt-Tiny | 29M | Modern ConvNet architecture |
-| ConvNeXt-Small | 50M | Larger ConvNeXt variant |
-| Lightweight | 1M | Custom lightweight CNN |
+| Model           | Parameters | Description                        |
+| --------------- | ---------- | ---------------------------------- |
+| ResNet-50       | 25M        | Standard ResNet architecture       |
+| ResNet-101      | 44M        | Deeper ResNet variant              |
+| EfficientNet-B0 | 5M         | EfficientNet with compound scaling |
+| EfficientNet-B3 | 12M        | Larger EfficientNet variant        |
+| ViT-Base        | 86M        | Vision Transformer base model      |
+| ViT-Large       | 307M       | Vision Transformer large model     |
+| ConvNeXt-Tiny   | 29M        | Modern ConvNet architecture        |
+| ConvNeXt-Small  | 50M        | Larger ConvNeXt variant            |
+| Lightweight     | 1M         | Custom lightweight CNN             |
 
 ## Usage Examples
 
@@ -264,11 +270,11 @@ class CustomClassifier(BaseClassifier):
         # Define your architecture here
         self.features = nn.Sequential(...)
         self.classifier = nn.Sequential(...)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         features = self.features(x)
         return self.classifier(features)
-    
+
     def get_embedding_size(self) -> int:
         return 512
 ```
@@ -282,7 +288,7 @@ class CustomTrainer(ClassificationTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.custom_loss = YourCustomLoss()
-    
+
     def train_epoch(self, train_loader, optimizer, criterion, device):
         # Override with custom training logic
         pass

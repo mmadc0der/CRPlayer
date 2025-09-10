@@ -319,6 +319,11 @@ class ModelFactory:
     # Remove model_name from kwargs if it exists
     model_kwargs = {k: v for k, v in kwargs.items() if k != 'model_name'}
 
+    # Lightweight model does not support 'pretrained'/'freeze_backbone' flags
+    if model_type == 'lightweight':
+      model_kwargs.pop('pretrained', None)
+      model_kwargs.pop('freeze_backbone', None)
+
     if 'model_name' in config:
       return model_class(num_classes=num_classes, model_name=config['model_name'], **model_kwargs)
     else:
