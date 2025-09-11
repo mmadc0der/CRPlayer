@@ -1100,8 +1100,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
 
         rows = dataset_service.fetch_labeled(int(dataset_id))
 
-        base_name = (str(request.args.get("filename") or "")
-                     or f"dataset_{int(dataset_id)}_labeled").strip()
+        base_name = (str(request.args.get("filename") or "") or f"dataset_{int(dataset_id)}_labeled").strip()
 
         if format_type == "csv":
           import io

@@ -136,4 +136,3 @@ class AutoLabelService:
       "confidence": conf,
       "meets_threshold": bool(conf >= float(confidence_threshold)),
     }
-

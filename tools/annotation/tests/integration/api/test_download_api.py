@@ -10,6 +10,7 @@ from tests.fixtures.factories import ProjectDataFactory, DatasetDataFactory
 
 
 class TestDatasetDownloadAPI:
+
   def _create_project_and_dataset(self, client: FlaskClient) -> int:
     project_data = ProjectDataFactory()
     pr = client.post("/api/projects", data=json.dumps(project_data), content_type="application/json")
@@ -113,4 +114,3 @@ class TestDatasetDownloadAPI:
     assert resp.status_code == 404
     data = resp.get_json()
     assert data["code"] == "not_found"
-
