@@ -14,8 +14,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create directories for data volumes
-RUN mkdir -p /app/production_data /app/collected_data /app/markup_data /app/sparse_data
+# Create directories for data volumes and models
+RUN mkdir -p /app/production_data /app/collected_data /app/markup_data /app/sparse_data /app/data/models /app/research/screen-page-classification
+
+# Copy research models if available (for autolabel)
+# The research code should be mounted or copied separately
+# We'll rely on the volume mount in docker-compose for this
 
 # --- Create non-root user (configurable UID/GID) and set ownership ---
 ARG UID=1000

@@ -12,6 +12,7 @@ services:
       - "5000:5000"
     volumes:
       - ../data:/app/data:rw
+      - ../research/screen-page-classification:/app/research/screen-page-classification:ro
     environment:
       - FLASK_ENV=development
       - FLASK_HOST=0.0.0.0
