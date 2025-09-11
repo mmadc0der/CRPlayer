@@ -13,7 +13,7 @@ consumers:
     game_name: clash_royale
     save_format: jpg
     quality: 85
-    sample_rate: 10
+    sample_rate: 6
     sparsity_mode: uniform
 
   # Performance monitor
