@@ -247,6 +247,7 @@ def main():
 
   # Distillation command
   distillation_parser = subparsers.add_parser('distill', help='Run knowledge distillation')
+  distillation_parser.add_argument('--dataset-id', type=int, required=True, help='Dataset ID to use')
   distillation_parser.add_argument('--teacher-model-path', type=str, required=True, help='Path to teacher model')
   distillation_parser.add_argument('--teacher-model-type', type=str, required=True, help='Teacher model type')
   distillation_parser.add_argument('--student-model-type', type=str, required=True, help='Student model type')
