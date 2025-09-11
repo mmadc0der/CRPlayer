@@ -12,7 +12,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from data_loader import DatasetConfig, DatasetInspector
+from data_loader import DatasetConfig, DatasetInspector, create_data_loaders
 from dataset_inspector import DatasetAnalyzer
 from experiment_runner import ExperimentRunner, ExperimentConfig
 from auto_labeler import AutoLabelingPipeline
