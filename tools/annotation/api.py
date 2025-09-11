@@ -5,6 +5,7 @@ from pathlib import Path
 import logging
 import json
 from datetime import datetime
+from typing import Dict, Any
 
 from core.session_manager import SessionManager
 from services.session_service import SessionService
@@ -931,6 +932,100 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       return jsonify(err.model_dump()), 404
     except Exception as e:
       err = ErrorResponse(code="autolabel_error", message="Failed to autolabel frame", details={"error": str(e)})
+      return jsonify(err.model_dump()), 500
+
+  @bp.route("/api/annotations/autolabel_session", methods=["POST"])
+  def api_autolabel_session():
+    """Autolabel an entire session. Optionally save predictions that meet threshold.
+
+    Payload:
+      { session_id, dataset_id, confidence_threshold?=0.9, dry_run?=false, limit? }
+
+    Returns summary with counts and simple per-class tallies for saved items.
+    """
+    try:
+      payload = request.get_json(force=True) or {}
+      session_id = str(payload.get("session_id") or "").strip()
+      dataset_id = int(payload.get("dataset_id") or 0)
+      confidence_threshold = float(payload.get("confidence_threshold") or 0.9)
+      dry_run = bool(payload.get("dry_run") or False)
+      limit = payload.get("limit")
+      n_limit = int(limit) if (limit is not None and str(limit).strip() != "") else None
+      if not session_id or dataset_id <= 0:
+        err = ErrorResponse(code="bad_request", message="session_id and dataset_id are required")
+        return jsonify(err.model_dump()), 400
+    except Exception as e:
+      err = ErrorResponse(code="bad_request", message="Invalid payload", details={"error": str(e)})
+      return jsonify(err.model_dump()), 400
+
+    try:
+      # Fetch dataset and classes
+      conn = get_connection()
+      d = db_get_dataset(conn, int(dataset_id))
+      if not d:
+        err = ErrorResponse(code="not_found", message="Dataset not found")
+        return jsonify(err.model_dump()), 404
+      rows = db_list_dataset_classes(conn, int(dataset_id))
+      class_names = [str(r.get("name")) for r in rows]
+      name_to_id = {str(r.get("name")): int(r.get("id")) for r in rows}
+      target_type_name = d.get("target_type_name") or "SingleLabelClassification"
+
+      # Iterate frames by index until out-of-range
+      processed = 0
+      saved = 0
+      errors = 0
+      per_class: Dict[str, int] = {}
+      idx = 0
+      while True:
+        if n_limit is not None and processed >= n_limit:
+          break
+        try:
+          abs_path, _frame = session_service.get_frame_for_image(session_id, idx)
+        except IndexError:
+          break
+        except Exception:
+          errors += 1
+          idx += 1
+          continue
+        try:
+          pred = autolabel_service.predict_single(Path(abs_path), target_type_name, class_names, confidence_threshold)
+          processed += 1
+          if pred.get("meets_threshold"):
+            cat = str(pred.get("category_name"))
+            per_class[cat] = per_class.get(cat, 0) + 1
+            if not dry_run:
+              # Save to DB when class id is resolvable; if missing, create on-the-fly is not attempted here
+              cls_id = name_to_id.get(cat)
+              if cls_id is not None:
+                try:
+                  # Resolve frame_id for this idx and save
+                  frame = session_service.get_frame_by_idx(session_id, idx)
+                  annotation_service.save_single_label(session_id=session_id,
+                                                       dataset_id=int(dataset_id),
+                                                       frame_id=str(frame["frame_id"]),
+                                                       class_id=int(cls_id),
+                                                       override_settings=None)
+                  saved += 1
+                except Exception:
+                  errors += 1
+          # advance
+        except AutoLabelUnavailable as e:
+          err = ErrorResponse(code="autolabel_unavailable", message=str(e))
+          return jsonify(err.model_dump()), 501
+        except Exception:
+          errors += 1
+        finally:
+          idx += 1
+
+      return jsonify({
+        "processed": int(processed),
+        "saved": int(saved),
+        "errors": int(errors),
+        "per_class": per_class,
+        "dry_run": bool(dry_run),
+      })
+    except Exception as e:
+      err = ErrorResponse(code="autolabel_error", message="Failed to autolabel session", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
   # -------------------- Dataset-session settings --------------------

@@ -2069,6 +2069,35 @@
     els.saveNextBtn().addEventListener('click', saveAndNext);
     const autolabelBtn = document.getElementById('autolabel-btn');
     if (autolabelBtn) autolabelBtn.addEventListener('click', autolabelCurrentFrame);
+    const autolabelSessionBtn = document.getElementById('autolabel-session-btn');
+    if (autolabelSessionBtn) autolabelSessionBtn.addEventListener('click', async () => {
+      if (!state.session_id || !state.dataset_id) { toast('Select a dataset and session first'); return; }
+      const prev = autolabelSessionBtn.textContent;
+      autolabelSessionBtn.disabled = true;
+      autolabelSessionBtn.textContent = 'Autolabeling...';
+      try {
+        const res = await apiPost('annotations/autolabel_session', {
+          session_id: state.session_id,
+          dataset_id: state.dataset_id,
+          confidence_threshold: 0.9,
+          dry_run: false,
+        });
+        if (res && typeof res.processed === 'number') {
+          toast(`Autolabeled ${res.saved}/${res.processed}`);
+          refreshProgress();
+          refreshStats();
+          // Reload current frame to reflect any saved change
+          await loadFrame(state.currentIdx);
+        } else {
+          toast('Autolabel session failed');
+        }
+      } catch (e) {
+        toast((e && e.message) ? e.message : 'Autolabel session error');
+      } finally {
+        autolabelSessionBtn.disabled = false;
+        autolabelSessionBtn.textContent = prev;
+      }
+    });
     els.skipBtn().addEventListener('click', () => goToFrame(state.currentIdx + 1));
 
     // Header back button (dynamic)
