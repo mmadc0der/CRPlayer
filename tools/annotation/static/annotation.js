@@ -216,6 +216,9 @@
     savedCategoryForFrame: null,
     savedMultilabelIdsForFrame: [],
     savedRegressionValueForFrame: null,
+    // Filtering
+    filterUnlabeledOnly: false,
+    filteredIndices: null, // null => no filter; otherwise array of idx (0-based) to traverse
   };
   // Controller to cancel in-flight frame fetches
   let frameRequestController = null;
@@ -375,6 +378,10 @@
   async function listDatasets(projectId) {
     if (!projectId) return [];
     return await apiGet(`projects/${encodeURIComponent(projectId)}/datasets`).catch(() => []);
+  }
+
+  async function listProjects() {
+    return await apiGet('projects').catch(() => []);
   }
 
   async function createProject(name, description = '') {
@@ -647,6 +654,24 @@
       state.regressionMin = initMin; state.regressionMax = initMax;
       syncBounds();
     }
+  }
+
+  function renderRegressionShortcuts() {
+    try {
+      const container = document.getElementById('dynamic-shortcuts');
+      if (!container) return;
+      const shortcuts = Array.isArray(state.regressionShortcuts) ? state.regressionShortcuts : [];
+      if (!shortcuts.length) return;
+      const row = document.createElement('div');
+      row.className = 'shortcut';
+      const left = document.createElement('span');
+      left.textContent = 'Regression presets';
+      const right = document.createElement('span');
+      right.textContent = shortcuts.join(', ');
+      row.appendChild(left);
+      row.appendChild(right);
+      container.appendChild(row);
+    } catch {}
   }
 
   function getRegressionValue() {
@@ -938,14 +963,26 @@
       left.appendChild(title);
       left.appendChild(meta);
       const right = document.createElement('div');
-      const btn = document.createElement('button');
-      btn.className = 'btn';
-      btn.setAttribute('data-select', '');
-      btn.textContent = 'Use';
-      right.appendChild(btn);
+      // Action buttons: Use, Edit, Delete
+      const useBtn = document.createElement('button');
+      useBtn.className = 'btn';
+      useBtn.setAttribute('data-select', '');
+      useBtn.textContent = 'Use';
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn';
+      editBtn.setAttribute('data-edit', '');
+      editBtn.textContent = 'Edit';
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn';
+      delBtn.setAttribute('data-delete', '');
+      delBtn.textContent = 'Delete';
+      right.appendChild(useBtn);
+      right.appendChild(editBtn);
+      right.appendChild(delBtn);
       row.appendChild(left);
       row.appendChild(right);
-      row.querySelector('[data-select]').onclick = async () => {
+      const selectEl = row.querySelector('[data-select]');
+      if (selectEl) selectEl.onclick = async () => {
         try {
           const sel = els.projectSelect();
           if (sel) {
@@ -969,7 +1006,8 @@
           }
         } catch {}
       };
-      row.querySelector('[data-edit]').onclick = async () => {
+      const editEl = row.querySelector('[data-edit]');
+      if (editEl) editEl.onclick = async () => {
         const newName = prompt('New project name', p.name) || p.name;
         const newDesc = prompt('Description (optional)', p.description || '') || '';
         try {
@@ -979,7 +1017,8 @@
           toast('Project updated');
         } catch { toast('Update failed'); }
       };
-      row.querySelector('[data-delete]').onclick = async () => {
+      const deleteEl = row.querySelector('[data-delete]');
+      if (deleteEl) deleteEl.onclick = async () => {
         if (!confirm(`Delete project '${p.name}'?`)) return;
         let url = `projects/${p.id}`;
         const force = confirm('Force delete and cascade all datasets and their annotations?');
@@ -1056,14 +1095,26 @@
       left.appendChild(title);
       left.appendChild(meta);
       const right = document.createElement('div');
-      const btn = document.createElement('button');
-      btn.className = 'btn';
-      btn.setAttribute('data-select', '');
-      btn.textContent = 'Select';
-      right.appendChild(btn);
+      // Action buttons: Select, Edit, Delete
+      const selectBtn = document.createElement('button');
+      selectBtn.className = 'btn';
+      selectBtn.setAttribute('data-select', '');
+      selectBtn.textContent = 'Select';
+      const editBtn = document.createElement('button');
+      editBtn.className = 'btn';
+      editBtn.setAttribute('data-edit', '');
+      editBtn.textContent = 'Edit';
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn';
+      delBtn.setAttribute('data-delete', '');
+      delBtn.textContent = 'Delete';
+      right.appendChild(selectBtn);
+      right.appendChild(editBtn);
+      right.appendChild(delBtn);
       row.appendChild(left);
       row.appendChild(right);
-      row.querySelector('[data-select]').onclick = async () => {
+      const selectEl = row.querySelector('[data-select]');
+      if (selectEl) selectEl.onclick = async () => {
         const dsId = d.id;
         const dsName = d.name;
         const sel = els.datasetSelect();
@@ -1091,7 +1142,8 @@
           toast('Dataset selected');
         }
       };
-      row.querySelector('[data-edit]').onclick = async () => {
+      const editEl = row.querySelector('[data-edit]');
+      if (editEl) editEl.onclick = async () => {
         const result = await showDatasetModal({ title: 'Edit Dataset', name: d.name, description: d.description || '', target_type_id: d.target_type_id });
         if (!result) return;
         const { name: newName, description: newDesc, target_type_id } = result;
@@ -1115,7 +1167,8 @@
           toast('Dataset updated');
         } catch { toast('Update failed'); }
       };
-      row.querySelector('[data-delete]').onclick = async () => {
+      const deleteEl = row.querySelector('[data-delete]');
+      if (deleteEl) deleteEl.onclick = async () => {
         if (!confirm(`Delete dataset '${d.name}'?`)) return;
         let url = `datasets/${d.id}`;
         const force = confirm('Force delete and cascade all annotations in this dataset?');
@@ -1312,6 +1365,7 @@
     const cats = Array.isArray(state.categories) ? state.categories : [];
     cats.forEach((cat) => {
       const key = state.hotkeys && state.hotkeys[cat] ? state.hotkeys[cat] : '';
+      if (!key) return; // Do not show shortcuts without bindings
       const row = document.createElement('div');
       row.className = 'shortcut';
       const left = document.createElement('span');
@@ -1320,7 +1374,7 @@
       const keySpan = document.createElement('span');
       keySpan.className = 'key';
       const keyText = String(key || '').toUpperCase();
-      keySpan.textContent = keyText || '—';
+      keySpan.textContent = keyText;
       right.appendChild(keySpan);
       row.appendChild(left);
       row.appendChild(right);
@@ -1344,6 +1398,95 @@
     const percent = total > 0 ? (annotated / total) * 100 : 0;
     els.progressFill().style.width = percent + '%';
     els.progressText().textContent = `${percent.toFixed(1)}% complete (${annotated}/${total})`;
+  }
+
+  async function getDatasetProgress() {
+    try {
+      if (!state.dataset_id) return null;
+      const res = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/progress`);
+      return res || null;
+    } catch { return null; }
+  }
+
+  function updateFilterIndicatorText() {
+    const el = document.getElementById('filter-indicator');
+    if (!el) return;
+    if (!state.filterUnlabeledOnly) { el.textContent = ''; return; }
+    // Show counts when we have them
+    const total = state.totalFrames || null;
+    const countsText = (state._lastProgress && (typeof state._lastProgress.unlabeled === 'number' || typeof state._lastProgress.total === 'number'))
+      ? (() => {
+          const labeled = (typeof state._lastProgress.labeled === 'number') ? state._lastProgress.labeled : (typeof state._lastProgress.annotated === 'number' ? state._lastProgress.annotated : null);
+          const totalV = (typeof state._lastProgress.total === 'number') ? state._lastProgress.total : total;
+          const unl = (typeof state._lastProgress.unlabeled === 'number') ? state._lastProgress.unlabeled : (Number.isFinite(labeled) && Number.isFinite(totalV) ? Math.max(0, totalV - labeled) : null);
+          return (Number.isFinite(unl) && Number.isFinite(totalV)) ? `Unlabeled ${unl}/${totalV}` : '';
+        })()
+      : (total ? `Filtering unlabeled · total ${total}` : 'Filtering unlabeled');
+    el.textContent = countsText;
+  }
+
+  async function refreshFilterIndicator() {
+    const btn = document.getElementById('toggle-unlabeled');
+    if (btn) {
+      if (state.filterUnlabeledOnly) {
+        btn.classList.add('btn--primary');
+        btn.textContent = 'Showing unlabeled';
+      } else {
+        btn.classList.remove('btn--primary');
+        btn.textContent = 'Unlabeled only';
+      }
+    }
+    try {
+      state._lastProgress = await getDatasetProgress();
+    } catch {}
+    updateFilterIndicatorText();
+  }
+
+  async function isIndexUnlabeled(idx) {
+    if (!state.dataset_id || !state.session_id) return true;
+    try {
+      const qs = new URLSearchParams({ session_id: String(state.session_id), dataset_id: String(state.dataset_id), idx: String(idx) }).toString();
+      const res = await apiGet(`annotations/frame?${qs}`);
+      const st = res && res.annotation ? res.annotation.status : null;
+      // Treat missing annotation or explicit 'unlabeled' as unlabeled
+      return st !== 'labeled';
+    } catch {
+      return true;
+    }
+  }
+
+  async function findUnlabeledFrom(startIdx, direction = 1) {
+    if (!Number.isFinite(startIdx)) return null;
+    if (direction === 0) direction = 1;
+    const limit = state.totalFrames || 0;
+    if (!limit) return null;
+    let i = Math.max(0, Math.min(startIdx, limit - 1));
+    while (i >= 0 && i < limit) {
+      if (await isIndexUnlabeled(i)) return i;
+      i += (direction > 0 ? 1 : -1);
+    }
+    return null;
+  }
+
+  async function fetchFilteredIndicesIfNeeded() {
+    if (!state.filterUnlabeledOnly) { state.filteredIndices = null; return; }
+    if (!state.dataset_id || !state.session_id) { state.filteredIndices = null; return; }
+    try {
+      const res = await apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/sessions/${encodeURIComponent(state.session_id)}/unlabeled_indices`);
+      if (res && Array.isArray(res.indices)) {
+        state.filteredIndices = res.indices.map(n => Number(n)).filter(n => Number.isFinite(n));
+        // Persist simple counts if provided
+        state._lastProgress = {
+          total: Number(res.total || state.totalFrames || 0),
+          labeled: Number(res.labeled || 0),
+          unlabeled: Number(res.unlabeled || 0),
+        };
+      } else {
+        state.filteredIndices = null;
+      }
+    } catch {
+      state.filteredIndices = null;
+    }
   }
 
   function setSelectedCategory(category) {
@@ -1460,6 +1603,19 @@
   async function loadFrame(idx) {
     if (idx < 0) idx = 0;
     try {
+      // Reset per-frame saved visuals before fetching new data to avoid stale green highlights
+      state.savedCategoryForFrame = null;
+      state.savedMultilabelIdsForFrame = [];
+      state.savedRegressionValueForFrame = null;
+      try { highlightCategoryStates(); } catch {}
+      try { highlightMultilabelStates(); } catch {}
+      try { highlightRegressionSavedState(); } catch {}
+      // Also clear multi-label checkbox checks to avoid stale selections while loading
+      try {
+        const checks = document.querySelectorAll('#category-list input[type="checkbox"][data-class-id]');
+        checks.forEach(cb => { cb.checked = false; });
+      } catch {}
+
       // Use unified /api/frame; include dataset_id when available to retrieve annotation payload
       const params = {
         session_id: state.session_id,
@@ -1497,7 +1653,12 @@
       }
 
       // Update image and frame info
-      els.img().src = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`);
+      const imgUrl = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: String(idx) }).toString()}`);
+      // Use priority hints and async decoding where available
+      try { els.img().decoding = 'async'; } catch {}
+      try { els.img().loading = 'eager'; } catch {}
+      try { els.img().fetchPriority = 'high'; } catch {}
+      els.img().src = imgUrl;
       els.frameId().textContent = frame.frame_id ?? '-';
       els.frameFilename().textContent = frame.filename ?? '-';
       const ts = frame.timestamp;
@@ -1578,13 +1739,23 @@
           ? Math.min(idx + 1, state.totalFrames - 1)
           : idx + 1;
         if (nextIdx > idx) {
-          const paramsNext = {
-            session_id: state.session_id,
-            idx: nextIdx,
-          };
+          const paramsNext = { session_id: state.session_id, idx: nextIdx };
           const prefetchUrl = withBase(`/api/image?${new URLSearchParams(paramsNext).toString()}`);
-          const img = new Image();
-          img.src = prefetchUrl;
+          const img1 = new Image();
+          try { img1.decoding = 'async'; } catch {}
+          try { img1.fetchPriority = 'low'; } catch {}
+          img1.src = prefetchUrl;
+          // Prefetch one more ahead when total known
+          const next2 = (typeof state.totalFrames === 'number' && state.totalFrames > 0)
+            ? Math.min(nextIdx + 1, state.totalFrames - 1)
+            : nextIdx + 1;
+          if (next2 > nextIdx) {
+            const prefetchUrl2 = withBase(`/api/image?${new URLSearchParams({ session_id: state.session_id, idx: next2 }).toString()}`);
+            const img2 = new Image();
+            try { img2.decoding = 'async'; } catch {}
+            try { img2.fetchPriority = 'low'; } catch {}
+            img2.src = prefetchUrl2;
+          }
         }
       } catch {}
 
@@ -1664,6 +1835,21 @@
   }
 
   function goToFrame(idx) {
+    if (state.filterUnlabeledOnly && Array.isArray(state.filteredIndices)) {
+      // Map requested idx into actual idx within filtered list
+      const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+      const pos = clamp(idx, 0, state.totalFrames ? state.totalFrames - 1 : idx);
+      // Find next valid index >= pos
+      const next = state.filteredIndices.find(i => i >= pos);
+      if (typeof next === 'number') {
+        if (state.totalFrames && next >= state.totalFrames) return;
+        return loadFrame(next);
+      }
+      // If none ahead, try the last available
+      const last = state.filteredIndices.length ? state.filteredIndices[state.filteredIndices.length - 1] : null;
+      if (typeof last === 'number') return loadFrame(last);
+      return; // nothing to show under filter
+    }
     if (idx < 0) return;
     if (state.totalFrames && idx >= state.totalFrames) return;
     loadFrame(idx);
@@ -1801,9 +1987,37 @@
       input.value = '';
     });
     els.newCategoryInput().addEventListener('keypress', (e) => { if (e.key === 'Enter') els.addCategoryBtn().click(); });
+    // First/Prev/Next/Last navigation
+    const firstBtn = els.firstBtn();
+    if (firstBtn) firstBtn.addEventListener('click', () => goToFrame(0));
     els.prevBtn().addEventListener('click', () => goToFrame(state.currentIdx - 1));
     els.nextBtn().addEventListener('click', () => goToFrame(state.currentIdx + 1));
     els.lastBtn().addEventListener('click', () => { if (state.totalFrames) goToFrame(state.totalFrames - 1); });
+    const unlabeledBtn = document.getElementById('toggle-unlabeled');
+    if (unlabeledBtn) {
+      unlabeledBtn.addEventListener('click', async () => {
+        state.filterUnlabeledOnly = !state.filterUnlabeledOnly;
+        await fetchFilteredIndicesIfNeeded();
+        await refreshFilterIndicator();
+        if (state.filterUnlabeledOnly) {
+          // Jump to first unlabeled from current position
+          let next = null;
+          if (Array.isArray(state.filteredIndices) && state.filteredIndices.length > 0) {
+            next = state.filteredIndices.find(i => i >= state.currentIdx);
+            if (typeof next !== 'number') next = state.filteredIndices[0];
+          } else {
+            next = await findUnlabeledFrom(state.currentIdx, +1);
+          }
+          if (next != null) loadFrame(next);
+          else toast('No unlabeled frames');
+        } else {
+          // Return to current (unfiltered) index
+          loadFrame(state.currentIdx);
+        }
+      });
+      // Initialize indicator state
+    (async () => { await fetchFilteredIndicesIfNeeded(); await refreshFilterIndicator(); })();
+    }
     els.frameInput().addEventListener('keypress', (e) => {
       if (e.key === 'Enter') {
         const val = parseInt(e.target.value, 10) - 1;

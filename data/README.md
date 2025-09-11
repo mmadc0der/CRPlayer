@@ -36,6 +36,7 @@ data/
 Each session has a `status.json` file tracking its processing state:
 
 ### Raw Sessions
+
 ```json
 {
   "status": "captured",
@@ -49,6 +50,7 @@ Each session has a `status.json` file tracking its processing state:
 ```
 
 ### Annotated Sessions
+
 ```json
 {
   "status": "annotated",
@@ -68,6 +70,7 @@ Each session has a `status.json` file tracking its processing state:
 ```
 
 ### Dataset Ready
+
 ```json
 {
   "status": "dataset_ready",
@@ -92,13 +95,20 @@ Each session has a `status.json` file tracking its processing state:
 ## Usage
 
 ### Data Collection
+
 ```bash
 # Collect new session
+# Ensure ADB and scrcpy are installed and ADB server is running (USB):
+#   sudo apt update && sudo apt install -y adb scrcpy
+#   sudo adb kill-server && sudo adb start-server
+# Or connect over TCP/IP:
+#   adb connect <device_ip>:5555
 python pipeline_script.py scripts/prod.yaml
 # Creates: data/raw/session_YYYYMMDD_HHMMSS/
 ```
 
 ### Annotation
+
 ```bash
 # Start annotation tool
 cd dashboard && docker-compose up -d
@@ -106,6 +116,7 @@ cd dashboard && docker-compose up -d
 ```
 
 ### Dataset Creation
+
 ```bash
 # Export annotated sessions to training dataset
 python tools/create_dataset.py --input data/annotated/ --output data/datasets/clash_royale_v2/

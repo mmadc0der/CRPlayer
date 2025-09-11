@@ -7,61 +7,65 @@ from pathlib import Path
 from typing import Optional
 import threading
 import sqlite3
+import logging
+
+logger = logging.getLogger("annotation.indexer")
 
 from .connection import get_connection
-from .schema import init_db
 from .repository import upsert_session, upsert_frame
 
 
 def _safe_load_json(path: Path) -> Optional[dict]:
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
-        return None
+  try:
+    with open(path, "r", encoding="utf-8") as f:
+      return json.load(f)
+  except Exception:
+    logger.debug("failed to read json file %s", path, exc_info=True)
+    return None
 
 
 def _load_json_stable(path: Path, retries: int = 3, sleep_s: float = 0.05) -> Optional[dict]:
-    """Attempt to read JSON atomically by verifying file didn't change during read."""
-    for _ in range(retries):
-        try:
-            stat_before = path.stat()
-            with open(path, 'rb') as f:
-                data = f.read()
-            stat_after = path.stat()
-            if (stat_before.st_mtime_ns, stat_before.st_size) == (stat_after.st_mtime_ns, stat_after.st_size):
-                return json.loads(data.decode('utf-8'))
-        except Exception:
-            pass
-        time.sleep(sleep_s)
-    return _safe_load_json(path)
+  """Attempt to read JSON atomically by verifying file didn't change during read."""
+  for _ in range(retries):
+    try:
+      stat_before = path.stat()
+      with open(path, "rb") as f:
+        data = f.read()
+      stat_after = path.stat()
+      if (stat_before.st_mtime_ns, stat_before.st_size) == (stat_after.st_mtime_ns, stat_after.st_size):
+        return json.loads(data.decode("utf-8"))
+    except Exception:
+      logger.debug("stable read failed for %s (attempt)", path, exc_info=True)
+    time.sleep(sleep_s)
+  return _safe_load_json(path)
 
 
 def _derive_ts_ms(frame_entry: dict) -> Optional[int]:
-    """Return ts_ms if present else convert 'timestamp' seconds to ms; otherwise None.
+  """Return ts_ms if present else convert 'timestamp' seconds to ms; otherwise None.
 
     - Accepts numeric or string types for ts_ms/timestamp.
     - Rounds to nearest millisecond when converting seconds.
     """
-    ts = frame_entry.get('ts_ms')
-    if ts is not None:
-        try:
-            return int(ts)
-        except Exception:
-            pass
-    sec = frame_entry.get('timestamp')
-    if sec is not None:
-        try:
-            # Support string or float seconds
-            sec_f = float(sec)
-            return int(round(sec_f * 1000.0))
-        except Exception:
-            return None
-    return None
+  ts = frame_entry.get("ts_ms")
+  if ts is not None:
+    try:
+      return int(ts)
+    except Exception:
+      logger.debug("failed to coerce ts_ms=%s to int", ts, exc_info=True)
+  sec = frame_entry.get("timestamp")
+  if sec is not None:
+    try:
+      # Support string or float seconds
+      sec_f = float(sec)
+      return int(round(sec_f * 1000.0))
+    except Exception:
+      logger.debug("failed to derive ts_ms from timestamp=%s", sec, exc_info=True)
+      return None
+  return None
 
 
 def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dict:
-    """
+  """
     Scan data/raw for sessions and frames and populate the DB.
     Deterministic rules:
       - Use session_id from metadata.json; fall back to session dir name if missing.
@@ -71,150 +75,197 @@ def reindex_sessions(conn: Optional[sqlite3.Connection], data_root: Path) -> dic
       - Timestamp field is strictly ts_ms (optional). Strings are coerced to int when possible.
     Metadata reads are stabilized to avoid mid-write inconsistencies.
     """
-    should_close = False
-    if conn is None:
-        conn = get_connection()
-        init_db(conn)
-        should_close = True
+  should_close = False
+  if conn is None:
+    conn = get_connection()
+    # Don't init_db here - database should already be initialized
+    should_close = True
 
-    raw_dir = data_root / 'raw'
+  raw_dir = data_root / "raw"
 
-    # Map session_id -> session_dir (raw only)
-    session_map: dict[str, Path] = {}
+  # Map session_id -> session_dir (raw only)
+  session_map: dict[str, Path] = {}
 
-    if raw_dir.exists():
-        for session_dir in raw_dir.iterdir():
-            if not session_dir.is_dir():
-                continue
-            try:
-                # Ignore system/hidden folders
-                if session_dir.name.startswith('.'):
-                    continue
-            except Exception:
-                continue
-            try:
-                metadata_file = session_dir / 'metadata.json'
-                md = _load_json_stable(metadata_file) if metadata_file.exists() else {}
-                sid = md.get('session_id') or session_dir.name
-                try:
-                    sid = str(sid).strip()
-                except Exception:
-                    pass
-                session_map[sid] = session_dir
-            except Exception:
-                continue
+  if raw_dir.exists():
+    for session_dir in raw_dir.iterdir():
+      if not session_dir.is_dir():
+        continue
+      skip_dir = False
+      try:
+        # Ignore system/hidden folders
+        if session_dir.name.startswith("."):
+          skip_dir = True
+      except Exception:
+        logger.debug("failed to check hidden folder for %s", session_dir, exc_info=True)
+        skip_dir = True
+      if skip_dir:
+        continue
+      meta_error = False
+      try:
+        metadata_file = session_dir / "metadata.json"
+        md = _load_json_stable(metadata_file) if metadata_file.exists() else {}
+        sid = md.get("session_id") or session_dir.name
+        try:
+          sid = str(sid).strip()
+        except Exception:
+          logger.debug("failed to normalize session_id %s", sid, exc_info=True)
+        session_map[sid] = session_dir
+      except Exception:
+        logger.debug("failed to load metadata for %s", session_dir, exc_info=True)
+        meta_error = True
+      if meta_error:
+        continue
 
-    inserted_sessions = 0
-    inserted_frames = 0
-    details: list[dict] = []
+  inserted_sessions = 0
+  inserted_frames = 0
+  removed_sessions = 0
+  details: list[dict] = []
 
-    for sid, sdir in session_map.items():
-        md = _load_json_stable(sdir / 'metadata.json') or {}
-        session_db_id = upsert_session(conn, sid, str(sdir), md)
-        if session_db_id:
-            inserted_sessions += 1
-        frames = md.get('frames', [])
-        if frames and isinstance(frames, list):
-            sample_ids = []
-            for fr in frames:
-                # Deterministic: require frame_id from metadata; derive nothing else except ts
-                frame_id = fr.get('frame_id')
-                if not frame_id:
-                    continue
-                ts = _derive_ts_ms(fr)
-                upsert_frame(conn, session_db_id, str(frame_id), ts)
-                inserted_frames += 1
-                if len(sample_ids) < 5:
-                    sample_ids.append(str(frame_id))
-            try:
-                print(f"[indexer][session={sid}] frames_from=metadata count={len(frames)} sample={sample_ids}", flush=True)
-            except Exception:
-                pass
-            details.append({
-                'session_id': sid,
-                'source': 'metadata',
-                'count': len(frames),
-                'sample': sample_ids,
-            })
+  # First, remove sessions in DB whose root_path no longer exists on disk
+  try:
+    cur = conn.execute("SELECT id, session_id, root_path FROM sessions")
+    rows = cur.fetchall() or []
+    for r in rows:
+      try:
+        sid_db = str(r[1]) if not isinstance(r, dict) else str(r["session_id"])  # type: ignore[index]
+        root = Path(r[2] if not isinstance(r, dict) else r["root_path"])  # type: ignore[index]
+      except Exception:
+        # Fallback extract via dict-style
+        sid_db = str(r["session_id"]) if isinstance(r, dict) else str(r[1])
+        root = Path(r["root_path"]) if isinstance(r, dict) else Path(r[2])
+      # Remove if the recorded root path no longer exists
+      if not root.exists():
+        try:
+          conn.execute("DELETE FROM sessions WHERE id = ?", (int(r[0] if not isinstance(r, dict) else r["id"]), ))
+          removed_sessions += int(conn.total_changes > 0)
+        except Exception:
+          logger.warning("failed to delete missing session sid=%s root=%s", sid_db, root, exc_info=True)
+    if removed_sessions:
+      conn.commit()
+  except Exception:
+    logger.warning("failed to prune missing sessions", exc_info=True)
+
+  for sid, sdir in session_map.items():
+    md = _load_json_stable(sdir / "metadata.json") or {}
+    session_db_id = upsert_session(conn, sid, str(sdir), md)
+    if session_db_id:
+      inserted_sessions += 1
+    frames = md.get("frames", [])
+    if frames and isinstance(frames, list):
+      sample_ids = []
+      for fr in frames:
+        # Deterministic: require frame_id from metadata; derive nothing else except ts
+        frame_id = fr.get("frame_id")
+        if not frame_id:
+          continue
+        ts = _derive_ts_ms(fr)
+        upsert_frame(conn, session_db_id, str(frame_id), ts)
+        inserted_frames += 1
+        if len(sample_ids) < 5:
+          sample_ids.append(str(frame_id))
+      try:
+        logger.info(
+          "frames_from=metadata session=%s count=%s sample=%s",
+          sid,
+          len(frames),
+          sample_ids,
+        )
+      except Exception:
+        logger.debug("failed to log metadata frames summary", exc_info=True)
+      details.append({
+        "session_id": sid,
+        "source": "metadata",
+        "count": len(frames),
+        "sample": sample_ids,
+      })
+    else:
+      # Filesystem fallback: enumerate frames by filename
+      candidates = []
+      frames_dir = sdir / "frames"
+      exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+      try:
+        if frames_dir.exists():
+          for p in sorted(frames_dir.iterdir()):
+            if p.is_file() and p.suffix.lower() in exts:
+              candidates.append(p.name)
         else:
-            # Filesystem fallback: enumerate frames by filename
-            candidates = []
-            frames_dir = sdir / 'frames'
-            exts = {'.png', '.jpg', '.jpeg', '.webp', '.bmp'}
-            try:
-                if frames_dir.exists():
-                    for p in sorted(frames_dir.iterdir()):
-                        if p.is_file() and p.suffix.lower() in exts:
-                            candidates.append(p.name)
-                else:
-                    # Fallback to session root
-                    for p in sorted(sdir.iterdir()):
-                        if p.is_file() and p.suffix.lower() in exts:
-                            candidates.append(p.name)
-            except Exception:
-                candidates = []
-            try:
-                origin = str(frames_dir) if frames_dir.exists() else str(sdir)
-                print(f"[indexer][session={sid}] frames_from=filesystem dir={origin} count={len(candidates)} sample={candidates[:5]}", flush=True)
-            except Exception:
-                pass
-            details.append({
-                'session_id': sid,
-                'source': 'filesystem',
-                'dir': str(frames_dir) if frames_dir.exists() else str(sdir),
-                'count': len(candidates),
-                'sample': candidates[:5],
-            })
-            for fname in candidates:
-                # Use filename as stable frame_id
-                upsert_frame(conn, session_db_id, fname, None)
-                inserted_frames += 1
+          # Fallback to session root
+          for p in sorted(sdir.iterdir()):
+            if p.is_file() and p.suffix.lower() in exts:
+              candidates.append(p.name)
+      except Exception:
+        logger.warning("failed to enumerate frames under %s", sdir, exc_info=True)
+        candidates = []
+      try:
+        origin = str(frames_dir) if frames_dir.exists() else str(sdir)
+        logger.info(
+          "frames_from=filesystem session=%s dir=%s count=%s sample=%s",
+          sid,
+          origin,
+          len(candidates),
+          candidates[:5],
+        )
+      except Exception:
+        logger.debug("failed to log filesystem frames summary", exc_info=True)
+      details.append({
+        "session_id": sid,
+        "source": "filesystem",
+        "dir": str(frames_dir) if frames_dir.exists() else str(sdir),
+        "count": len(candidates),
+        "sample": candidates[:5],
+      })
+      for fname in candidates:
+        # Use filename as stable frame_id
+        upsert_frame(conn, session_db_id, fname, None)
+        inserted_frames += 1
 
-    conn.commit()
-    if should_close:
-        conn.close()
+  conn.commit()
+  if should_close:
+    conn.close()
 
-    return {
-        'sessions_indexed': inserted_sessions,
-        'frames_indexed': inserted_frames,
-        'details': details,
-    }
+  return {
+    "sessions_indexed": inserted_sessions,
+    "sessions_removed": removed_sessions,
+    "frames_indexed": inserted_frames,
+    "details": details,
+  }
 
 
 def run_indexer_loop(
-    data_root: Path,
-    interval_s: float = 5.0,
-    jitter_s: float = 1.0,
-    stop_event: Optional[threading.Event] = None,
+  data_root: Path,
+  interval_s: float = 5.0,
+  jitter_s: float = 1.0,
+  stop_event: Optional[threading.Event] = None,
 ) -> None:
-    """Run the reindexer periodically in the background.
+  """Run the reindexer periodically in the background.
 
     - Read-only access to metadata.json under data/raw/*.
     - Idempotent DB upserts; safe to run continuously.
     - Lightweight logging via print; replace with app logger if available.
     - Optional stop_event to terminate loop gracefully.
     """
-    while True:
-        if stop_event is not None and stop_event.is_set():
-            break
-        t0 = time.time()
-        try:
-            stats = reindex_sessions(None, data_root)
-            print(f"[indexer] sessions={stats.get('sessions_indexed',0)} frames={stats.get('frames_indexed',0)}", flush=True)
-        except Exception as e:
-            print(f"[indexer][error] {e}", flush=True)
-        # Sleep with small jitter to avoid sync with writers
-        elapsed = time.time() - t0
-        delay = max(0.5, interval_s - elapsed) + (random.random() * jitter_s)
-        # Allow prompt shutdown
-        if stop_event is not None:
-            # Wait in small increments so we can react to stop_event
-            waited = 0.0
-            step = 0.25
-            while waited < delay:
-                if stop_event.is_set():
-                    return
-                time.sleep(min(step, delay - waited))
-                waited += step
-        else:
-            time.sleep(delay)
+  while True:
+    if stop_event is not None and stop_event.is_set():
+      break
+    t0 = time.time()
+    try:
+      stats = reindex_sessions(None, data_root)
+      logger.info("indexer stats sessions=%s frames=%s", stats.get("sessions_indexed", 0),
+                  stats.get("frames_indexed", 0))
+    except Exception:
+      logger.exception("indexer_loop_error")
+    # Sleep with small jitter to avoid sync with writers
+    elapsed = time.time() - t0
+    delay = max(0.5, interval_s - elapsed) + (random.random() * jitter_s)  # nosec B311 - non-crypto jitter
+    # Allow prompt shutdown
+    if stop_event is not None:
+      # Wait in small increments so we can react to stop_event
+      waited = 0.0
+      step = 0.25
+      while waited < delay:
+        if stop_event.is_set():
+          return
+        time.sleep(min(step, delay - waited))
+        waited += step
+    else:
+      time.sleep(delay)

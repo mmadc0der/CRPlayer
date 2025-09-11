@@ -92,6 +92,9 @@
                         <input type="text" id="frame-input" class="input input--small" placeholder="Frame #">
                         <button id="next-btn" class="btn btn--primary">Next</button>
                         <button id="last-btn" class="btn">Last</button>
+                        <span style="width:8px"></span>
+                        <button id="toggle-unlabeled" class="btn">Unlabeled only</button>
+                        <span id="filter-indicator" class="selector__meta" style="margin-left:8px"></span>
                     </div>
                 </div>
 
@@ -110,6 +113,9 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Regression Panel (rendered dynamically when dataset type is Regression) -->
+                    <div id="regression-panel" class="panel__section"></div>
 
                     <div class="panel__section">
                         <h3 class="panel__title">Notes</h3>

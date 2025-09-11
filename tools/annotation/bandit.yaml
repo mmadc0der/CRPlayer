@@ -1,0 +1,11 @@
+exclude_dirs:
+  - tests
+  - htmlcov
+  - .venv
+
+assert_used:
+  skips:
+    - "test_*.py"
+    - "*_test.py"
+    - "**/tests/*.py"
+    - "**/tests/**/*.py"

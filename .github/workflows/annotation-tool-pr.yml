@@ -1,0 +1,170 @@
+name: Annotation Tool PR Validation
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "tools/annotation/**"
+      - ".github/workflows/annotation-tool-*.yml"
+
+env:
+  ANNOTATION_TOOL_PATH: tools/annotation
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/annotation
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Need full history for proper diff
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+
+      - name: Install dependencies
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Import structure validation
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=$PWD:$PYTHONPATH
+
+          echo "🔍 Validating Python imports..."
+          python -c "
+          import importlib
+          import sys
+
+          # Core modules that must import successfully
+          critical_modules = ['api', 'app', 'dto']
+
+          for module in critical_modules:
+              try:
+                  importlib.import_module(module)
+                  print(f'✅ {module}')
+              except Exception as e:
+                  print(f'❌ {module}: {e}')
+                  sys.exit(1)
+
+          print('✅ Critical imports validated')
+          "
+
+      - name: Run fast test suite
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=$PWD:$PYTHONPATH
+
+          echo "🧪 Running fast test suite..."
+          export PYTEST_ADDOPTS='-c pytest-production.ini -m "not slow and not skip_for_ci"'
+          python -m pytest tests/ --tb=short -x --maxfail=0 --durations=10 \
+            || (echo "❌ Tests failed. Please fix failing tests before merging." && exit 1)
+
+          echo "✅ Fast test suite passed"
+
+      - name: Database schema validation
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=$PWD:$PYTHONPATH
+
+          echo "🗄️ Validating database schema..."
+          python -c "
+          from db.schema import init_db
+          from db.connection import get_connection
+          import sqlite3
+          import tempfile
+          import os
+
+          # Test schema creation
+          with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+              tmp_path = tmp.name
+
+          try:
+              conn = sqlite3.connect(tmp_path)
+              conn.row_factory = sqlite3.Row
+              init_db(conn)
+              
+              # Verify tables exist
+              cursor = conn.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")
+              tables = [row[0] for row in cursor.fetchall()]
+              
+              expected_tables = ['projects', 'datasets', 'sessions', 'frames', 'annotations']
+              for table in expected_tables:
+                  if table not in tables:
+                      raise Exception(f'Missing table: {table}')
+              
+              conn.close()
+              print('✅ Database schema validation passed')
+              
+          finally:
+              if os.path.exists(tmp_path):
+                  os.unlink(tmp_path)
+          "
+
+      - name: API endpoints validation
+        run: |
+          . .venv/bin/activate
+          export PYTHONPATH=$PWD:$PYTHONPATH
+
+          echo "🌐 Validating API endpoints..."
+          python -c "
+          from app import app
+
+          with app.app_context():
+              routes = list(app.url_map.iter_rules())
+              
+              # Check for essential endpoints
+              route_paths = [str(rule.rule) for rule in routes]
+              essential_endpoints = ['/api/projects', '/api/sessions']
+              
+              for endpoint in essential_endpoints:
+                  if endpoint not in route_paths:
+                      raise Exception(f'Missing essential endpoint: {endpoint}')
+              
+              print(f'✅ Found {len(routes)} API endpoints')
+              print('✅ Essential endpoints validated')
+          "
+
+      - name: Generate PR summary
+        if: always()
+        run: |
+          echo "## 📋 Annotation Tool PR Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Changed Files" >> $GITHUB_STEP_SUMMARY
+          git diff --name-only origin/${{ github.base_ref }}..HEAD -- tools/annotation/ | head -20 >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "### Validation Results" >> $GITHUB_STEP_SUMMARY
+          if [ ${{ job.status }} == "success" ]; then
+            echo "✅ All validation checks passed" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Ready for merge" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Some validation checks failed" >> $GITHUB_STEP_SUMMARY
+            echo "🔧 Please fix the issues before merging" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Quick Commands" >> $GITHUB_STEP_SUMMARY
+          echo "- Format code: \`make format\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Run linting: \`make lint\`" >> $GITHUB_STEP_SUMMARY  
+          echo "- Run tests: \`make test\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Run all checks: \`make check\`" >> $GITHUB_STEP_SUMMARY
