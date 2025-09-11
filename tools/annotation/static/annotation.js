@@ -1834,6 +1834,46 @@
     if (ok) goToFrame(state.currentIdx + 1);
   }
 
+  // ---------- Autolabel ----------
+  async function autolabelCurrentFrame() {
+    try {
+      if (!state.session_id || !state.dataset_id) {
+        toast('Select a dataset and session first');
+        return;
+      }
+      const payload = {
+        session_id: state.session_id,
+        dataset_id: state.dataset_id,
+        frame_idx: state.currentIdx,
+        confidence_threshold: 0.9,
+      };
+      const res = await apiPost('annotations/autolabel', payload);
+      if (!res || !res.prediction) {
+        toast('Autolabel failed');
+        return;
+      }
+      const { prediction, mapped } = res;
+      const name = (mapped && mapped.category_name) ? String(mapped.category_name) : null;
+      const classId = (mapped && typeof mapped.class_id === 'number') ? mapped.class_id : null;
+      // Only select when we can map to an existing class
+      const hasName = name && state.classIdByName && typeof state.classIdByName[name] === 'number';
+      if (hasName) {
+        setSelectedCategory(name);
+        highlightCategoryStates();
+        toast(`Predicted: ${name} (${(prediction.confidence * 100).toFixed(1)}%)`);
+        if (prediction.meets_threshold) {
+          // Auto-save when confident
+          await saveAnnotation();
+        }
+      } else {
+        toast('Autolabel predicted unknown class');
+      }
+    } catch (e) {
+      const msg = (e && e.message) ? String(e.message) : 'Autolabel error';
+      toast(msg);
+    }
+  }
+
   function goToFrame(idx) {
     if (state.filterUnlabeledOnly && Array.isArray(state.filteredIndices)) {
       // Map requested idx into actual idx within filtered list
@@ -2027,6 +2067,37 @@
 
     els.saveBtn().addEventListener('click', saveAnnotation);
     els.saveNextBtn().addEventListener('click', saveAndNext);
+    const autolabelBtn = document.getElementById('autolabel-btn');
+    if (autolabelBtn) autolabelBtn.addEventListener('click', autolabelCurrentFrame);
+    const autolabelSessionBtn = document.getElementById('autolabel-session-btn');
+    if (autolabelSessionBtn) autolabelSessionBtn.addEventListener('click', async () => {
+      if (!state.session_id || !state.dataset_id) { toast('Select a dataset and session first'); return; }
+      const prev = autolabelSessionBtn.textContent;
+      autolabelSessionBtn.disabled = true;
+      autolabelSessionBtn.textContent = 'Autolabeling...';
+      try {
+        const res = await apiPost('annotations/autolabel_session', {
+          session_id: state.session_id,
+          dataset_id: state.dataset_id,
+          confidence_threshold: 0.9,
+          dry_run: false,
+        });
+        if (res && typeof res.processed === 'number') {
+          toast(`Autolabeled ${res.saved}/${res.processed}`);
+          refreshProgress();
+          refreshStats();
+          // Reload current frame to reflect any saved change
+          await loadFrame(state.currentIdx);
+        } else {
+          toast('Autolabel session failed');
+        }
+      } catch (e) {
+        toast((e && e.message) ? e.message : 'Autolabel session error');
+      } finally {
+        autolabelSessionBtn.disabled = false;
+        autolabelSessionBtn.textContent = prev;
+      }
+    });
     els.skipBtn().addEventListener('click', () => goToFrame(state.currentIdx + 1));
 
     // Header back button (dynamic)
