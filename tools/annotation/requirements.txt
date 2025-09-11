@@ -1,3 +1,5 @@
 flask>=2.3.0
 pillow>=9.5.0
 pydantic>=1.10.0
+torch>=2.0.0
+torchvision>=0.15.0
