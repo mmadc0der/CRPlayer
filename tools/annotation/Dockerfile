@@ -14,7 +14,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
   python3.12 \
   python3.12-dev \
+  python3-full \
   python3-pip \
+  python3-venv \
   curl \
   git \
   && rm -rf /var/lib/apt/lists/*
@@ -22,8 +24,10 @@ RUN apt-get update && apt-get install -y \
 # Create symbolic link for python
 RUN ln -s /usr/bin/python3.12 /usr/bin/python
 
-# Copy requirements and install Python dependencies
+# Create virtual environment and install Python dependencies
 COPY requirements.txt .
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
@@ -53,5 +57,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Run the application
 USER appuser
+ENV PATH="/opt/venv/bin:$PATH"
 
 CMD ["python", "app.py", "--host", "0.0.0.0", "--port", "5000"]
