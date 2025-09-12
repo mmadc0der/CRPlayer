@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y \
   python3-venv \
   curl \
   git \
+  build-essential \
   && rm -rf /var/lib/apt/lists/*
 
 # Create symbolic link for python
@@ -40,12 +41,15 @@ RUN mkdir -p /app/production_data /app/collected_data /app/markup_data /app/spar
 # The research code should be mounted or copied separately
 # We'll rely on the volume mount in docker-compose for this
 
-# --- Create non-root user (configurable UID/GID) and set ownership ---
-ARG UID=1000
-ARG GID=1000
+# --- Create non-root user (use high UID to avoid system user conflicts) ---
+ARG UID=10000
+ARG GID=10000
 RUN set -eux; \
-  groupadd -g ${GID} appgroup || true; \
-  id -u appuser >/dev/null 2>&1 || useradd -m -u ${UID} -g ${GID} -s /bin/bash appuser; \
+  groupadd -g ${GID} appgroup 2>/dev/null || true; \
+  useradd -m -u ${UID} -g ${GID} -s /bin/bash appuser 2>/dev/null || \
+  (echo "Failed to create appuser with UID ${UID}, trying different approach" && \
+  useradd -m -g ${GID} -s /bin/bash appuser 2>/dev/null || \
+  useradd -m -s /bin/bash appuser); \
   chown -R appuser:appgroup /app
 
 # Expose port
