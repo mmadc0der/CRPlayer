@@ -8,6 +8,18 @@ echo "Building CRPlayer Dashboard with GPU support..."
 # Ensure we're in the dashboard directory
 cd "$(dirname "$0")"
 
+# Auto-detect host user's UID and GID for proper file permissions
+echo "Detecting host user permissions..."
+if [ -z "${PUID}" ]; then
+    export PUID=$(id -u)
+    echo "Using host UID: ${PUID}"
+fi
+if [ -z "${PGID}" ]; then
+    export PGID=$(id -g)
+    echo "Using host GID: ${PGID}"
+fi
+echo ""
+
 # Check if research models.py exists
 if [ ! -f "../research/screen-page-classification/models.py" ]; then
     echo "Warning: Research models.py not found. Autolabel feature may not work."
@@ -69,7 +81,7 @@ echo ""
 echo "GPU Setup Instructions:"
 echo "========================"
 echo "If GPU is not working, ensure your Docker daemon.json includes:"
-echo '{"
+echo '{'
 echo '  "runtimes": {'
 echo '    "nvidia": {'
 echo '      "path": "nvidia-container-runtime",'
