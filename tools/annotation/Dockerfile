@@ -1,5 +1,5 @@
 # Use NVIDIA CUDA base image for GPU support
-FROM  nvidia/cuda:13.0.1-cudnn-devel-ubuntu24.04
+FROM  nvidia/cuda:12.4.0-base-ubuntu22.04
 
 # Set environment variables for CUDA
 ENV CUDA_HOME=/usr/local/cuda
