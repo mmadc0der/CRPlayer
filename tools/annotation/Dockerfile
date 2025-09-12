@@ -8,9 +8,13 @@ ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
+# Set non-interactive frontend for apt to avoid tzdata prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=UTC
+
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (non-interactive)
 RUN apt-get update && apt-get install -y \
   python3.11 \
   python3.11-dev \
@@ -20,6 +24,7 @@ RUN apt-get update && apt-get install -y \
   curl \
   git \
   build-essential \
+  tzdata \
   && rm -rf /var/lib/apt/lists/*
 
 # Create symbolic link for python
