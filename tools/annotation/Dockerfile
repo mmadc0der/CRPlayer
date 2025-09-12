@@ -12,8 +12,8 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-  python3.12 \
-  python3.12-dev \
+  python3.11 \
+  python3.11-dev \
   python3-full \
   python3-pip \
   python3-venv \
@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
   && rm -rf /var/lib/apt/lists/*
 
 # Create symbolic link for python
-RUN ln -s /usr/bin/python3.12 /usr/bin/python
+RUN ln -s /usr/bin/python3.11 /usr/bin/python
 
 # Create virtual environment and install Python dependencies
 COPY requirements.txt .
