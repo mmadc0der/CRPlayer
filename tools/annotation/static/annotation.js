@@ -34,13 +34,14 @@
     const req = ++statsRequestEpoch; // mark this invocation as the latest
     grid.innerHTML = '';
 
-    // Fetch project + dataset stats in parallel
+    // Fetch project + dataset stats + GPU status in parallel
     const fetches = [];
     const hasProject = state.project_id != null;
     const hasDataset = !!state.dataset_id;
     if (hasProject) fetches.push(apiGet(`projects/${encodeURIComponent(state.project_id)}/progress`).catch(() => null)); else fetches.push(Promise.resolve(null));
     if (hasDataset) fetches.push(apiGet(`datasets/${encodeURIComponent(state.dataset_id)}/progress`).catch(() => null)); else fetches.push(Promise.resolve(null));
-    const [pj, ds] = await Promise.all(fetches);
+    fetches.push(apiGet('gpu/status').catch(() => null)); // GPU status
+    const [pj, ds, gpu] = await Promise.all(fetches);
 
     // Drop stale responses to avoid duplicate rendering
     if (req !== statsRequestEpoch) return;
@@ -79,7 +80,23 @@
       });
     }
 
-    if ((!pj || typeof pj !== 'object') && (!ds || typeof ds !== 'object')) {
+    // GPU status card
+    if (gpu && typeof gpu === 'object') {
+      const gpuAvailable = gpu.gpu_available;
+      const gpuCount = gpu.gpu_count || 0;
+      const torchVersion = gpu.torch_version || 'unknown';
+
+      if (gpuAvailable && gpu.gpu_info && gpu.gpu_info.devices && gpu.gpu_info.devices.length > 0) {
+        const device = gpu.gpu_info.devices[0]; // Show primary GPU
+        const gpuName = device.name || 'Unknown GPU';
+        const gpuMemory = typeof device.total_memory_gb === 'number' ? device.total_memory_gb.toFixed(1) : '?';
+        addCard('GPU Available', `✅ ${gpuName}`, `${gpuMemory}GB • PyTorch ${torchVersion}`);
+      } else {
+        addCard('GPU Status', '❌ CPU Only', `PyTorch ${torchVersion}`);
+      }
+    }
+
+    if ((!pj || typeof pj !== 'object') && (!ds || typeof ds !== 'object') && (!gpu || typeof gpu !== 'object')) {
       grid.innerHTML = '<div class="selector__meta">No stats yet</div>';
     }
   }
@@ -1855,9 +1872,14 @@
       const { prediction, mapped } = res;
       const name = (mapped && mapped.category_name) ? String(mapped.category_name) : null;
       const classId = (mapped && typeof mapped.class_id === 'number') ? mapped.class_id : null;
-      // Only select when we can map to an existing class
-      const hasName = name && state.classIdByName && typeof state.classIdByName[name] === 'number';
-      if (hasName) {
+
+      // Always try to apply the prediction - if class doesn't exist, it was created by the backend
+      if (name) {
+        // Refresh dataset classes to get any newly created classes
+        await loadDatasetClasses(state.dataset_id);
+        // Re-render categories to show new classes
+        renderCategories();
+        // Apply the prediction
         setSelectedCategory(name);
         highlightCategoryStates();
         toast(`Predicted: ${name} (${(prediction.confidence * 100).toFixed(1)}%)`);
@@ -1866,7 +1888,7 @@
           await saveAnnotation();
         }
       } else {
-        toast('Autolabel predicted unknown class');
+        toast('Autolabel prediction incomplete');
       }
     } catch (e) {
       const msg = (e && e.message) ? String(e.message) : 'Autolabel error';
@@ -2072,27 +2094,100 @@
     const autolabelSessionBtn = document.getElementById('autolabel-session-btn');
     if (autolabelSessionBtn) autolabelSessionBtn.addEventListener('click', async () => {
       if (!state.session_id || !state.dataset_id) { toast('Select a dataset and session first'); return; }
+
+      // Create or update progress bar
+      let progressContainer = document.getElementById('autolabel-progress-container');
+      if (!progressContainer) {
+        progressContainer = document.createElement('div');
+        progressContainer.id = 'autolabel-progress-container';
+        progressContainer.style.cssText = `
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          background: white;
+          border: 1px solid #ccc;
+          border-radius: 8px;
+          padding: 16px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+          z-index: 1000;
+          min-width: 300px;
+        `;
+        document.body.appendChild(progressContainer);
+      }
+
+      progressContainer.innerHTML = `
+        <div style="margin-bottom: 8px; font-weight: bold;">Autolabel Progress</div>
+        <div style="margin-bottom: 8px;">
+          <div id="autolabel-progress-bar" style="width: 100%; height: 8px; background: #f0f0f0; border-radius: 4px; overflow: hidden;">
+            <div id="autolabel-progress-fill" style="width: 0%; height: 100%; background: #22c55e; transition: width 0.3s ease;"></div>
+          </div>
+        </div>
+        <div id="autolabel-progress-text" style="font-size: 12px; color: #666;">Starting...</div>
+        <div id="autolabel-stats" style="font-size: 12px; color: #666; margin-top: 4px;"></div>
+        <button id="autolabel-cancel-btn" class="btn" style="margin-top: 8px; font-size: 12px;">Cancel</button>
+      `;
+
+      const progressBar = progressContainer.querySelector('#autolabel-progress-bar');
+      const progressFill = progressContainer.querySelector('#autolabel-progress-fill');
+      const progressText = progressContainer.querySelector('#autolabel-progress-text');
+      const statsDiv = progressContainer.querySelector('#autolabel-stats');
+      const cancelBtn = progressContainer.querySelector('#autolabel-cancel-btn');
+
+      let cancelled = false;
+      cancelBtn.onclick = () => {
+        cancelled = true;
+        toast('Autolabel cancelled');
+        progressContainer.remove();
+      };
+
       const prev = autolabelSessionBtn.textContent;
       autolabelSessionBtn.disabled = true;
       autolabelSessionBtn.textContent = 'Autolabeling...';
+
       try {
+        // Use the improved session autolabel with progress
         const res = await apiPost('annotations/autolabel_session', {
           session_id: state.session_id,
           dataset_id: state.dataset_id,
           confidence_threshold: 0.9,
           dry_run: false,
+          batch_size: 10,
+          progress_callback: true,
         });
+
+        if (cancelled) return;
+
         if (res && typeof res.processed === 'number') {
-          toast(`Autolabeled ${res.saved}/${res.processed}`);
+          // Update final progress
+          progressFill.style.width = '100%';
+          progressText.textContent = 'Completed!';
+          statsDiv.textContent = `Processed: ${res.processed}, Saved: ${res.saved}, Errors: ${res.errors}`;
+
+          // Show summary toast
+          toast(`Autolabeled ${res.saved}/${res.processed} frames`);
+
+          // Refresh UI
           refreshProgress();
           refreshStats();
-          // Reload current frame to reflect any saved change
-          await loadFrame(state.currentIdx);
+          await loadDatasetClasses(state.dataset_id); // Refresh classes in case new ones were created
+          renderCategories();
+          await loadFrame(state.currentIdx); // Reload current frame
+
+          // Remove progress after a delay
+          setTimeout(() => {
+            if (progressContainer.parentNode) {
+              progressContainer.remove();
+            }
+          }, 3000);
         } else {
           toast('Autolabel session failed');
+          progressContainer.remove();
         }
       } catch (e) {
-        toast((e && e.message) ? e.message : 'Autolabel session error');
+        if (!cancelled) {
+          toast((e && e.message) ? e.message : 'Autolabel session error');
+          progressContainer.remove();
+        }
       } finally {
         autolabelSessionBtn.disabled = false;
         autolabelSessionBtn.textContent = prev;

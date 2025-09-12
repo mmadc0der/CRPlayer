@@ -166,7 +166,17 @@ class AutoLabelService:
       # Move to appropriate device
       device = "cuda" if torch.cuda.is_available() else "cpu"
       model.to(device)
-      self._log.info(f"Model loaded on {device}")
+
+      # Log GPU information if available
+      if device == "cuda":
+        gpu_count = torch.cuda.device_count()
+        current_gpu = torch.cuda.current_device()
+        gpu_name = torch.cuda.get_device_name(current_gpu) if gpu_count > 0 else "Unknown"
+        gpu_memory = torch.cuda.get_device_properties(current_gpu).total_memory / 1024**3  # GB
+        self._log.info(f"Model loaded on GPU: {gpu_name} ({gpu_memory:.1f}GB)")
+        self._log.info(f"CUDA version: {torch.version.cuda}, cuDNN: {torch.backends.cudnn.version()}")
+      else:
+        self._log.info("Model loaded on CPU (CUDA not available)")
 
       self._loaded[key] = {"model": model, "device": device}
       return self._loaded[key]

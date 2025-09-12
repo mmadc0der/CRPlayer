@@ -865,6 +865,192 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       err = ErrorResponse(code="save_error", message="Failed to save multilabel", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
+  @bp.route("/api/annotations/batch", methods=["POST"])
+  def api_save_batch_annotations():
+    """Save multiple annotations in a single request.
+
+    Payload:
+      { session_id, dataset_id, annotations: [{ frame_idx, category_name?, class_id?, value_real?, class_ids? }] }
+
+    Response:
+      { saved: count, errors: count, results: [{ frame_idx, success: bool, error?: string }] }
+    """
+    try:
+      payload = request.get_json(force=True) or {}
+      session_id = str(payload.get("session_id") or "").strip()
+      dataset_id = int(payload.get("dataset_id") or 0)
+      annotations = payload.get("annotations", [])
+
+      if not session_id or dataset_id <= 0 or not annotations or not isinstance(annotations, list):
+        err = ErrorResponse(code="bad_request", message="session_id, dataset_id and annotations array are required")
+        return jsonify(err.model_dump()), 400
+
+      if len(annotations) > 100:  # Limit batch size to prevent memory issues
+        err = ErrorResponse(code="bad_request", message="Batch size limited to 100 annotations")
+        return jsonify(err.model_dump()), 400
+
+    except Exception as e:
+      err = ErrorResponse(code="bad_request", message="Invalid payload", details={"error": str(e)})
+      return jsonify(err.model_dump()), 400
+
+    try:
+      results = []
+      saved_count = 0
+      error_count = 0
+
+      # Process each annotation
+      for ann in annotations:
+        try:
+          frame_idx = int(ann.get("frame_idx", -1))
+          if frame_idx < 0:
+            results.append({"frame_idx": frame_idx, "success": False, "error": "Invalid frame_idx"})
+            error_count += 1
+            continue
+
+          # Resolve frame_id from frame_idx
+          frame = session_service.get_frame_by_idx(session_id, frame_idx)
+          frame_id = str(frame["frame_id"])
+
+          # Determine annotation type based on payload
+          if ann.get("category_name") or ann.get("class_id"):
+            # Single label annotation
+            category_name = ann.get("category_name")
+            class_id = ann.get("class_id")
+
+            # Resolve class_id if only category_name provided
+            if class_id is None and category_name:
+              try:
+                conn = get_connection()
+                cls = db_get_or_create_dataset_class(conn, int(dataset_id), str(category_name))
+                conn.commit()
+                class_id = int(cls["id"])
+                conn.close()
+              except Exception:
+                log.warning("failed to resolve class_id from category_name in batch; continuing", exc_info=True)
+                class_id = None
+
+            if class_id is None:
+              results.append({
+                "frame_idx": frame_idx,
+                "success": False,
+                "error": "class_id or category_name must resolve to a class"
+              })
+              error_count += 1
+              continue
+
+            res = annotation_service.save_single_label(session_id=session_id,
+                                                       dataset_id=dataset_id,
+                                                       frame_id=frame_id,
+                                                       class_id=int(class_id),
+                                                       override_settings=None)
+
+          elif ann.get("value_real") is not None:
+            # Regression annotation
+            value_real = float(ann.get("value_real"))
+            res = annotation_service.save_regression(session_id=session_id,
+                                                     dataset_id=dataset_id,
+                                                     frame_id=frame_id,
+                                                     value=value_real,
+                                                     override_settings=None)
+
+          elif ann.get("class_ids"):
+            # Multi-label annotation
+            class_ids = ann.get("class_ids", [])
+            if not isinstance(class_ids, list):
+              class_ids = []
+
+            # Resolve any category_names to class_ids
+            resolved_class_ids = []
+            if ann.get("category_names"):
+              try:
+                conn = get_connection()
+                for nm in ann.get("category_names", []):
+                  if not nm:
+                    continue
+                  cls = db_get_or_create_dataset_class(conn, int(dataset_id), str(nm))
+                  resolved_class_ids.append(int(cls["id"]))
+                conn.commit()
+                conn.close()
+              except Exception:
+                log.warning("failed to resolve category_names to class_ids in batch; continuing", exc_info=True)
+
+            # Combine with provided class_ids
+            all_class_ids = list(class_ids) + resolved_class_ids
+            # Deduplicate while preserving order
+            seen = set()
+            dedup_class_ids = []
+            for cid in all_class_ids:
+              if cid not in seen:
+                seen.add(cid)
+                dedup_class_ids.append(int(cid))
+
+            if not dedup_class_ids:
+              results.append({"frame_idx": frame_idx, "success": False, "error": "No valid class_ids provided"})
+              error_count += 1
+              continue
+
+            res = annotation_service.save_multilabel(session_id=session_id,
+                                                     dataset_id=dataset_id,
+                                                     frame_id=frame_id,
+                                                     class_ids=dedup_class_ids,
+                                                     override_settings=None)
+
+          else:
+            results.append({"frame_idx": frame_idx, "success": False, "error": "No valid annotation data provided"})
+            error_count += 1
+            continue
+
+          results.append({"frame_idx": frame_idx, "success": True})
+          saved_count += 1
+
+        except Exception as e:
+          log.warning("Failed to save annotation for frame_idx %s: %s", ann.get("frame_idx"), e)
+          results.append({"frame_idx": ann.get("frame_idx"), "success": False, "error": str(e)})
+          error_count += 1
+
+      return jsonify({"saved": saved_count, "errors": error_count, "results": results})
+
+    except Exception as e:
+      err = ErrorResponse(code="batch_save_error",
+                          message="Failed to save batch annotations",
+                          details={"error": str(e)})
+      return jsonify(err.model_dump()), 500
+
+  @bp.route("/api/gpu/status", methods=["GET"])
+  def api_gpu_status():
+    """Check GPU availability and configuration."""
+    try:
+      import torch
+      gpu_info = {
+        "cuda_available": torch.cuda.is_available(),
+        "device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+        "current_device": torch.cuda.current_device() if torch.cuda.is_available() else None,
+      }
+
+      if gpu_info["cuda_available"]:
+        devices = []
+        for i in range(gpu_info["device_count"]):
+          props = torch.cuda.get_device_properties(i)
+          devices.append({
+            "id": i,
+            "name": props.name,
+            "total_memory_gb": props.total_memory / (1024**3),
+            "major": props.major,
+            "minor": props.minor,
+          })
+        gpu_info["devices"] = devices
+        gpu_info["cuda_version"] = torch.version.cuda
+        gpu_info["cudnn_version"] = torch.backends.cudnn.version() if torch.backends.cudnn.is_available() else None
+
+      return jsonify({
+        "gpu_available": gpu_info["cuda_available"],
+        "gpu_count": gpu_info["device_count"],
+        "gpu_info": gpu_info,
+        "torch_version": torch.__version__,
+      })
+    except Exception as e:
+      return jsonify({"gpu_available": False, "error": str(e), "torch_version": "unknown"}), 500
+
   # -------------------- Autolabel (inference) --------------------
   @bp.route("/api/annotations/autolabel", methods=["POST"])
   def api_autolabel_frame():
@@ -908,12 +1094,27 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
 
       pred = autolabel_service.predict_single(Path(abs_path), target_type_name, class_names, confidence_threshold)
 
-      # Map to class_id if possible
+      # Map to class_id, creating class if it doesn't exist
       mapped: Dict[str, Any] = {"category_name": pred.get("category_name")}
       class_id = None
       try:
         name_to_id = {str(r.get("name")): int(r.get("id")) for r in rows}
         class_id = name_to_id.get(str(pred.get("category_name")))
+
+        # If class doesn't exist, create it on-the-fly
+        if class_id is None:
+          predicted_name = str(pred.get("category_name"))
+          if predicted_name and predicted_name.strip():
+            try:
+              new_cls = db_get_or_create_dataset_class(conn, int(dataset_id), predicted_name)
+              conn.commit()
+              class_id = int(new_cls["id"])
+              log.info("Created new class '%s' (id=%s) for dataset %s during autolabel", predicted_name, class_id,
+                       dataset_id)
+            except Exception as e:
+              log.warning("Failed to create new class '%s' during autolabel: %s", predicted_name, e)
+              # Continue without creating class - prediction will still be returned
+
         if class_id is not None:
           mapped["class_id"] = int(class_id)
       except Exception:
@@ -936,12 +1137,12 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
 
   @bp.route("/api/annotations/autolabel_session", methods=["POST"])
   def api_autolabel_session():
-    """Autolabel an entire session. Optionally save predictions that meet threshold.
+    """Autolabel an entire session with progress updates and batch processing.
 
     Payload:
-      { session_id, dataset_id, confidence_threshold?=0.9, dry_run?=false, limit? }
+      { session_id, dataset_id, confidence_threshold?=0.9, dry_run?=false, limit?, batch_size?=10, progress_callback?=false }
 
-    Returns summary with counts and simple per-class tallies for saved items.
+    Returns summary with counts and per-class tallies. If progress_callback=true, returns progress updates.
     """
     try:
       payload = request.get_json(force=True) or {}
@@ -950,10 +1151,17 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       confidence_threshold = float(payload.get("confidence_threshold") or 0.9)
       dry_run = bool(payload.get("dry_run") or False)
       limit = payload.get("limit")
+      batch_size = int(payload.get("batch_size") or 10)
+      progress_callback = bool(payload.get("progress_callback") or False)
       n_limit = int(limit) if (limit is not None and str(limit).strip() != "") else None
+
       if not session_id or dataset_id <= 0:
         err = ErrorResponse(code="bad_request", message="session_id and dataset_id are required")
         return jsonify(err.model_dump()), 400
+
+      if batch_size > 50:  # Prevent excessive memory usage
+        batch_size = 50
+
     except Exception as e:
       err = ErrorResponse(code="bad_request", message="Invalid payload", details={"error": str(e)})
       return jsonify(err.model_dump()), 400
@@ -970,15 +1178,37 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       name_to_id = {str(r.get("name")): int(r.get("id")) for r in rows}
       target_type_name = d.get("target_type_name") or "SingleLabelClassification"
 
-      # Iterate frames by index until out-of-range
+      # Count total frames first
+      total_frames = 0
+      try:
+        idx = 0
+        while True:
+          try:
+            session_service.get_frame_for_image(session_id, idx)
+            total_frames += 1
+            idx += 1
+            if n_limit is not None and total_frames >= n_limit:
+              break
+          except IndexError:
+            break
+          except Exception:
+            idx += 1
+      except Exception:
+        total_frames = 0  # Fallback if we can't determine total
+
+      # Initialize progress tracking
       processed = 0
       saved = 0
       errors = 0
       per_class: Dict[str, int] = {}
+      batch_annotations = []
+
+      # Process frames in batches
       idx = 0
       while True:
         if n_limit is not None and processed >= n_limit:
           break
+
         try:
           abs_path, _frame = session_service.get_frame_for_image(session_id, idx)
         except IndexError:
@@ -987,43 +1217,136 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
           errors += 1
           idx += 1
           continue
+
         try:
           pred = autolabel_service.predict_single(Path(abs_path), target_type_name, class_names, confidence_threshold)
           processed += 1
+
           if pred.get("meets_threshold"):
             cat = str(pred.get("category_name"))
             per_class[cat] = per_class.get(cat, 0) + 1
+
             if not dry_run:
-              # Save to DB when class id is resolvable; if missing, create on-the-fly is not attempted here
+              # Get or create class
               cls_id = name_to_id.get(cat)
-              if cls_id is not None:
+              if cls_id is None:
                 try:
-                  # Resolve frame_id for this idx and save
-                  frame = session_service.get_frame_by_idx(session_id, idx)
-                  annotation_service.save_single_label(session_id=session_id,
-                                                       dataset_id=int(dataset_id),
-                                                       frame_id=str(frame["frame_id"]),
-                                                       class_id=int(cls_id),
-                                                       override_settings=None)
-                  saved += 1
-                except Exception:
+                  new_cls = db_get_or_create_dataset_class(conn, int(dataset_id), cat)
+                  conn.commit()
+                  cls_id = int(new_cls["id"])
+                  name_to_id[cat] = cls_id
+                  class_names.append(cat)  # Update class names for future predictions
+                  log.info("Created new class '%s' (id=%s) during session autolabel", cat, cls_id)
+                except Exception as e:
+                  log.warning("Failed to create new class '%s' during session autolabel: %s", cat, e)
                   errors += 1
-          # advance
+                  idx += 1
+                  continue
+
+              # Add to batch for later saving
+              frame = session_service.get_frame_by_idx(session_id, idx)
+              batch_annotations.append({"frame_idx": idx, "category_name": cat, "class_id": cls_id})
+
+              # Save batch if it reaches the batch size
+              if len(batch_annotations) >= batch_size:
+                try:
+                  # Use the batch endpoint directly
+                  batch_payload = {"session_id": session_id, "dataset_id": dataset_id, "annotations": batch_annotations}
+                  # Call batch save function directly
+                  results = []
+                  batch_saved = 0
+                  batch_errors = 0
+
+                  for ann in batch_annotations:
+                    try:
+                      frame = session_service.get_frame_by_idx(session_id, ann["frame_idx"])
+                      annotation_service.save_single_label(session_id=session_id,
+                                                           dataset_id=dataset_id,
+                                                           frame_id=str(frame["frame_id"]),
+                                                           class_id=int(ann["class_id"]),
+                                                           override_settings=None)
+                      results.append({"frame_idx": ann["frame_idx"], "success": True})
+                      batch_saved += 1
+                    except Exception as e:
+                      log.warning("Failed to save annotation for frame_idx %s: %s", ann["frame_idx"], e)
+                      results.append({"frame_idx": ann["frame_idx"], "success": False, "error": str(e)})
+                      batch_errors += 1
+
+                  saved += batch_saved
+                  errors += batch_errors
+                  batch_annotations = []
+                except Exception as e:
+                  log.error("Batch save failed: %s", e)
+                  errors += len(batch_annotations)
+                  batch_annotations = []
+
+                # Send progress update if requested
+                if progress_callback and hasattr(request, 'is_json') and request.is_json:
+                  progress_data = {
+                    "progress": {
+                      "processed": processed,
+                      "total": total_frames,
+                      "saved": saved,
+                      "errors": errors,
+                      "percentage": (processed / total_frames) * 100 if total_frames > 0 else 0
+                    },
+                    "per_class": per_class,
+                    "completed": False
+                  }
+                  # Note: In a real streaming implementation, you'd use Server-Sent Events or WebSockets
+                  # For now, we'll just log the progress
+                  log.info("Autolabel progress: %s/%s (%.1f%%)", processed, total_frames,
+                           progress_data["progress"]["percentage"])
+
         except AutoLabelUnavailable as e:
           err = ErrorResponse(code="autolabel_unavailable", message=str(e))
           return jsonify(err.model_dump()), 501
-        except Exception:
+        except Exception as e:
+          log.warning("Error processing frame %s: %s", idx, e)
           errors += 1
         finally:
           idx += 1
 
+      # Save remaining batch
+      if len(batch_annotations) > 0 and not dry_run:
+        try:
+          for ann in batch_annotations:
+            try:
+              frame = session_service.get_frame_by_idx(session_id, ann["frame_idx"])
+              annotation_service.save_single_label(session_id=session_id,
+                                                   dataset_id=dataset_id,
+                                                   frame_id=str(frame["frame_id"]),
+                                                   class_id=int(ann["class_id"]),
+                                                   override_settings=None)
+              saved += 1
+            except Exception as e:
+              log.warning("Failed to save final annotation for frame_idx %s: %s", ann["frame_idx"], e)
+              errors += 1
+        except Exception as e:
+          log.error("Final batch save failed: %s", e)
+          errors += len(batch_annotations)
+
+      # Send final progress update
+      if progress_callback:
+        log.info("Autolabel completed: %s processed, %s saved, %s errors", processed, saved, errors)
+
       return jsonify({
-        "processed": int(processed),
-        "saved": int(saved),
-        "errors": int(errors),
-        "per_class": per_class,
-        "dry_run": bool(dry_run),
+        "processed":
+        int(processed),
+        "saved":
+        int(saved),
+        "errors":
+        int(errors),
+        "total_frames":
+        int(total_frames),
+        "per_class":
+        per_class,
+        "dry_run":
+        bool(dry_run),
+        "classes_created":
+        len([k for k in name_to_id.keys() if k not in [str(r.get("name")) for r in rows]])
       })
+
     except Exception as e:
       err = ErrorResponse(code="autolabel_error", message="Failed to autolabel session", details={"error": str(e)})
       return jsonify(err.model_dump()), 500

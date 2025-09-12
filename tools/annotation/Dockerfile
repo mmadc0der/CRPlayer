@@ -1,11 +1,26 @@
-FROM python:3.12-slim
+# Use NVIDIA CUDA base image for GPU support
+FROM nvidia/cuda:11.8-cudnn8-runtime-ubuntu22.04
+
+# Set environment variables for CUDA
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=$CUDA_HOME/bin:$PATH
+ENV LD_LIBRARY_PATH=$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+  python3.12 \
+  python3.12-dev \
+  python3-pip \
   curl \
+  git \
   && rm -rf /var/lib/apt/lists/*
+
+# Create symbolic link for python
+RUN ln -s /usr/bin/python3.12 /usr/bin/python
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
