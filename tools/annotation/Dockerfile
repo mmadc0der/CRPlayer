@@ -27,14 +27,12 @@ RUN apt-get update && apt-get install -y \
   tzdata \
   && rm -rf /var/lib/apt/lists/*
 
-# Create symbolic link for python
-RUN ln -s /usr/bin/python3.11 /usr/bin/python
-
 # Create virtual environment and install Python dependencies
 COPY requirements.txt .
-RUN python3 -m venv /opt/venv
+RUN python3.11 -m venv /opt/venv
+RUN ln -s /opt/venv/bin/python3.11 /usr/bin/python
 ENV PATH="/opt/venv/bin:$PATH"
-RUN /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
@@ -66,6 +64,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 
 # Run the application
 USER appuser
-ENV PATH="/opt/venv/bin:$PATH"
-
-CMD ["/opt/venv/bin/python", "app.py", "--host", "0.0.0.0", "--port", "5000"]
+CMD ["python", "app.py", "--host", "0.0.0.0", "--port", "5000"]
