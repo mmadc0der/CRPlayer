@@ -231,28 +231,48 @@ def annotation_index():
 
 async def websocket_handler(websocket, path):
   """Handle WebSocket connections"""
-  logger.info("WebSocket connection established from %s", websocket.remote_address)
+  logger.info("WebSocket connection established from %s, path: %s", websocket.remote_address, path)
   websocket_manager.add_connection(websocket)
   connection_count = len(websocket_manager.connections)
   logger.info("Total WebSocket connections: %d", connection_count)
 
   try:
+    # Send a welcome message to test the connection
+    welcome_message = json.dumps({
+      'type': 'welcome',
+      'message': 'WebSocket connection established',
+      'timestamp': asyncio.get_event_loop().time()
+    })
+    await websocket.send(welcome_message)
+    logger.debug("Sent welcome message to client")
+
     async for message in websocket:
       # Handle incoming messages from clients
       logger.debug("Received WebSocket message: %s", message)
       try:
         data = json.loads(message)
+        logger.info("Parsed WebSocket message: %s", data)
+
         if data.get('type') == 'ping':
           # Respond to ping with pong
           pong_message = json.dumps({'type': 'pong', 'timestamp': data.get('timestamp', 0)})
           await websocket.send(pong_message)
-          logger.debug("Sent pong response to client")
-      except json.JSONDecodeError:
-        logger.debug("Received non-JSON WebSocket message: %s", message)
+          logger.info("Sent pong response to client")
+        else:
+          logger.info("Received unknown message type: %s", data.get('type'))
+
+      except json.JSONDecodeError as e:
+        logger.warning("Received non-JSON WebSocket message: %s, error: %s", message, e)
   except websockets.exceptions.ConnectionClosed as e:
-    logger.info("WebSocket connection closed: %s", e)
+    logger.info("WebSocket connection closed: code=%s, reason=%s", e.code, e.reason)
   except Exception as e:
-    logger.error("WebSocket connection error: %s", e)
+    logger.error("WebSocket connection error: %s", e, exc_info=True)
+    # Send error message before closing
+    try:
+      error_message = json.dumps({'type': 'error', 'message': str(e), 'timestamp': asyncio.get_event_loop().time()})
+      await websocket.send(error_message)
+    except:
+      pass  # Ignore errors when sending error message
   finally:
     websocket_manager.remove_connection(websocket)
     logger.info("WebSocket connection removed. Total connections: %d", len(websocket_manager.connections))
@@ -261,20 +281,33 @@ async def websocket_handler(websocket, path):
 async def run_websocket_server(host, port):
   """Run the WebSocket server"""
   websocket_port = port + 1  # Run websocket on port + 1
-  logger.info("Starting WebSocket server on port %s", websocket_port)
+  logger.info("Starting WebSocket server on %s:%s", host, websocket_port)
+
+  # Ensure we're binding to all interfaces for nginx proxy
+  if host == "127.0.0.1":
+    host = "0.0.0.0"
+    logger.info("Changed WebSocket bind address to %s:%s for nginx proxy", host, websocket_port)
 
   # Set the event loop for thread-safe communication
   websocket_manager.set_event_loop(asyncio.get_running_loop())
+  logger.info("WebSocket event loop configured for thread-safe communication")
 
   # Start the message processing task
   message_task = asyncio.create_task(websocket_manager.process_messages())
+  logger.info("WebSocket message processing task started")
 
-  async with websockets.serve(websocket_handler, host, websocket_port):
+  try:
+    server = await websockets.serve(websocket_handler, host, websocket_port)
+    logger.info("WebSocket server started successfully on %s:%s", host, websocket_port)
+
     # Run both the WebSocket server and message processor concurrently
     await asyncio.gather(
       asyncio.Future(),  # Keep server running
       message_task  # Process queued messages
     )
+  except Exception as e:
+    logger.error("Failed to start WebSocket server: %s", e, exc_info=True)
+    raise
 
 
 def run_flask_app(host, port, debug):
@@ -301,6 +334,12 @@ if __name__ == "__main__":
   logger.info("Starting web server at http://%s:%s", args.host, args.port)
   logger.info("WebSocket server will be available at ws://%s:%s", args.host, args.port + 1)
   logger.info("Open this URL in your browser to start annotating!")
+
+  # Log container networking information
+  import os
+  container_env = os.environ.get('CONTAINER', 'unknown')
+  logger.info("Container environment: %s", container_env)
+  logger.info("Binding to host: %s", args.host)
 
   if args.debug:
     # In debug mode, run Flask with reloader
