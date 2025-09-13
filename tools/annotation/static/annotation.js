@@ -2145,44 +2145,89 @@
       autolabelSessionBtn.textContent = 'Autolabeling...';
 
       try {
-        // Use the improved session autolabel with progress
-        const res = await apiPost('annotations/autolabel_session', {
+        // Start the autolabel session job
+        const startRes = await apiPost('annotations/autolabel_session', {
           session_id: state.session_id,
           dataset_id: state.dataset_id,
-          confidence_threshold: 0.9,
+          confidence_threshold: 0.75,
           dry_run: false,
-          batch_size: 10,
-          progress_callback: true,
+          batch_size: 128,
         });
 
         if (cancelled) return;
 
-        if (res && typeof res.processed === 'number') {
-          // Update final progress
-          progressFill.style.width = '100%';
-          progressText.textContent = 'Completed!';
-          statsDiv.textContent = `Processed: ${res.processed}, Saved: ${res.saved}, Errors: ${res.errors}`;
-
-          // Show summary toast
-          toast(`Autolabeled ${res.saved}/${res.processed} frames`);
-
-          // Refresh UI
-          refreshProgress();
-          refreshStats();
-          await loadDatasetClasses(state.dataset_id); // Refresh classes in case new ones were created
-          renderCategories();
-          await loadFrame(state.currentIdx); // Reload current frame
-
-          // Remove progress after a delay
-          setTimeout(() => {
-            if (progressContainer.parentNode) {
-              progressContainer.remove();
-            }
-          }, 3000);
-        } else {
-          toast('Autolabel session failed');
+        if (!startRes || !startRes.job_id) {
+          toast('Failed to start autolabel session');
           progressContainer.remove();
+          return;
         }
+
+        const jobId = startRes.job_id;
+        progressText.textContent = 'Processing...';
+
+        // Poll for progress updates
+        const pollInterval = setInterval(async () => {
+          if (cancelled) {
+            clearInterval(pollInterval);
+            return;
+          }
+
+          try {
+            const statusRes = await apiGet(`annotations/autolabel_session/status/${jobId}`);
+
+            if (statusRes.status === 'completed') {
+              clearInterval(pollInterval);
+
+              // Update final progress
+              progressFill.style.width = '100%';
+              progressText.textContent = 'Completed!';
+              const result = statusRes.result;
+              statsDiv.textContent = `Processed: ${result.processed}, Saved: ${result.saved}, Errors: ${result.errors}`;
+
+              // Show summary toast
+              toast(`Autolabeled ${result.saved}/${result.processed} frames`);
+
+              // Refresh UI
+              refreshProgress();
+              refreshStats();
+              await loadDatasetClasses(state.dataset_id); // Refresh classes in case new ones were created
+              renderCategories();
+              await loadFrame(state.currentIdx); // Reload current frame
+
+              // Remove progress after a delay
+              setTimeout(() => {
+                if (progressContainer.parentNode) {
+                  progressContainer.remove();
+                }
+              }, 3000);
+
+            } else if (statusRes.status === 'error') {
+              clearInterval(pollInterval);
+              toast(`Autolabel failed: ${statusRes.error || 'Unknown error'}`);
+              progressContainer.remove();
+
+            } else if (statusRes.status === 'running' && statusRes.progress) {
+              // Update progress
+              const progress = statusRes.progress;
+              const percentage = Math.round(progress.percentage || 0);
+              progressFill.style.width = `${percentage}%`;
+              progressText.textContent = `Processing: ${progress.processed}/${progress.total} (${percentage}%)`;
+              statsDiv.textContent = `Saved: ${progress.saved}, Errors: ${progress.errors}`;
+            }
+          } catch (e) {
+            // Continue polling even if one request fails
+            console.warn('Failed to poll autolabel status:', e);
+          }
+        }, 1000); // Poll every second
+
+        // Handle cancellation
+        const originalCancel = cancelBtn.onclick;
+        cancelBtn.onclick = () => {
+          cancelled = true;
+          clearInterval(pollInterval);
+          originalCancel();
+        };
+
       } catch (e) {
         if (!cancelled) {
           toast((e && e.message) ? e.message : 'Autolabel session error');

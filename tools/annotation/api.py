@@ -6,6 +6,9 @@ import logging
 import json
 from datetime import datetime
 from typing import Dict, Any
+import threading
+import time
+from uuid import uuid4
 
 from core.session_manager import SessionManager
 from services.session_service import SessionService
@@ -14,6 +17,10 @@ from services.settings_service import SettingsService
 from services.dataset_service import DatasetService
 from services.download_service import DownloadService
 from services.autolabel_service import AutoLabelService, AutoLabelUnavailable
+
+# Global storage for autolabel job status (in production, use Redis/database)
+_autolabel_jobs: Dict[str, Dict[str, Any]] = {}
+_autolabel_jobs_lock = threading.Lock()
 from dto import (
   FrameQuery,
   ImageQuery,
@@ -1067,7 +1074,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       session_id = str(payload.get("session_id") or "").strip()
       dataset_id = int(payload.get("dataset_id") or 0)
       frame_idx = int(payload.get("frame_idx") if payload.get("frame_idx") is not None else -1)
-      confidence_threshold = float(payload.get("confidence_threshold") or 0.9)
+      confidence_threshold = float(payload.get("confidence_threshold") or 0.75)
       if not session_id or dataset_id <= 0 or frame_idx < 0:
         err = ErrorResponse(code="bad_request", message="session_id, dataset_id and frame_idx are required")
         return jsonify(err.model_dump()), 400
@@ -1135,44 +1142,46 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       err = ErrorResponse(code="autolabel_error", message="Failed to autolabel frame", details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
-  @bp.route("/api/annotations/autolabel_session", methods=["POST"])
-  def api_autolabel_session():
-    """Autolabel an entire session with progress updates and batch processing.
-
-    Payload:
-      { session_id, dataset_id, confidence_threshold?=0.9, dry_run?=false, limit?, batch_size?=10, progress_callback?=false }
-
-    Returns summary with counts and per-class tallies. If progress_callback=true, returns progress updates.
-    """
+  @bp.route("/api/annotations/autolabel_session/status/<job_id>", methods=["GET"])
+  def api_autolabel_session_status(job_id: str):
+    """Get the status of an autolabel session job."""
     try:
-      payload = request.get_json(force=True) or {}
+      with _autolabel_jobs_lock:
+        job = _autolabel_jobs.get(job_id)
+        if not job:
+          err = ErrorResponse(code="not_found", message="Autolabel job not found")
+          return jsonify(err.model_dump()), 404
+
+        return jsonify(job)
+    except Exception as e:
+      err = ErrorResponse(code="status_error", message="Failed to get autolabel status", details={"error": str(e)})
+      return jsonify(err.model_dump()), 500
+
+  def _run_autolabel_session(job_id: str, payload: Dict[str, Any]):
+    """Background task to run autolabel session processing."""
+    try:
       session_id = str(payload.get("session_id") or "").strip()
       dataset_id = int(payload.get("dataset_id") or 0)
       confidence_threshold = float(payload.get("confidence_threshold") or 0.9)
       dry_run = bool(payload.get("dry_run") or False)
       limit = payload.get("limit")
       batch_size = int(payload.get("batch_size") or 10)
-      progress_callback = bool(payload.get("progress_callback") or False)
       n_limit = int(limit) if (limit is not None and str(limit).strip() != "") else None
 
-      if not session_id or dataset_id <= 0:
-        err = ErrorResponse(code="bad_request", message="session_id and dataset_id are required")
-        return jsonify(err.model_dump()), 400
+      # Update job status
+      with _autolabel_jobs_lock:
+        _autolabel_jobs[job_id]["status"] = "running"
+        _autolabel_jobs[job_id]["started_at"] = datetime.now().isoformat()
 
-      if batch_size > 50:  # Prevent excessive memory usage
-        batch_size = 50
-
-    except Exception as e:
-      err = ErrorResponse(code="bad_request", message="Invalid payload", details={"error": str(e)})
-      return jsonify(err.model_dump()), 400
-
-    try:
       # Fetch dataset and classes
       conn = get_connection()
       d = db_get_dataset(conn, int(dataset_id))
       if not d:
-        err = ErrorResponse(code="not_found", message="Dataset not found")
-        return jsonify(err.model_dump()), 404
+        with _autolabel_jobs_lock:
+          _autolabel_jobs[job_id]["status"] = "error"
+          _autolabel_jobs[job_id]["error"] = "Dataset not found"
+        return
+
       rows = db_list_dataset_classes(conn, int(dataset_id))
       class_names = [str(r.get("name")) for r in rows]
       name_to_id = {str(r.get("name")): int(r.get("id")) for r in rows}
@@ -1202,6 +1211,17 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
       errors = 0
       per_class: Dict[str, int] = {}
       batch_annotations = []
+
+      # Update initial status
+      with _autolabel_jobs_lock:
+        _autolabel_jobs[job_id]["total_frames"] = total_frames
+        _autolabel_jobs[job_id]["progress"] = {
+          "processed": processed,
+          "total": total_frames,
+          "saved": saved,
+          "errors": errors,
+          "percentage": 0
+        }
 
       # Process frames in batches
       idx = 0
@@ -1235,7 +1255,7 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
                   conn.commit()
                   cls_id = int(new_cls["id"])
                   name_to_id[cat] = cls_id
-                  class_names.append(cat)  # Update class names for future predictions
+                  class_names.append(cat)
                   log.info("Created new class '%s' (id=%s) during session autolabel", cat, cls_id)
                 except Exception as e:
                   log.warning("Failed to create new class '%s' during session autolabel: %s", cat, e)
@@ -1250,9 +1270,6 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
               # Save batch if it reaches the batch size
               if len(batch_annotations) >= batch_size:
                 try:
-                  # Use the batch endpoint directly
-                  batch_payload = {"session_id": session_id, "dataset_id": dataset_id, "annotations": batch_annotations}
-                  # Call batch save function directly
                   results = []
                   batch_saved = 0
                   batch_errors = 0
@@ -1280,27 +1297,22 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
                   errors += len(batch_annotations)
                   batch_annotations = []
 
-                # Send progress update if requested
-                if progress_callback and hasattr(request, 'is_json') and request.is_json:
-                  progress_data = {
-                    "progress": {
-                      "processed": processed,
-                      "total": total_frames,
-                      "saved": saved,
-                      "errors": errors,
-                      "percentage": (processed / total_frames) * 100 if total_frames > 0 else 0
-                    },
-                    "per_class": per_class,
-                    "completed": False
-                  }
-                  # Note: In a real streaming implementation, you'd use Server-Sent Events or WebSockets
-                  # For now, we'll just log the progress
-                  log.info("Autolabel progress: %s/%s (%.1f%%)", processed, total_frames,
-                           progress_data["progress"]["percentage"])
+              # Update progress
+              with _autolabel_jobs_lock:
+                _autolabel_jobs[job_id]["progress"] = {
+                  "processed": processed,
+                  "total": total_frames,
+                  "saved": saved,
+                  "errors": errors,
+                  "percentage": (processed / total_frames) * 100 if total_frames > 0 else 0
+                }
+                _autolabel_jobs[job_id]["per_class"] = per_class.copy()
 
         except AutoLabelUnavailable as e:
-          err = ErrorResponse(code="autolabel_unavailable", message=str(e))
-          return jsonify(err.model_dump()), 501
+          with _autolabel_jobs_lock:
+            _autolabel_jobs[job_id]["status"] = "error"
+            _autolabel_jobs[job_id]["error"] = str(e)
+          return
         except Exception as e:
           log.warning("Error processing frame %s: %s", idx, e)
           errors += 1
@@ -1326,29 +1338,69 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
           log.error("Final batch save failed: %s", e)
           errors += len(batch_annotations)
 
-      # Send final progress update
-      if progress_callback:
-        log.info("Autolabel completed: %s processed, %s saved, %s errors", processed, saved, errors)
+      # Mark job as completed
+      with _autolabel_jobs_lock:
+        _autolabel_jobs[job_id]["status"] = "completed"
+        _autolabel_jobs[job_id]["completed_at"] = datetime.now().isoformat()
+        _autolabel_jobs[job_id]["result"] = {
+          "processed": int(processed),
+          "saved": int(saved),
+          "errors": int(errors),
+          "total_frames": int(total_frames),
+          "per_class": per_class,
+          "dry_run": bool(dry_run),
+          "classes_created": len([k for k in name_to_id.keys() if k not in [str(r.get("name")) for r in rows]])
+        }
 
-      return jsonify({
-        "processed":
-        int(processed),
-        "saved":
-        int(saved),
-        "errors":
-        int(errors),
-        "total_frames":
-        int(total_frames),
-        "per_class":
-        per_class,
-        "dry_run":
-        bool(dry_run),
-        "classes_created":
-        len([k for k in name_to_id.keys() if k not in [str(r.get("name")) for r in rows]])
-      })
+      log.info("Autolabel completed: %s processed, %s saved, %s errors", processed, saved, errors)
 
     except Exception as e:
-      err = ErrorResponse(code="autolabel_error", message="Failed to autolabel session", details={"error": str(e)})
+      log.error("Autolabel job failed: %s", e)
+      with _autolabel_jobs_lock:
+        _autolabel_jobs[job_id]["status"] = "error"
+        _autolabel_jobs[job_id]["error"] = str(e)
+
+  @bp.route("/api/annotations/autolabel_session", methods=["POST"])
+  def api_autolabel_session():
+    """Start autolabel session processing in the background.
+
+    Payload:
+      { session_id, dataset_id, confidence_threshold?=0.9, dry_run?=false, limit?, batch_size?=10 }
+
+    Returns job_id for tracking progress.
+    """
+    try:
+      payload = request.get_json(force=True) or {}
+      session_id = str(payload.get("session_id") or "").strip()
+      dataset_id = int(payload.get("dataset_id") or 0)
+
+      if not session_id or dataset_id <= 0:
+        err = ErrorResponse(code="bad_request", message="session_id and dataset_id are required")
+        return jsonify(err.model_dump()), 400
+
+      # Create job
+      job_id = str(uuid4())
+      with _autolabel_jobs_lock:
+        _autolabel_jobs[job_id] = {
+          "id": job_id,
+          "status": "pending",
+          "session_id": session_id,
+          "dataset_id": dataset_id,
+          "created_at": datetime.now().isoformat(),
+          "payload": payload
+        }
+
+      # Start background thread
+      thread = threading.Thread(target=_run_autolabel_session, args=(job_id, payload))
+      thread.daemon = True
+      thread.start()
+
+      return jsonify({"job_id": job_id, "status": "started"})
+
+    except Exception as e:
+      err = ErrorResponse(code="autolabel_error",
+                          message="Failed to start autolabel session",
+                          details={"error": str(e)})
       return jsonify(err.model_dump()), 500
 
   # -------------------- Dataset-session settings --------------------
