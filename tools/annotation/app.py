@@ -5,13 +5,16 @@ Flask web application for in-place annotation via browser.
 """
 
 from flask import Flask, render_template
-from flask_socketio import SocketIO, emit
 from pathlib import Path
 import argparse
 import threading
 import atexit
 import os
 import logging
+import asyncio
+import websockets
+import json
+from concurrent.futures import ThreadPoolExecutor
 
 from logging_setup import setup_logging, install_flask_request_hooks
 
@@ -30,8 +33,38 @@ app = Flask(
   template_folder=str(BASE_DIR / "templates"),
 )
 
-# Initialize SocketIO for real-time communication
-socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
+
+# Initialize WebSocket manager for real-time communication
+class WebSocketManager:
+
+  def __init__(self):
+    self.connections = set()
+    self.executor = ThreadPoolExecutor(max_workers=4)
+
+  def add_connection(self, websocket):
+    self.connections.add(websocket)
+
+  def remove_connection(self, websocket):
+    self.connections.discard(websocket)
+
+  async def emit(self, event, data, namespace=None):
+    """Emit message to all connected clients"""
+    message = json.dumps({'event': event, 'data': data, 'namespace': namespace})
+
+    # Remove dead connections
+    dead_connections = set()
+    for websocket in self.connections:
+      try:
+        await websocket.send(message)
+      except websockets.exceptions.ConnectionClosed:
+        dead_connections.add(websocket)
+
+    # Clean up dead connections
+    for dead_conn in dead_connections:
+      self.connections.discard(dead_conn)
+
+
+websocket_manager = WebSocketManager()
 
 # Initialize logging as early as possible
 setup_logging(app_debug=None)
@@ -55,7 +88,7 @@ def set_script_name():
 session_manager = SessionManager()
 
 # Register API blueprint at /api/* for backward compatibility
-api_bp = create_annotation_api(session_manager, socketio, name="annotation_api")
+api_bp = create_annotation_api(session_manager, websocket_manager, name="annotation_api")
 app.register_blueprint(api_bp)
 
 # Initialize SQLite schema (idempotent)
@@ -150,6 +183,40 @@ def annotation_index():
 
 ## Legacy /api/datasets removed
 
+
+async def websocket_handler(websocket, path):
+  """Handle WebSocket connections"""
+  logger.info("WebSocket connection established")
+  websocket_manager.add_connection(websocket)
+  try:
+    async for message in websocket:
+      # For now, we only handle outgoing messages (emits)
+      # Clients can connect but we don't process incoming messages
+      pass
+  except websockets.exceptions.ConnectionClosed:
+    logger.info("WebSocket connection closed")
+  finally:
+    websocket_manager.remove_connection(websocket)
+
+
+async def run_websocket_server(host, port):
+  """Run the WebSocket server"""
+  websocket_port = port + 1  # Run websocket on port + 1
+  logger.info("Starting WebSocket server on port %s", websocket_port)
+  async with websockets.serve(websocket_handler, host, websocket_port):
+    await asyncio.Future()  # Run forever
+
+
+def run_flask_app(host, port, debug):
+  """Run the Flask application"""
+  from werkzeug.serving import make_server
+
+  # Create WSGI server
+  server = make_server(host, port, app, threaded=True)
+  logger.info("Starting Flask server on http://%s:%s", host, port)
+  server.serve_forever()
+
+
 if __name__ == "__main__":
   parser = argparse.ArgumentParser(description="Web-based Annotation Tool")
   parser.add_argument("--host", default="127.0.0.1", help="Host to bind to")
@@ -162,6 +229,22 @@ if __name__ == "__main__":
   logger.info("Game State Annotation Tool")
   logger.info("%s", "=" * 40)
   logger.info("Starting web server at http://%s:%s", args.host, args.port)
+  logger.info("WebSocket server will be available at ws://%s:%s", args.host, args.port + 1)
   logger.info("Open this URL in your browser to start annotating!")
 
-  socketio.run(app, host=args.host, port=args.port, debug=args.debug)
+  if args.debug:
+    # In debug mode, run Flask with reloader
+    app.run(host=args.host, port=args.port, debug=True)
+  else:
+    # In production mode, run both Flask and WebSocket servers concurrently
+    async def main():
+      import concurrent.futures
+
+      with concurrent.futures.ThreadPoolExecutor() as executor:
+        # Run Flask in a thread
+        flask_future = executor.submit(run_flask_app, args.host, args.port, args.debug)
+
+        # Run WebSocket server in the main thread
+        await run_websocket_server(args.host, args.port)
+
+    asyncio.run(main())

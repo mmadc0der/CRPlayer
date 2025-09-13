@@ -55,8 +55,8 @@ RUN set -eux; \
   useradd -m -s /bin/bash appuser); \
   chown -R appuser:appgroup /app
 
-# Expose port
-EXPOSE 5000
+# Expose ports (Flask on 5000, WebSocket on 5001)
+EXPOSE 5000 5001
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \

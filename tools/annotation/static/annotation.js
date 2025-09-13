@@ -2165,76 +2165,84 @@
         const jobId = startRes.job_id;
         progressText.textContent = 'Processing...';
 
-        // Connect to WebSocket for real-time updates
-        const socket = io(window.location.origin, {
-          path: window.APP_BASE + '/socket.io',
-          transports: ['websocket', 'polling']
-        });
+        // Connect to native WebSocket for real-time updates
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsHost = window.location.hostname;
+        const wsPort = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+        // Connect to WebSocket through nginx proxy (port 5001 proxied through nginx)
+        const websocketUrl = `${wsProtocol}//${wsHost}:${wsPort}${APP_BASE}/websocket`;
+        const websocket = new WebSocket(websocketUrl);
 
-        socket.on('connect', () => {
-          console.log('Connected to WebSocket for autolabel progress');
-        });
+        websocket.onopen = () => {
+          console.log('Connected to WebSocket for autolabel progress at', websocketUrl);
+        };
 
-        socket.on('disconnect', () => {
+        websocket.onclose = () => {
           console.log('Disconnected from WebSocket');
-        });
+        };
 
-        // Listen for progress updates
-        socket.on('autolabel_progress', (data) => {
-          if (data.job_id === jobId && !cancelled) {
-            const progress = data.progress;
-            const percentage = Math.round(progress.percentage || 0);
-            progressFill.style.width = `${percentage}%`;
-            progressText.textContent = `Processing: ${progress.processed}/${progress.total} (${percentage}%)`;
-            statsDiv.textContent = `Saved: ${progress.saved}, Errors: ${progress.errors}`;
+        websocket.onerror = (error) => {
+          console.error('WebSocket error:', error);
+        };
+
+        // Listen for messages from the WebSocket server
+        websocket.onmessage = (event) => {
+          try {
+            const message = JSON.parse(event.data);
+            const { event: eventType, data } = message;
+
+            // Only handle autolabel events
+            if (eventType === 'autolabel_progress' && data.job_id === jobId && !cancelled) {
+              const progress = data.progress;
+              const percentage = Math.round(progress.percentage || 0);
+              progressFill.style.width = `${percentage}%`;
+              progressText.textContent = `Processing: ${progress.processed}/${progress.total} (${percentage}%)`;
+              statsDiv.textContent = `Saved: ${progress.saved}, Errors: ${progress.errors}`;
+            }
+
+            else if (eventType === 'autolabel_completed' && data.job_id === jobId && !cancelled) {
+              websocket.close();
+
+              // Update final progress
+              progressFill.style.width = '100%';
+              progressText.textContent = 'Completed!';
+              const result = data.result;
+              statsDiv.textContent = `Processed: ${result.processed}, Saved: ${result.saved}, Errors: ${result.errors}`;
+
+              // Show summary toast
+              toast(`Autolabeled ${result.saved}/${result.processed} frames`);
+
+              // Refresh UI
+              refreshProgress();
+              refreshStats();
+              loadDatasetClasses(state.dataset_id).then(() => { // Refresh classes in case new ones were created
+                renderCategories();
+                loadFrame(state.currentIdx); // Reload current frame
+              });
+
+              // Remove progress after a delay
+              setTimeout(() => {
+                if (progressContainer.parentNode) {
+                  progressContainer.remove();
+                }
+              }, 3000);
+            }
+
+            else if (eventType === 'autolabel_error' && data.job_id === jobId && !cancelled) {
+              websocket.close();
+              toast(`Autolabel failed: ${data.error || 'Unknown error'}`);
+              progressContainer.remove();
+            }
+          } catch (error) {
+            console.error('Error parsing WebSocket message:', error);
           }
-        });
-
-        // Listen for completion
-        socket.on('autolabel_completed', (data) => {
-          if (data.job_id === jobId && !cancelled) {
-            socket.disconnect();
-
-            // Update final progress
-            progressFill.style.width = '100%';
-            progressText.textContent = 'Completed!';
-            const result = data.result;
-            statsDiv.textContent = `Processed: ${result.processed}, Saved: ${result.saved}, Errors: ${result.errors}`;
-
-            // Show summary toast
-            toast(`Autolabeled ${result.saved}/${result.processed} frames`);
-
-            // Refresh UI
-            refreshProgress();
-            refreshStats();
-            loadDatasetClasses(state.dataset_id).then(() => { // Refresh classes in case new ones were created
-              renderCategories();
-              loadFrame(state.currentIdx); // Reload current frame
-            });
-
-            // Remove progress after a delay
-            setTimeout(() => {
-              if (progressContainer.parentNode) {
-                progressContainer.remove();
-              }
-            }, 3000);
-          }
-        });
-
-        // Listen for errors
-        socket.on('autolabel_error', (data) => {
-          if (data.job_id === jobId && !cancelled) {
-            socket.disconnect();
-            toast(`Autolabel failed: ${data.error || 'Unknown error'}`);
-            progressContainer.remove();
-          }
-        });
+        };
 
         // Handle cancellation
         const originalCancel = cancelBtn.onclick;
         cancelBtn.onclick = () => {
           cancelled = true;
-          socket.disconnect();
+          websocket.close();
           originalCancel();
         };
 

@@ -54,7 +54,9 @@ from db.classes import (
 )
 
 
-def create_annotation_api(session_manager: SessionManager, socketio, name: str = "annotation_api") -> Blueprint:
+def create_annotation_api(session_manager: SessionManager,
+                          websocket_manager,
+                          name: str = "annotation_api") -> Blueprint:
   bp = Blueprint(name, __name__)
   log = logging.getLogger(f"annotation.api.{name}")
 
@@ -1317,7 +1319,9 @@ def create_annotation_api(session_manager: SessionManager, socketio, name: str =
 
               # Emit progress update via WebSocket
               try:
-                socketio.emit('autolabel_progress', progress_data, namespace='/autolabel')
+                # Use asyncio.create_task to emit in background without blocking
+                import asyncio
+                asyncio.create_task(websocket_manager.emit('autolabel_progress', progress_data, namespace='/autolabel'))
               except Exception as emit_error:
                 log.warning("Failed to emit progress update via WebSocket: %s", emit_error)
 
@@ -1373,7 +1377,9 @@ def create_annotation_api(session_manager: SessionManager, socketio, name: str =
 
       # Emit completion event via WebSocket
       try:
-        socketio.emit('autolabel_completed', result_data, namespace='/autolabel')
+        # Use asyncio.create_task to emit in background without blocking
+        import asyncio
+        asyncio.create_task(websocket_manager.emit('autolabel_completed', result_data, namespace='/autolabel'))
       except Exception as emit_error:
         log.warning("Failed to emit completion update via WebSocket: %s", emit_error)
 
@@ -1389,7 +1395,9 @@ def create_annotation_api(session_manager: SessionManager, socketio, name: str =
 
       # Emit error event via WebSocket
       try:
-        socketio.emit('autolabel_error', error_data, namespace='/autolabel')
+        # Use asyncio.create_task to emit in background without blocking
+        import asyncio
+        asyncio.create_task(websocket_manager.emit('autolabel_error', error_data, namespace='/autolabel'))
       except Exception as emit_error:
         log.warning("Failed to emit error update via WebSocket: %s", emit_error)
 
