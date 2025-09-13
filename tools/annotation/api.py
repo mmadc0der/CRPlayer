@@ -54,7 +54,7 @@ from db.classes import (
 )
 
 
-def create_annotation_api(session_manager: SessionManager, name: str = "annotation_api") -> Blueprint:
+def create_annotation_api(session_manager: SessionManager, socketio, name: str = "annotation_api") -> Blueprint:
   bp = Blueprint(name, __name__)
   log = logging.getLogger(f"annotation.api.{name}")
 
@@ -1298,15 +1298,28 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
                   batch_annotations = []
 
               # Update progress
-              with _autolabel_jobs_lock:
-                _autolabel_jobs[job_id]["progress"] = {
+              progress_data = {
+                "job_id": job_id,
+                "progress": {
                   "processed": processed,
                   "total": total_frames,
                   "saved": saved,
                   "errors": errors,
                   "percentage": (processed / total_frames) * 100 if total_frames > 0 else 0
-                }
-                _autolabel_jobs[job_id]["per_class"] = per_class.copy()
+                },
+                "per_class": per_class.copy(),
+                "status": "running"
+              }
+
+              with _autolabel_jobs_lock:
+                _autolabel_jobs[job_id]["progress"] = progress_data["progress"]
+                _autolabel_jobs[job_id]["per_class"] = progress_data["per_class"]
+
+              # Emit progress update via WebSocket
+              try:
+                socketio.emit('autolabel_progress', progress_data, namespace='/autolabel')
+              except Exception as emit_error:
+                log.warning("Failed to emit progress update via WebSocket: %s", emit_error)
 
         except AutoLabelUnavailable as e:
           with _autolabel_jobs_lock:
@@ -1339,10 +1352,10 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
           errors += len(batch_annotations)
 
       # Mark job as completed
-      with _autolabel_jobs_lock:
-        _autolabel_jobs[job_id]["status"] = "completed"
-        _autolabel_jobs[job_id]["completed_at"] = datetime.now().isoformat()
-        _autolabel_jobs[job_id]["result"] = {
+      result_data = {
+        "job_id": job_id,
+        "status": "completed",
+        "result": {
           "processed": int(processed),
           "saved": int(saved),
           "errors": int(errors),
@@ -1351,14 +1364,34 @@ def create_annotation_api(session_manager: SessionManager, name: str = "annotati
           "dry_run": bool(dry_run),
           "classes_created": len([k for k in name_to_id.keys() if k not in [str(r.get("name")) for r in rows]])
         }
+      }
+
+      with _autolabel_jobs_lock:
+        _autolabel_jobs[job_id]["status"] = "completed"
+        _autolabel_jobs[job_id]["completed_at"] = datetime.now().isoformat()
+        _autolabel_jobs[job_id]["result"] = result_data["result"]
+
+      # Emit completion event via WebSocket
+      try:
+        socketio.emit('autolabel_completed', result_data, namespace='/autolabel')
+      except Exception as emit_error:
+        log.warning("Failed to emit completion update via WebSocket: %s", emit_error)
 
       log.info("Autolabel completed: %s processed, %s saved, %s errors", processed, saved, errors)
 
     except Exception as e:
       log.error("Autolabel job failed: %s", e)
+      error_data = {"job_id": job_id, "status": "error", "error": str(e)}
+
       with _autolabel_jobs_lock:
         _autolabel_jobs[job_id]["status"] = "error"
         _autolabel_jobs[job_id]["error"] = str(e)
+
+      # Emit error event via WebSocket
+      try:
+        socketio.emit('autolabel_error', error_data, namespace='/autolabel')
+      except Exception as emit_error:
+        log.warning("Failed to emit error update via WebSocket: %s", emit_error)
 
   @bp.route("/api/annotations/autolabel_session", methods=["POST"])
   def api_autolabel_session():

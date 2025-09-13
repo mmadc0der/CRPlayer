@@ -2165,66 +2165,76 @@
         const jobId = startRes.job_id;
         progressText.textContent = 'Processing...';
 
-        // Poll for progress updates
-        const pollInterval = setInterval(async () => {
-          if (cancelled) {
-            clearInterval(pollInterval);
-            return;
+        // Connect to WebSocket for real-time updates
+        const socket = io(window.location.origin, {
+          path: window.APP_BASE + '/socket.io',
+          transports: ['websocket', 'polling']
+        });
+
+        socket.on('connect', () => {
+          console.log('Connected to WebSocket for autolabel progress');
+        });
+
+        socket.on('disconnect', () => {
+          console.log('Disconnected from WebSocket');
+        });
+
+        // Listen for progress updates
+        socket.on('autolabel_progress', (data) => {
+          if (data.job_id === jobId && !cancelled) {
+            const progress = data.progress;
+            const percentage = Math.round(progress.percentage || 0);
+            progressFill.style.width = `${percentage}%`;
+            progressText.textContent = `Processing: ${progress.processed}/${progress.total} (${percentage}%)`;
+            statsDiv.textContent = `Saved: ${progress.saved}, Errors: ${progress.errors}`;
           }
+        });
 
-          try {
-            const statusRes = await apiGet(`annotations/autolabel_session/status/${jobId}`);
+        // Listen for completion
+        socket.on('autolabel_completed', (data) => {
+          if (data.job_id === jobId && !cancelled) {
+            socket.disconnect();
 
-            if (statusRes.status === 'completed') {
-              clearInterval(pollInterval);
+            // Update final progress
+            progressFill.style.width = '100%';
+            progressText.textContent = 'Completed!';
+            const result = data.result;
+            statsDiv.textContent = `Processed: ${result.processed}, Saved: ${result.saved}, Errors: ${result.errors}`;
 
-              // Update final progress
-              progressFill.style.width = '100%';
-              progressText.textContent = 'Completed!';
-              const result = statusRes.result;
-              statsDiv.textContent = `Processed: ${result.processed}, Saved: ${result.saved}, Errors: ${result.errors}`;
+            // Show summary toast
+            toast(`Autolabeled ${result.saved}/${result.processed} frames`);
 
-              // Show summary toast
-              toast(`Autolabeled ${result.saved}/${result.processed} frames`);
-
-              // Refresh UI
-              refreshProgress();
-              refreshStats();
-              await loadDatasetClasses(state.dataset_id); // Refresh classes in case new ones were created
+            // Refresh UI
+            refreshProgress();
+            refreshStats();
+            loadDatasetClasses(state.dataset_id).then(() => { // Refresh classes in case new ones were created
               renderCategories();
-              await loadFrame(state.currentIdx); // Reload current frame
+              loadFrame(state.currentIdx); // Reload current frame
+            });
 
-              // Remove progress after a delay
-              setTimeout(() => {
-                if (progressContainer.parentNode) {
-                  progressContainer.remove();
-                }
-              }, 3000);
-
-            } else if (statusRes.status === 'error') {
-              clearInterval(pollInterval);
-              toast(`Autolabel failed: ${statusRes.error || 'Unknown error'}`);
-              progressContainer.remove();
-
-            } else if (statusRes.status === 'running' && statusRes.progress) {
-              // Update progress
-              const progress = statusRes.progress;
-              const percentage = Math.round(progress.percentage || 0);
-              progressFill.style.width = `${percentage}%`;
-              progressText.textContent = `Processing: ${progress.processed}/${progress.total} (${percentage}%)`;
-              statsDiv.textContent = `Saved: ${progress.saved}, Errors: ${progress.errors}`;
-            }
-          } catch (e) {
-            // Continue polling even if one request fails
-            console.warn('Failed to poll autolabel status:', e);
+            // Remove progress after a delay
+            setTimeout(() => {
+              if (progressContainer.parentNode) {
+                progressContainer.remove();
+              }
+            }, 3000);
           }
-        }, 1000); // Poll every second
+        });
+
+        // Listen for errors
+        socket.on('autolabel_error', (data) => {
+          if (data.job_id === jobId && !cancelled) {
+            socket.disconnect();
+            toast(`Autolabel failed: ${data.error || 'Unknown error'}`);
+            progressContainer.remove();
+          }
+        });
 
         // Handle cancellation
         const originalCancel = cancelBtn.onclick;
         cancelBtn.onclick = () => {
           cancelled = true;
-          clearInterval(pollInterval);
+          socket.disconnect();
           originalCancel();
         };
 

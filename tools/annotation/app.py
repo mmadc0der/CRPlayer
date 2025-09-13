@@ -5,6 +5,7 @@ Flask web application for in-place annotation via browser.
 """
 
 from flask import Flask, render_template
+from flask_socketio import SocketIO, emit
 from pathlib import Path
 import argparse
 import threading
@@ -29,6 +30,9 @@ app = Flask(
   template_folder=str(BASE_DIR / "templates"),
 )
 
+# Initialize SocketIO for real-time communication
+socketio = SocketIO(app, cors_allowed_origins="*", logger=True, engineio_logger=True)
+
 # Initialize logging as early as possible
 setup_logging(app_debug=None)
 install_flask_request_hooks(app)
@@ -51,7 +55,7 @@ def set_script_name():
 session_manager = SessionManager()
 
 # Register API blueprint at /api/* for backward compatibility
-api_bp = create_annotation_api(session_manager, name="annotation_api")
+api_bp = create_annotation_api(session_manager, socketio, name="annotation_api")
 app.register_blueprint(api_bp)
 
 # Initialize SQLite schema (idempotent)
@@ -160,4 +164,4 @@ if __name__ == "__main__":
   logger.info("Starting web server at http://%s:%s", args.host, args.port)
   logger.info("Open this URL in your browser to start annotating!")
 
-  app.run(host=args.host, port=args.port, debug=args.debug)
+  socketio.run(app, host=args.host, port=args.port, debug=args.debug)
