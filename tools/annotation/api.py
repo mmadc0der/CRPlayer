@@ -1170,6 +1170,9 @@ def create_annotation_api(session_manager: SessionManager,
       batch_size = int(payload.get("batch_size") or 10)
       n_limit = int(limit) if (limit is not None and str(limit).strip() != "") else None
 
+      log.info("Starting autolabel session job %s: session=%s, dataset=%s, confidence=%.2f, batch_size=%d, dry_run=%s",
+               job_id, session_id, dataset_id, confidence_threshold, batch_size, dry_run)
+
       # Update job status
       with _autolabel_jobs_lock:
         _autolabel_jobs[job_id]["status"] = "running"
@@ -1227,16 +1230,21 @@ def create_annotation_api(session_manager: SessionManager,
 
       # Process frames in batches
       idx = 0
+      batch_count = 0
+      log.info("Autolabel job %s: starting frame processing loop", job_id)
       while True:
         if n_limit is not None and processed >= n_limit:
+          log.info("Autolabel job %s: reached limit of %d frames", job_id, n_limit)
           break
 
         try:
           abs_path, _frame = session_service.get_frame_for_image(session_id, idx)
         except IndexError:
+          log.info("Autolabel job %s: reached end of frames at idx %d", job_id, idx)
           break
-        except Exception:
+        except Exception as e:
           errors += 1
+          log.warning("Autolabel job %s: error getting frame %d: %s", job_id, idx, e)
           idx += 1
           continue
 
@@ -1271,6 +1279,9 @@ def create_annotation_api(session_manager: SessionManager,
 
               # Save batch if it reaches the batch size
               if len(batch_annotations) >= batch_size:
+                batch_count += 1
+                log.info("Autolabel job %s: saving batch %d with %d annotations", job_id, batch_count,
+                         len(batch_annotations))
                 try:
                   results = []
                   batch_saved = 0
@@ -1317,9 +1328,15 @@ def create_annotation_api(session_manager: SessionManager,
                 _autolabel_jobs[job_id]["progress"] = progress_data["progress"]
                 _autolabel_jobs[job_id]["per_class"] = progress_data["per_class"]
 
+              # Log progress update
+              progress_pct = progress_data["progress"]["percentage"]
+              log.info("Autolabel job %s progress: %.1f%% (%d/%d processed, %d saved, %d errors)", job_id, progress_pct,
+                       processed, total_frames, saved, errors)
+
               # Emit progress update via WebSocket (thread-safe)
               try:
                 websocket_manager.emit_thread_safe('autolabel_progress', progress_data, namespace='/autolabel')
+                log.debug("Autolabel job %s: sent WebSocket progress update", job_id)
               except Exception as emit_error:
                 log.warning("Failed to emit progress update via WebSocket: %s", emit_error)
 
@@ -1376,10 +1393,11 @@ def create_annotation_api(session_manager: SessionManager,
       # Emit completion event via WebSocket (thread-safe)
       try:
         websocket_manager.emit_thread_safe('autolabel_completed', result_data, namespace='/autolabel')
+        log.info("Autolabel job %s: sent completion WebSocket message", job_id)
       except Exception as emit_error:
         log.warning("Failed to emit completion update via WebSocket: %s", emit_error)
 
-      log.info("Autolabel completed: %s processed, %s saved, %s errors", processed, saved, errors)
+      log.info("Autolabel job %s completed: %s processed, %s saved, %s errors", job_id, processed, saved, errors)
 
     except Exception as e:
       log.error("Autolabel job failed: %s", e)
@@ -1392,6 +1410,7 @@ def create_annotation_api(session_manager: SessionManager,
       # Emit error event via WebSocket (thread-safe)
       try:
         websocket_manager.emit_thread_safe('autolabel_error', error_data, namespace='/autolabel')
+        log.info("Autolabel job %s: sent error WebSocket message", job_id)
       except Exception as emit_error:
         log.warning("Failed to emit error update via WebSocket: %s", emit_error)
 

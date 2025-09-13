@@ -2174,22 +2174,42 @@
         const websocket = new WebSocket(websocketUrl);
 
         websocket.onopen = () => {
-          console.log('Connected to WebSocket for autolabel progress at', websocketUrl);
+          console.log('WebSocket connected for autolabel progress at', websocketUrl);
+          console.log('WebSocket readyState:', websocket.readyState);
+
+          // Send a ping to test the connection
+          websocket.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
+          console.log('Sent ping to test connection');
         };
 
-        websocket.onclose = () => {
-          console.log('Disconnected from WebSocket');
+        websocket.onclose = (event) => {
+          console.log('WebSocket disconnected:', {
+            code: event.code,
+            reason: event.reason,
+            wasClean: event.wasClean,
+            readyState: websocket.readyState
+          });
         };
 
         websocket.onerror = (error) => {
           console.error('WebSocket error:', error);
+          console.log('WebSocket readyState on error:', websocket.readyState);
         };
 
         // Listen for messages from the WebSocket server
         websocket.onmessage = (event) => {
+          console.log('WebSocket message received:', event.data);
           try {
             const message = JSON.parse(event.data);
-            const { event: eventType, data } = message;
+
+            // Handle ping/pong messages
+            if (message.type === 'pong') {
+              console.log('Received pong from server');
+              return;
+            }
+
+            const { event: eventType, data, namespace } = message;
+            console.log('Parsed WebSocket message:', { eventType, jobId: data?.job_id, namespace });
 
             // Only handle autolabel events
             if (eventType === 'autolabel_progress' && data.job_id === jobId && !cancelled) {

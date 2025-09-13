@@ -60,11 +60,12 @@ class WebSocketManager:
       try:
         self.loop = asyncio.get_running_loop()
       except RuntimeError:
-        # No running loop, can't emit
+        logger.warning("emit_thread_safe: No event loop available, cannot emit %s", event)
         return
 
     # Put message in queue for the event loop to process
     message = {'event': event, 'data': data, 'namespace': namespace}
+    logger.debug("Queuing WebSocket message: event=%s, job_id=%s", event, data.get('job_id', 'unknown'))
     asyncio.run_coroutine_threadsafe(self.message_queue.put(message), self.loop)
 
   async def process_messages(self):
@@ -72,26 +73,40 @@ class WebSocketManager:
     while True:
       try:
         message = await self.message_queue.get()
+        logger.debug("Processing WebSocket message: event=%s, namespace=%s", message['event'],
+                     message.get('namespace', 'none'))
         await self._emit_to_clients(message['event'], message['data'], message['namespace'])
         self.message_queue.task_done()
       except Exception as e:
-        print(f"Error processing WebSocket message: {e}")
+        logger.error("Error processing WebSocket message: %s", e)
 
   async def _emit_to_clients(self, event, data, namespace=None):
     """Internal method to emit message to all connected clients"""
     message = json.dumps({'event': event, 'data': data, 'namespace': namespace})
+    logger.debug("Emitting to %d clients: event=%s", len(self.connections), event)
 
     # Remove dead connections
     dead_connections = set()
+    sent_count = 0
     for websocket in self.connections:
       try:
         await websocket.send(message)
-      except websockets.exceptions.ConnectionClosed:
+        sent_count += 1
+      except websockets.exceptions.ConnectionClosed as e:
+        logger.debug("WebSocket connection closed during send: %s", e)
+        dead_connections.add(websocket)
+      except Exception as e:
+        logger.error("Error sending WebSocket message: %s", e)
         dead_connections.add(websocket)
 
     # Clean up dead connections
     for dead_conn in dead_connections:
       self.connections.discard(dead_conn)
+
+    if dead_connections:
+      logger.info("Cleaned up %d dead WebSocket connections. Active: %d", len(dead_connections), len(self.connections))
+    if sent_count > 0:
+      logger.debug("Successfully sent message to %d clients", sent_count)
 
 
 websocket_manager = WebSocketManager()
@@ -216,17 +231,31 @@ def annotation_index():
 
 async def websocket_handler(websocket, path):
   """Handle WebSocket connections"""
-  logger.info("WebSocket connection established")
+  logger.info("WebSocket connection established from %s", websocket.remote_address)
   websocket_manager.add_connection(websocket)
+  connection_count = len(websocket_manager.connections)
+  logger.info("Total WebSocket connections: %d", connection_count)
+
   try:
     async for message in websocket:
-      # For now, we only handle outgoing messages (emits)
-      # Clients can connect but we don't process incoming messages
-      pass
-  except websockets.exceptions.ConnectionClosed:
-    logger.info("WebSocket connection closed")
+      # Handle incoming messages from clients
+      logger.debug("Received WebSocket message: %s", message)
+      try:
+        data = json.loads(message)
+        if data.get('type') == 'ping':
+          # Respond to ping with pong
+          pong_message = json.dumps({'type': 'pong', 'timestamp': data.get('timestamp', 0)})
+          await websocket.send(pong_message)
+          logger.debug("Sent pong response to client")
+      except json.JSONDecodeError:
+        logger.debug("Received non-JSON WebSocket message: %s", message)
+  except websockets.exceptions.ConnectionClosed as e:
+    logger.info("WebSocket connection closed: %s", e)
+  except Exception as e:
+    logger.error("WebSocket connection error: %s", e)
   finally:
     websocket_manager.remove_connection(websocket)
+    logger.info("WebSocket connection removed. Total connections: %d", len(websocket_manager.connections))
 
 
 async def run_websocket_server(host, port):
