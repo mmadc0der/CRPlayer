@@ -16,11 +16,11 @@ WORKDIR /app
 
 # Install system dependencies (non-interactive)
 RUN apt-get update && apt-get install -y \
-  python3.11 \
-  python3.11-dev \
-  python3.11-full \
-  python3.11-pip \
-  python3.11-venv \
+  python3 \
+  python3-dev \
+  python3-full \
+  python3-pip \
+  python3-venv \
   curl \
   git \
   build-essential \
@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
 
 # Create virtual environment and install Python dependencies
 COPY requirements.txt .
-RUN python3.11 -m venv /opt/venv
+RUN python3 -m venv /opt/venv
 RUN ln -s /opt/venv/bin/python3.11 /usr/bin/python
 ENV PATH="/opt/venv/bin:$PATH"
 RUN python -m pip install --no-cache-dir -r requirements.txt
