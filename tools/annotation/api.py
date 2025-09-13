@@ -1317,11 +1317,9 @@ def create_annotation_api(session_manager: SessionManager,
                 _autolabel_jobs[job_id]["progress"] = progress_data["progress"]
                 _autolabel_jobs[job_id]["per_class"] = progress_data["per_class"]
 
-              # Emit progress update via WebSocket
+              # Emit progress update via WebSocket (thread-safe)
               try:
-                # Use asyncio.create_task to emit in background without blocking
-                import asyncio
-                asyncio.create_task(websocket_manager.emit('autolabel_progress', progress_data, namespace='/autolabel'))
+                websocket_manager.emit_thread_safe('autolabel_progress', progress_data, namespace='/autolabel')
               except Exception as emit_error:
                 log.warning("Failed to emit progress update via WebSocket: %s", emit_error)
 
@@ -1375,11 +1373,9 @@ def create_annotation_api(session_manager: SessionManager,
         _autolabel_jobs[job_id]["completed_at"] = datetime.now().isoformat()
         _autolabel_jobs[job_id]["result"] = result_data["result"]
 
-      # Emit completion event via WebSocket
+      # Emit completion event via WebSocket (thread-safe)
       try:
-        # Use asyncio.create_task to emit in background without blocking
-        import asyncio
-        asyncio.create_task(websocket_manager.emit('autolabel_completed', result_data, namespace='/autolabel'))
+        websocket_manager.emit_thread_safe('autolabel_completed', result_data, namespace='/autolabel')
       except Exception as emit_error:
         log.warning("Failed to emit completion update via WebSocket: %s", emit_error)
 
@@ -1393,11 +1389,9 @@ def create_annotation_api(session_manager: SessionManager,
         _autolabel_jobs[job_id]["status"] = "error"
         _autolabel_jobs[job_id]["error"] = str(e)
 
-      # Emit error event via WebSocket
+      # Emit error event via WebSocket (thread-safe)
       try:
-        # Use asyncio.create_task to emit in background without blocking
-        import asyncio
-        asyncio.create_task(websocket_manager.emit('autolabel_error', error_data, namespace='/autolabel'))
+        websocket_manager.emit_thread_safe('autolabel_error', error_data, namespace='/autolabel')
       except Exception as emit_error:
         log.warning("Failed to emit error update via WebSocket: %s", emit_error)
 

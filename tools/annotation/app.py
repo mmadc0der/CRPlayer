@@ -40,6 +40,8 @@ class WebSocketManager:
   def __init__(self):
     self.connections = set()
     self.executor = ThreadPoolExecutor(max_workers=4)
+    self.message_queue = asyncio.Queue()
+    self.loop = None
 
   def add_connection(self, websocket):
     self.connections.add(websocket)
@@ -47,8 +49,36 @@ class WebSocketManager:
   def remove_connection(self, websocket):
     self.connections.discard(websocket)
 
-  async def emit(self, event, data, namespace=None):
-    """Emit message to all connected clients"""
+  def set_event_loop(self, loop):
+    """Set the event loop for cross-thread communication"""
+    self.loop = loop
+
+  def emit_thread_safe(self, event, data, namespace=None):
+    """Emit message from any thread - thread-safe"""
+    if self.loop is None:
+      # If no event loop set, try to get the current one
+      try:
+        self.loop = asyncio.get_running_loop()
+      except RuntimeError:
+        # No running loop, can't emit
+        return
+
+    # Put message in queue for the event loop to process
+    message = {'event': event, 'data': data, 'namespace': namespace}
+    asyncio.run_coroutine_threadsafe(self.message_queue.put(message), self.loop)
+
+  async def process_messages(self):
+    """Process queued messages (call this in the WebSocket event loop)"""
+    while True:
+      try:
+        message = await self.message_queue.get()
+        await self._emit_to_clients(message['event'], message['data'], message['namespace'])
+        self.message_queue.task_done()
+      except Exception as e:
+        print(f"Error processing WebSocket message: {e}")
+
+  async def _emit_to_clients(self, event, data, namespace=None):
+    """Internal method to emit message to all connected clients"""
     message = json.dumps({'event': event, 'data': data, 'namespace': namespace})
 
     # Remove dead connections
@@ -203,8 +233,19 @@ async def run_websocket_server(host, port):
   """Run the WebSocket server"""
   websocket_port = port + 1  # Run websocket on port + 1
   logger.info("Starting WebSocket server on port %s", websocket_port)
+
+  # Set the event loop for thread-safe communication
+  websocket_manager.set_event_loop(asyncio.get_running_loop())
+
+  # Start the message processing task
+  message_task = asyncio.create_task(websocket_manager.process_messages())
+
   async with websockets.serve(websocket_handler, host, websocket_port):
-    await asyncio.Future()  # Run forever
+    # Run both the WebSocket server and message processor concurrently
+    await asyncio.gather(
+      asyncio.Future(),  # Keep server running
+      message_task  # Process queued messages
+    )
 
 
 def run_flask_app(host, port, debug):
