@@ -229,9 +229,9 @@ def annotation_index():
 ## Legacy /api/datasets removed
 
 
-async def websocket_handler(websocket, path):
+async def websocket_handler(websocket):
   """Handle WebSocket connections"""
-  logger.info("WebSocket connection established from %s, path: %s", websocket.remote_address, path)
+  logger.info("WebSocket connection established from %s", websocket.remote_address)
   websocket_manager.add_connection(websocket)
   connection_count = len(websocket_manager.connections)
   logger.info("Total WebSocket connections: %d", connection_count)
