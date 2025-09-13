@@ -34,7 +34,7 @@ RUN ln -s /usr/bin/python3.11 /usr/bin/python
 COPY requirements.txt .
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
-RUN source /opt/venv/bin/activate && python -m pip install --no-cache-dir -r requirements.txt
+RUN /opt/venv/bin/python -m pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
@@ -68,4 +68,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 USER appuser
 ENV PATH="/opt/venv/bin:$PATH"
 
-CMD ["python", "app.py", "--host", "0.0.0.0", "--port", "5000"]
+CMD ["/opt/venv/bin/python", "app.py", "--host", "0.0.0.0", "--port", "5000"]
