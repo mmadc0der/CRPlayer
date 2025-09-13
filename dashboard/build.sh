@@ -49,7 +49,7 @@ fi
 
 # Build and start the containers
 echo "Building Docker containers with GPU support..."
-docker-compose build --no-cache
+docker-compose build
 
 echo "Starting services..."
 docker-compose up -d
