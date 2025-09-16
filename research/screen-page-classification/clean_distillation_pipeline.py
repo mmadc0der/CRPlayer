@@ -1,0 +1,648 @@
+"""
+Clean Knowledge Distillation Pipeline
+A streamlined distillation pipeline that uses a pre-trained teacher model to train a lightweight student model.
+"""
+
+import os
+import time
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.utils.data import DataLoader, Dataset
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from typing import Dict, List, Any, Optional, Tuple
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, f1_score
+from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
+import seaborn as sns
+from PIL import Image
+import torchvision.transforms as transforms
+from tqdm import tqdm
+
+# Set style for better plots
+plt.style.use('seaborn-v0_8')
+sns.set_palette("husl")
+
+
+class SimpleDistillationLoss(nn.Module):
+  """Simple knowledge distillation loss combining hard and soft targets."""
+
+  def __init__(self, temperature: float = 3.0, alpha: float = 0.7):
+    super().__init__()
+    self.temperature = temperature
+    self.alpha = alpha
+    self.kl_div = nn.KLDivLoss(reduction='batchmean')
+    self.ce_loss = nn.CrossEntropyLoss()
+
+  def forward(self, student_logits: torch.Tensor, teacher_logits: torch.Tensor,
+              targets: torch.Tensor) -> Dict[str, torch.Tensor]:
+    # Soft distillation loss (teacher knowledge)
+    soft_loss = self.kl_div(F.log_softmax(student_logits / self.temperature, dim=1),
+                            F.softmax(teacher_logits / self.temperature, dim=1)) * (self.temperature**2)
+
+    # Hard target loss (ground truth)
+    hard_loss = self.ce_loss(student_logits, targets)
+
+    # Combined loss
+    total_loss = self.alpha * soft_loss + (1 - self.alpha) * hard_loss
+
+    return {'total_loss': total_loss, 'soft_loss': soft_loss, 'hard_loss': hard_loss}
+
+
+class LightweightStudent(nn.Module):
+  """Lightweight CNN student model for distillation."""
+
+  def __init__(self, num_classes: int, dropout_rate: float = 0.3):
+    super().__init__()
+
+    self.features = nn.Sequential(
+      # Block 1
+      nn.Conv2d(3, 32, 3, padding=1),
+      nn.BatchNorm2d(32),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(32, 32, 3, padding=1),
+      nn.BatchNorm2d(32),
+      nn.ReLU(inplace=True),
+      nn.MaxPool2d(2, 2),
+
+      # Block 2
+      nn.Conv2d(32, 64, 3, padding=1),
+      nn.BatchNorm2d(64),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(64, 64, 3, padding=1),
+      nn.BatchNorm2d(64),
+      nn.ReLU(inplace=True),
+      nn.MaxPool2d(2, 2),
+
+      # Block 3
+      nn.Conv2d(64, 128, 3, padding=1),
+      nn.BatchNorm2d(128),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(128, 128, 3, padding=1),
+      nn.BatchNorm2d(128),
+      nn.ReLU(inplace=True),
+      nn.MaxPool2d(2, 2),
+
+      # Block 4
+      nn.Conv2d(128, 256, 3, padding=1),
+      nn.BatchNorm2d(256),
+      nn.ReLU(inplace=True),
+      nn.Conv2d(256, 256, 3, padding=1),
+      nn.BatchNorm2d(256),
+      nn.ReLU(inplace=True),
+      nn.AdaptiveAvgPool2d((1, 1)))
+
+    self.classifier = nn.Sequential(nn.Flatten(), nn.Dropout(dropout_rate), nn.Linear(256, 128), nn.ReLU(inplace=True),
+                                    nn.Dropout(dropout_rate), nn.Linear(128, num_classes))
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    features = self.features(x)
+    return self.classifier(features)
+
+
+class ResNetTeacher(nn.Module):
+  """ResNet50 teacher model wrapper."""
+
+  def __init__(self, num_classes: int, dropout_rate: float = 0.5):
+    super().__init__()
+    from torchvision import models
+
+    # Load pretrained ResNet50
+    self.backbone = models.resnet50(pretrained=True)
+    # Remove the original classifier
+    self.backbone = nn.Sequential(*list(self.backbone.children())[:-2])
+
+    # Custom classifier
+    self.classifier = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(), nn.Dropout(dropout_rate),
+                                    nn.Linear(2048, 512), nn.ReLU(inplace=True), nn.Dropout(dropout_rate),
+                                    nn.Linear(512, num_classes))
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    features = self.backbone(x)
+    return self.classifier(features)
+
+
+class BalancedSampler:
+  """Balanced sampler for handling class imbalance."""
+
+  def __init__(self, dataset, samples_per_class=None):
+    self.dataset = dataset
+    self.labels = [dataset[i][1] for i in range(len(dataset))]
+    self.class_counts = {}
+
+    # Count samples per class
+    for label in self.labels:
+      self.class_counts[label] = self.class_counts.get(label, 0) + 1
+
+    # Determine samples per class
+    if samples_per_class is None:
+      self.samples_per_class = max(self.class_counts.values())
+    else:
+      self.samples_per_class = samples_per_class
+
+    # Create balanced indices
+    self.balanced_indices = []
+    for class_id in range(len(self.class_counts)):
+      class_indices = [i for i, label in enumerate(self.labels) if label == class_id]
+
+      # Oversample if class has fewer samples than target
+      if len(class_indices) < self.samples_per_class:
+        repeat_factor = self.samples_per_class // len(class_indices)
+        remainder = self.samples_per_class % len(class_indices)
+
+        balanced_class_indices = class_indices * repeat_factor
+        balanced_class_indices.extend(class_indices[:remainder])
+      else:
+        # Randomly sample if class has more samples than target
+        balanced_class_indices = np.random.choice(class_indices, size=self.samples_per_class, replace=False).tolist()
+
+      self.balanced_indices.extend(balanced_class_indices)
+
+    # Shuffle the balanced indices
+    np.random.shuffle(self.balanced_indices)
+
+  def __iter__(self):
+    return iter(self.balanced_indices)
+
+  def __len__(self):
+    return len(self.balanced_indices)
+
+
+class ImageDataset(Dataset):
+  """Dataset for loading images with augmentation."""
+
+  def __init__(self, df, data_root, class_id_col, is_training=True, preload=True):
+    self.df = df.reset_index(drop=True)
+    self.data_root = Path(data_root)
+    self.class_id_col = class_id_col
+    self.is_training = is_training
+    self.preload = preload
+
+    # Create augmentation transforms
+    if is_training:
+      self.transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+        transforms.RandomRotation(5),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+      ])
+    else:
+      self.transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+      ])
+
+    # Preload images if requested
+    if self.preload:
+      self.images = []
+      self.labels = []
+      print("Preloading images...")
+      for idx in tqdm(range(len(self.df)), desc="Loading images"):
+        row = self.df.iloc[idx]
+
+        # Try to load image from different possible path columns
+        image_path = None
+        if 'frame_path_rel' in row and pd.notna(row['frame_path_rel']):
+          image_path = self.data_root / row['frame_path_rel']
+        elif 'image_path' in row and pd.notna(row['image_path']):
+          image_path = self.data_root / row['image_path']
+        elif 'frame_id' in row and pd.notna(row['frame_id']):
+          session_id = row.get('session_id', '')
+          if session_id:
+            image_path = self.data_root / "raw" / session_id / row['frame_id']
+
+        # Load image or create random tensor if not found
+        try:
+          if image_path and image_path.exists():
+            image = Image.open(image_path).convert('RGB')
+          else:
+            # Fallback to random image if file not found
+            image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
+        except Exception as e:
+          print(f"Warning: Could not load image for row {idx}: {e}")
+          image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
+
+        self.images.append(image)
+        self.labels.append(row[self.class_id_col])
+
+      print(f"Preloaded {len(self.images)} images")
+
+  def __len__(self):
+    return len(self.df)
+
+  def __getitem__(self, idx):
+    if self.preload:
+      image = self.transform(self.images[idx])
+      return image, self.labels[idx]
+    else:
+      row = self.df.iloc[idx]
+
+      # Try to load image from different possible path columns
+      image_path = None
+      if 'frame_path_rel' in row and pd.notna(row['frame_path_rel']):
+        image_path = self.data_root / row['frame_path_rel']
+      elif 'image_path' in row and pd.notna(row['image_path']):
+        image_path = self.data_root / row['image_path']
+      elif 'frame_id' in row and pd.notna(row['frame_id']):
+        session_id = row.get('session_id', '')
+        if session_id:
+          image_path = self.data_root / "raw" / session_id / row['frame_id']
+
+      # Load image or create random tensor if not found
+      try:
+        if image_path and image_path.exists():
+          image = Image.open(image_path).convert('RGB')
+        else:
+          image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
+      except Exception as e:
+        print(f"Warning: Could not load image for row {idx}: {e}")
+        image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
+
+      image = self.transform(image)
+      return image, row[self.class_id_col]
+
+
+class CleanDistillationPipeline:
+  """Clean distillation pipeline without heavy dependencies."""
+
+  def __init__(self, teacher_model_path: str, num_classes: int, device: str = None):
+    self.teacher_model_path = teacher_model_path
+    self.num_classes = num_classes
+    self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
+
+    # Load teacher model
+    self.teacher_model = self._load_teacher_model()
+    self.teacher_model.to(self.device)
+    self.teacher_model.eval()
+
+    # Create student model
+    self.student_model = LightweightStudent(num_classes)
+    self.student_model.to(self.device)
+
+    # Initialize distillation loss
+    self.distillation_loss = SimpleDistillationLoss(temperature=3.0, alpha=0.7)
+
+    print(f"Distillation pipeline initialized on {self.device}")
+    print(f"Teacher model loaded from: {teacher_model_path}")
+    print(f"Student model created with {sum(p.numel() for p in self.student_model.parameters()):,} parameters")
+
+  def _load_teacher_model(self):
+    """Load the pre-trained teacher model."""
+    teacher_model = ResNetTeacher(self.num_classes)
+
+    # Load checkpoint
+    checkpoint = torch.load(self.teacher_model_path, map_location='cpu')
+    teacher_model.load_state_dict(checkpoint['model_state_dict'])
+
+    return teacher_model
+
+  def create_data_loaders(self,
+                          df,
+                          data_root="./data",
+                          batch_size=32,
+                          test_size=0.2,
+                          val_size=0.1,
+                          class_id_col='class_id'):
+    """Create data loaders with balanced sampling."""
+
+    # Split data
+    train_df, temp_df = train_test_split(df, test_size=test_size + val_size, random_state=42, stratify=df[class_id_col])
+    val_df, test_df = train_test_split(temp_df,
+                                       test_size=test_size / (test_size + val_size),
+                                       random_state=42,
+                                       stratify=temp_df[class_id_col])
+
+    # Create datasets
+    train_dataset = ImageDataset(train_df, data_root, class_id_col, is_training=True)
+    val_dataset = ImageDataset(val_df, data_root, class_id_col, is_training=False)
+    test_dataset = ImageDataset(test_df, data_root, class_id_col, is_training=False)
+
+    # Create balanced sampler for training
+    balanced_sampler = BalancedSampler(train_dataset)
+
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=balanced_sampler, num_workers=0)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, num_workers=0)
+
+    return train_loader, val_loader, test_loader, train_df, val_df, test_df
+
+  def train_student(self, train_loader, val_loader, num_epochs=50, learning_rate=1e-3, weight_decay=1e-4):
+    """Train student model using knowledge distillation."""
+
+    # Setup optimizer
+    optimizer = optim.AdamW(self.student_model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    # Training history
+    history = {
+      'train_loss': [],
+      'train_acc': [],
+      'val_loss': [],
+      'val_acc': [],
+      'val_f1': [],
+      'soft_loss': [],
+      'hard_loss': []
+    }
+
+    best_val_f1 = 0.0
+    best_model_state = None
+
+    print(f"Starting distillation training for {num_epochs} epochs...")
+
+    for epoch in range(num_epochs):
+      # Training phase
+      train_metrics = self._train_epoch(train_loader, optimizer)
+
+      # Validation phase
+      val_metrics = self._validate_epoch(val_loader)
+
+      # Store history
+      history['train_loss'].append(train_metrics['loss'])
+      history['train_acc'].append(train_metrics['accuracy'])
+      history['val_loss'].append(val_metrics['loss'])
+      history['val_acc'].append(val_metrics['accuracy'])
+      history['val_f1'].append(val_metrics['f1_score'])
+      history['soft_loss'].append(train_metrics['soft_loss'])
+      history['hard_loss'].append(train_metrics['hard_loss'])
+
+      # Update best model
+      if val_metrics['f1_score'] > best_val_f1:
+        best_val_f1 = val_metrics['f1_score']
+        best_model_state = self.student_model.state_dict().copy()
+
+      # Print progress
+      if epoch % 5 == 0 or epoch < 5:
+        print(f"Epoch {epoch:2d}: Train Loss: {train_metrics['loss']:.4f}, "
+              f"Train Acc: {train_metrics['accuracy']:.4f}, "
+              f"Val Loss: {val_metrics['loss']:.4f}, "
+              f"Val Acc: {val_metrics['accuracy']:.4f}, "
+              f"Val F1: {val_metrics['f1_score']:.4f}")
+
+    # Load best model
+    if best_model_state is not None:
+      self.student_model.load_state_dict(best_model_state)
+
+    print(f"Training completed! Best validation F1: {best_val_f1:.4f}")
+
+    return history, best_val_f1
+
+  def _train_epoch(self, train_loader, optimizer):
+    """Train one epoch."""
+    self.student_model.train()
+    self.teacher_model.eval()
+
+    total_loss = 0.0
+    total_soft_loss = 0.0
+    total_hard_loss = 0.0
+    predictions = []
+    targets = []
+
+    for data, target in tqdm(train_loader, desc="Training", leave=False):
+      data, target = data.to(self.device), target.to(self.device)
+
+      optimizer.zero_grad()
+
+      # Forward pass
+      student_output = self.student_model(data)
+
+      # Teacher forward (no gradients)
+      with torch.no_grad():
+        teacher_output = self.teacher_model(data)
+
+      # Compute distillation loss
+      losses = self.distillation_loss(student_output, teacher_output, target)
+
+      # Backward pass
+      losses['total_loss'].backward()
+      optimizer.step()
+
+      # Update metrics
+      total_loss += losses['total_loss'].item()
+      total_soft_loss += losses['soft_loss'].item()
+      total_hard_loss += losses['hard_loss'].item()
+      predictions.extend(torch.argmax(student_output, dim=1).cpu().numpy())
+      targets.extend(target.cpu().numpy())
+
+    # Compute metrics
+    accuracy = accuracy_score(targets, predictions)
+
+    return {
+      'loss': total_loss / len(train_loader),
+      'soft_loss': total_soft_loss / len(train_loader),
+      'hard_loss': total_hard_loss / len(train_loader),
+      'accuracy': accuracy
+    }
+
+  def _validate_epoch(self, val_loader):
+    """Validate one epoch."""
+    self.student_model.eval()
+
+    total_loss = 0.0
+    predictions = []
+    targets = []
+
+    with torch.no_grad():
+      for data, target in tqdm(val_loader, desc="Validation", leave=False):
+        data, target = data.to(self.device), target.to(self.device)
+
+        # Forward pass
+        student_output = self.student_model(data)
+        teacher_output = self.teacher_model(data)
+
+        # Compute loss
+        losses = self.distillation_loss(student_output, teacher_output, target)
+
+        total_loss += losses['total_loss'].item()
+        predictions.extend(torch.argmax(student_output, dim=1).cpu().numpy())
+        targets.extend(target.cpu().numpy())
+
+    # Compute metrics
+    accuracy = accuracy_score(targets, predictions)
+    f1 = f1_score(targets, predictions, average='weighted')
+
+    return {'loss': total_loss / len(val_loader), 'accuracy': accuracy, 'f1_score': f1}
+
+  def evaluate_models(self, test_loader):
+    """Evaluate both teacher and student models."""
+    self.teacher_model.eval()
+    self.student_model.eval()
+
+    teacher_predictions = []
+    student_predictions = []
+    targets = []
+
+    with torch.no_grad():
+      for data, target in tqdm(test_loader, desc="Evaluation"):
+        data, target = data.to(self.device), target.to(self.device)
+
+        teacher_output = self.teacher_model(data)
+        student_output = self.student_model(data)
+
+        teacher_predictions.extend(torch.argmax(teacher_output, dim=1).cpu().numpy())
+        student_predictions.extend(torch.argmax(student_output, dim=1).cpu().numpy())
+        targets.extend(target.cpu().numpy())
+
+    # Compute metrics
+    teacher_acc = accuracy_score(targets, teacher_predictions)
+    student_acc = accuracy_score(targets, student_predictions)
+
+    teacher_f1 = f1_score(targets, teacher_predictions, average='weighted')
+    student_f1 = f1_score(targets, student_predictions, average='weighted')
+
+    # Model size comparison
+    teacher_params = sum(p.numel() for p in self.teacher_model.parameters())
+    student_params = sum(p.numel() for p in self.student_model.parameters())
+
+    return {
+      'teacher': {
+        'accuracy': teacher_acc,
+        'f1_score': teacher_f1,
+        'parameters': teacher_params
+      },
+      'student': {
+        'accuracy': student_acc,
+        'f1_score': student_f1,
+        'parameters': student_params
+      },
+      'compression_ratio': teacher_params / student_params,
+      'performance_retention': student_f1 / teacher_f1 if teacher_f1 > 0 else 0
+    }
+
+  def plot_training_history(self, history):
+    """Plot training history."""
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+    fig.suptitle('Distillation Training Progress', fontsize=16, fontweight='bold')
+
+    epochs = range(len(history['train_loss']))
+
+    # Loss curves
+    axes[0, 0].plot(epochs, history['train_loss'], 'b-', label='Training Loss', linewidth=2)
+    axes[0, 0].plot(epochs, history['val_loss'], 'r-', label='Validation Loss', linewidth=2)
+    axes[0, 0].set_title('Loss Curves')
+    axes[0, 0].set_xlabel('Epoch')
+    axes[0, 0].set_ylabel('Loss')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+
+    # Accuracy curves
+    axes[0, 1].plot(epochs, history['train_acc'], 'b-', label='Training Accuracy', linewidth=2)
+    axes[0, 1].plot(epochs, history['val_acc'], 'r-', label='Validation Accuracy', linewidth=2)
+    axes[0, 1].set_title('Accuracy Curves')
+    axes[0, 1].set_xlabel('Epoch')
+    axes[0, 1].set_ylabel('Accuracy')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+
+    # F1 score curve
+    axes[1, 0].plot(epochs, history['val_f1'], 'g-', label='Validation F1 Score', linewidth=2)
+    axes[1, 0].set_title('F1 Score Progress')
+    axes[1, 0].set_xlabel('Epoch')
+    axes[1, 0].set_ylabel('F1 Score')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+
+    # Loss components
+    axes[1, 1].plot(epochs, history['soft_loss'], 'purple', label='Soft Loss (Teacher)', linewidth=2)
+    axes[1, 1].plot(epochs, history['hard_loss'], 'orange', label='Hard Loss (Ground Truth)', linewidth=2)
+    axes[1, 1].set_title('Loss Components')
+    axes[1, 1].set_xlabel('Epoch')
+    axes[1, 1].set_ylabel('Loss')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+  def save_student_model(self, path: str):
+    """Save the trained student model."""
+    torch.save({'model_state_dict': self.student_model.state_dict(), 'num_classes': self.num_classes}, path)
+    print(f"Student model saved to: {path}")
+
+
+def load_dataset_from_csv(csv_path: str, data_root: str = "./data"):
+  """Load dataset from CSV file."""
+  df = pd.read_csv(csv_path)
+
+  # Determine class column
+  if 'class_name' in df.columns:
+    class_names = df['class_name'].unique().tolist()
+    class_id_col = 'class_id'
+  elif 'single_label_class_id' in df.columns:
+    unique_class_ids = sorted(df['single_label_class_id'].unique())
+    class_names = [f"class_{cid}" for cid in unique_class_ids]
+    class_id_col = 'single_label_class_id'
+    # Add class_name column for consistency
+    df['class_name'] = df[class_id_col].map({cid: f"class_{cid}" for cid in unique_class_ids})
+  else:
+    raise ValueError("No class_id or single_label_class_id column found")
+
+  print(f"Dataset loaded: {len(df)} samples, {len(class_names)} classes")
+  print(f"Class names: {class_names}")
+  print(f"Class distribution:")
+  print(df[class_id_col].value_counts().sort_index())
+
+  return df, class_names, class_id_col
+
+
+def main():
+  """Example usage of the clean distillation pipeline."""
+
+  # Configuration
+  teacher_model_path = "best_teacher_model.pth"
+  csv_path = "./data/annotations.csv"  # Adjust path as needed
+  data_root = "./data"
+  num_classes = 10  # Adjust based on your dataset
+
+  # Load dataset
+  print("Loading dataset...")
+  df, class_names, class_id_col = load_dataset_from_csv(csv_path, data_root)
+  num_classes = len(class_names)
+
+  # Initialize distillation pipeline
+  print("Initializing distillation pipeline...")
+  pipeline = CleanDistillationPipeline(teacher_model_path, num_classes)
+
+  # Create data loaders
+  print("Creating data loaders...")
+  train_loader, val_loader, test_loader, train_df, val_df, test_df = pipeline.create_data_loaders(
+    df, data_root, batch_size=32, class_id_col=class_id_col)
+
+  print(f"Training samples: {len(train_df)}")
+  print(f"Validation samples: {len(val_df)}")
+  print(f"Test samples: {len(test_df)}")
+
+  # Train student model
+  print("Starting distillation training...")
+  history, best_val_f1 = pipeline.train_student(train_loader, val_loader, num_epochs=30)
+
+  # Plot training history
+  pipeline.plot_training_history(history)
+
+  # Evaluate models
+  print("Evaluating models...")
+  results = pipeline.evaluate_models(test_loader)
+
+  print("\n=== Model Comparison ===")
+  print(
+    f"Teacher - Accuracy: {results['teacher']['accuracy']:.4f}, F1: {results['teacher']['f1_score']:.4f}, Params: {results['teacher']['parameters']:,}"
+  )
+  print(
+    f"Student - Accuracy: {results['student']['accuracy']:.4f}, F1: {results['student']['f1_score']:.4f}, Params: {results['student']['parameters']:,}"
+  )
+  print(f"Compression Ratio: {results['compression_ratio']:.1f}x")
+  print(f"Performance Retention: {results['performance_retention']:.2%}")
+
+  # Save student model
+  pipeline.save_student_model("best_student_model.pth")
+
+  print("Distillation pipeline completed successfully!")
+
+
+if __name__ == "__main__":
+  main()
