@@ -185,7 +185,7 @@ class ConvNeXtClassifier(BaseClassifier):
 class LightweightClassifier(BaseClassifier):
   """Lightweight classifier for production deployment."""
 
-  def __init__(self, num_classes: int, input_size: int = 224, dropout_rate: float = 0.3):
+  def __init__(self, num_classes: int, input_size: int = 224, dropout_rate: float = 0.4):
     super().__init__(num_classes, dropout_rate)
 
     # Lightweight CNN architecture
@@ -194,6 +194,10 @@ class LightweightClassifier(BaseClassifier):
       nn.Conv2d(3, 32, 3, padding=1),
       nn.BatchNorm2d(32),
       nn.ReLU(inplace=True),
+      nn.Conv2d(32, 32, 3, padding=1),
+      nn.BatchNorm2d(32),
+      nn.ReLU(inplace=True),
+      nn.MaxPool2d(2, 2),
       nn.Conv2d(32, 32, 3, padding=1),
       nn.BatchNorm2d(32),
       nn.ReLU(inplace=True),

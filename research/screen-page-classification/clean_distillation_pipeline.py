@@ -19,8 +19,11 @@ from sklearn.model_selection import train_test_split
 import matplotlib.pyplot as plt
 import seaborn as sns
 from PIL import Image
-import torchvision.transforms as transforms
 from tqdm import tqdm
+from torchvision.transforms import v2
+from torchvision.io import decode_image
+
+from models import ModelFactory
 
 # Set style for better plots
 plt.style.use('seaborn-v0_8')
@@ -66,62 +69,28 @@ class LightweightStudent(nn.Module):
       nn.Conv2d(32, 32, 3, padding=1),
       nn.BatchNorm2d(32),
       nn.ReLU(inplace=True),
-      nn.MaxPool2d(2, 2),
+      nn.MaxPool2d(3, 3),
 
       # Block 2
-      nn.Conv2d(32, 64, 3, padding=1),
-      nn.BatchNorm2d(64),
+      nn.Conv2d(32, 32, 3, padding=1),
+      nn.BatchNorm2d(32),
       nn.ReLU(inplace=True),
-      nn.Conv2d(64, 64, 3, padding=1),
-      nn.BatchNorm2d(64),
+      nn.Conv2d(32, 96, 3, padding=1),
+      nn.BatchNorm2d(96),
       nn.ReLU(inplace=True),
-      nn.MaxPool2d(2, 2),
+      nn.MaxPool2d(3, 3),
 
       # Block 3
-      nn.Conv2d(64, 128, 3, padding=1),
-      nn.BatchNorm2d(128),
-      nn.ReLU(inplace=True),
-      nn.Conv2d(128, 128, 3, padding=1),
-      nn.BatchNorm2d(128),
-      nn.ReLU(inplace=True),
-      nn.MaxPool2d(2, 2),
-
-      # Block 4
-      nn.Conv2d(128, 256, 3, padding=1),
-      nn.BatchNorm2d(256),
-      nn.ReLU(inplace=True),
-      nn.Conv2d(256, 256, 3, padding=1),
-      nn.BatchNorm2d(256),
+      nn.Conv2d(96, 384, 3, padding=1),
+      nn.BatchNorm2d(384),
       nn.ReLU(inplace=True),
       nn.AdaptiveAvgPool2d((1, 1)))
 
-    self.classifier = nn.Sequential(nn.Flatten(), nn.Dropout(dropout_rate), nn.Linear(256, 128), nn.ReLU(inplace=True),
-                                    nn.Dropout(dropout_rate), nn.Linear(128, num_classes))
+    self.classifier = nn.Sequential(nn.Flatten(), nn.Dropout(dropout_rate), nn.Linear(384, 192), nn.ReLU(inplace=True),
+                                    nn.Dropout(dropout_rate), nn.Linear(192, num_classes))
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     features = self.features(x)
-    return self.classifier(features)
-
-
-class ResNetTeacher(nn.Module):
-  """ResNet50 teacher model wrapper."""
-
-  def __init__(self, num_classes: int, dropout_rate: float = 0.5):
-    super().__init__()
-    from torchvision import models
-
-    # Load pretrained ResNet50
-    self.backbone = models.resnet50(pretrained=True)
-    # Remove the original classifier
-    self.backbone = nn.Sequential(*list(self.backbone.children())[:-2])
-
-    # Custom classifier
-    self.classifier = nn.Sequential(nn.AdaptiveAvgPool2d((1, 1)), nn.Flatten(), nn.Dropout(dropout_rate),
-                                    nn.Linear(2048, 512), nn.ReLU(inplace=True), nn.Dropout(dropout_rate),
-                                    nn.Linear(512, num_classes))
-
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    features = self.backbone(x)
     return self.classifier(features)
 
 
@@ -147,6 +116,7 @@ class BalancedSampler:
     self.balanced_indices = []
     for class_id in range(len(self.class_counts)):
       class_indices = [i for i, label in enumerate(self.labels) if label == class_id]
+      if not len(class_indices): continue
 
       # Oversample if class has fewer samples than target
       if len(class_indices) < self.samples_per_class:
@@ -171,84 +141,133 @@ class BalancedSampler:
     return len(self.balanced_indices)
 
 
+class RandomMask:
+    """
+    Random block mask for tensor images.
+
+    - Input: torch.Tensor with shape (C, H, W), dtype float, values in [0, 1].
+    - Output: torch.Tensor same shape/dtype. By default a non-inplace transform
+              (does not modify the original tensor) unless inplace=True.
+
+    Raises:
+        TypeError: if input is not a floating-point tensor.
+        ValueError: if input does not have 3 dims or plausible channel count.
+    """
+    def __init__(self, mask_prob=0.5, min_mask_ratio=0.1, max_mask_ratio=0.5, inplace=True):
+        self.mask_prob = float(mask_prob)
+        self.min_mask_ratio = float(min_mask_ratio)
+        self.max_mask_ratio = float(max_mask_ratio)
+        self.inplace = bool(inplace)
+
+    def __call__(self, image: torch.Tensor) -> torch.Tensor:
+        # Validate dtype
+        if not torch.is_floating_point(image):
+            raise TypeError("RandomMask expects a floating-point tensor (values in [0,1])")
+
+        # Validate shape
+        if image.ndim != 3:
+            raise ValueError(f"RandomMask expects a 3D tensor (C,H,W), got shape {tuple(image.shape)}.")
+        c, h, w = image.shape
+        if c not in (1, 3, 4) and c > 4:
+            # still allow non-standard channels, but warn via ValueError for typical mistakes
+            pass
+
+        # Quick exit if not applying mask
+        if torch.rand(1).item() >= self.mask_prob:
+            return image if self.inplace else image.clone()
+
+        # Work on a copy unless inplace
+        out = image if self.inplace else image.clone()
+
+        # Sample mask size (at least 1 px)
+        mask_ratio = torch.empty(1).uniform_(self.min_mask_ratio, self.max_mask_ratio).item()
+        mask_h = max(1, int(h * mask_ratio))
+        mask_w = max(1, int(w * mask_ratio))
+
+        # Sample mask position (clamped)
+        if h - mask_h > 0:
+            mask_y = torch.randint(0, h - mask_h + 1, (1,)).item()
+        else:
+            mask_y = 0
+            mask_h = h
+
+        if w - mask_w > 0:
+            mask_x = torch.randint(0, w - mask_w + 1, (1,)).item()
+        else:
+            mask_x = 0
+            mask_w = w
+
+        device = out.device
+
+        # Choose color vs noise (float in [0,1])
+        if torch.rand(1).item() < 0.5:
+            # solid color per channel
+            mask_color = torch.rand((c, 1, 1), dtype=image.dtype, device=device)
+            out[:, mask_y:mask_y+mask_h, mask_x:mask_x+mask_w] = mask_color
+        else:
+            # per-pixel noise
+            noise = torch.rand((c, mask_h, mask_w), dtype=image.dtype, device=device)
+            out[:, mask_y:mask_y+mask_h, mask_x:mask_x+mask_w] = noise
+
+        return out
+
+class AdvancedAugmentation:
+    """Combined augmentation strategy for handling class imbalance."""
+    def __init__(self, is_training=True):
+        self.is_training = is_training
+        
+        # Base transforms
+        self.base_transforms = v2.Compose([
+            v2.ToDtype(torch.float32, scale=True),
+            v2.Resize((236, 236)),  # Slightly larger for cropping
+            v2.CenterCrop((224, 224)),
+            v2.Normalize(mean=[0.485, 0.456, 0.406], 
+                         std=[0.229, 0.224, 0.225])
+        ])
+        
+        # Training augmentations
+        if is_training:
+            self.augment_transforms = v2.Compose([
+                v2.ToDtype(torch.float32, scale=True),
+                v2.Resize((256, 256)),
+                v2.RandomResizedCrop(224, scale=(0.8, 1.0)),  # Rescaling
+                v2.RandomRotation(5),  # ±5 degrees
+                v2.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1, hue=0.1),  # Color modification
+                RandomMask(mask_prob=0.6, min_mask_ratio=0.2, max_mask_ratio=0.4),  # Random masking
+                RandomMask(mask_prob=0.6, min_mask_ratio=0.2, max_mask_ratio=0.4),
+                v2.Normalize(mean=[0.485, 0.456, 0.406], 
+                             std=[0.229, 0.224, 0.225])
+            ])
+        else:
+            self.augment_transforms = self.base_transforms
+    
+    def __call__(self, image):
+        return self.augment_transforms(image)
+
+
 class ImageDataset(Dataset):
   """Dataset for loading images with augmentation."""
 
-  def __init__(self, df, data_root, class_id_col, is_training=True, preload=True):
+  def __init__(self, df, data_root, class_id_col, is_training=True):
     self.df = df.reset_index(drop=True)
     self.data_root = Path(data_root)
     self.class_id_col = class_id_col
-    self.is_training = is_training
-    self.preload = preload
 
     # Create augmentation transforms
-    if is_training:
-      self.transform = transforms.Compose([
-        transforms.Resize((256, 256)),
-        transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
-        transforms.RandomRotation(5),
-        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-      ])
-    else:
-      self.transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-      ])
+    self.transform = AdvancedAugmentation(is_training)
 
-    # Preload images if requested
-    if self.preload:
-      self.images = []
-      self.labels = []
-      print("Preloading images...")
-      for idx in tqdm(range(len(self.df)), desc="Loading images"):
-        row = self.df.iloc[idx]
-
-        # Try to load image from different possible path columns
-        image_path = None
-        if 'frame_path_rel' in row and pd.notna(row['frame_path_rel']):
-          image_path = self.data_root / row['frame_path_rel']
-        elif 'image_path' in row and pd.notna(row['image_path']):
-          image_path = self.data_root / row['image_path']
-        elif 'frame_id' in row and pd.notna(row['frame_id']):
-          session_id = row.get('session_id', '')
-          if session_id:
-            image_path = self.data_root / "raw" / session_id / row['frame_id']
-
-        # Load image or create random tensor if not found
-        try:
-          if image_path and image_path.exists():
-            image = Image.open(image_path).convert('RGB')
-          else:
-            # Fallback to random image if file not found
-            image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
-        except Exception as e:
-          print(f"Warning: Could not load image for row {idx}: {e}")
-          image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
-
-        self.images.append(image)
-        self.labels.append(row[self.class_id_col])
-
-      print(f"Preloaded {len(self.images)} images")
-
-  def __len__(self):
-    return len(self.df)
-
-  def __getitem__(self, idx):
-    if self.preload:
-      image = self.transform(self.images[idx])
-      return image, self.labels[idx]
-    else:
+    self.images = []
+    self.labels = []
+    print("Preloading images...")
+    for idx in tqdm(range(len(self.df)), desc="Loading images"):
       row = self.df.iloc[idx]
 
       # Try to load image from different possible path columns
       image_path = None
       if 'frame_path_rel' in row and pd.notna(row['frame_path_rel']):
-        image_path = self.data_root / row['frame_path_rel']
+        image_path = self.data_root / row['frame_path_rel'].strip('./')
       elif 'image_path' in row and pd.notna(row['image_path']):
-        image_path = self.data_root / row['image_path']
+        image_path = self.data_root / row['image_path'].strip('./')
       elif 'frame_id' in row and pd.notna(row['frame_id']):
         session_id = row.get('session_id', '')
         if session_id:
@@ -257,16 +276,24 @@ class ImageDataset(Dataset):
       # Load image or create random tensor if not found
       try:
         if image_path and image_path.exists():
-          image = Image.open(image_path).convert('RGB')
+          image = v2.functional.to_dtype(decode_image(image_path, "RGB"), torch.float16, scale=True)
+
+          self.images.append(image)
+          self.labels.append(torch.scalar_tensor(row[self.class_id_col]).to(torch.int64))
         else:
-          image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
+          print(f"Warning: image with path '{image_path}' not found -> skipping")
       except Exception as e:
-        print(f"Warning: Could not load image for row {idx}: {e}")
-        image = Image.fromarray(np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8))
+        print(f"Warning: image {idx} cant be loaded: {e} -> skipping")
+        continue
+    print(f"Preloaded {len(self.images)} images")
 
-      image = self.transform(image)
-      return image, row[self.class_id_col]
+  def __len__(self):
+    return len(self.images)
 
+  def __getitem__(self, idx):
+    return self.transform(self.images[idx]), self.labels[idx]
+
+    
 
 class CleanDistillationPipeline:
   """Clean distillation pipeline without heavy dependencies."""
@@ -294,7 +321,9 @@ class CleanDistillationPipeline:
 
   def _load_teacher_model(self):
     """Load the pre-trained teacher model."""
-    teacher_model = ResNetTeacher(self.num_classes)
+    teacher_model = ModelFactory.create_model("resnet50",
+                                              num_classes=self.num_classes,
+                                              pretrained=False)
 
     # Load checkpoint
     checkpoint = torch.load(self.teacher_model_path, map_location='cpu')
@@ -582,13 +611,24 @@ def load_dataset_from_csv(csv_path: str, data_root: str = "./data"):
   else:
     raise ValueError("No class_id or single_label_class_id column found")
 
+  # Create mapping from original class IDs to 0-based indices
+  unique_class_ids = sorted(df[class_id_col].unique())
+  class_id_to_index = {class_id: idx for idx, class_id in enumerate(unique_class_ids)}
+  
+  # Map class IDs to 0-based indices
+  df[f'{class_id_col}_original'] = df[class_id_col].copy()  # Keep original for reference
+  df[class_id_col] = df[class_id_col].map(class_id_to_index)
+
+  while True:
+    dist = df[class_id_col].value_counts().sort_index()
+    dist = dist.where(dist < 7).dropna()
+    if dist.empty: break
+    df = pd.concat([df, df.where(df[class_id_col].isin(dist.index)).dropna()])
+  
   print(f"Dataset loaded: {len(df)} samples, {len(class_names)} classes")
   print(f"Class names: {class_names}")
-  print(f"Class distribution:")
-  print(df[class_id_col].value_counts().sort_index())
 
   return df, class_names, class_id_col
-
 
 def main():
   """Example usage of the clean distillation pipeline."""
