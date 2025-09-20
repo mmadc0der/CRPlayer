@@ -4,6 +4,7 @@ __pycache__
 *.pyc
 *_data
 *.log
+*.pth
 .env
 
 # Tests results
