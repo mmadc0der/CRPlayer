@@ -25,3 +25,4 @@ research/screen-page-classification/experiments/
 research/screen-page-classification/data/
 research/screen-page-classification/logs/
 research/**/models
+research/**/runs
