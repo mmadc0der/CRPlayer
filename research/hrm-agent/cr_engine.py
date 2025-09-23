@@ -244,16 +244,21 @@ class CREngine:
     played_idx = ps.deck_queue.pop(hand_slot)
     ps.deck_queue.append(played_idx)
 
-  def _unit_lane(self, col: int) -> str:
-    # Determine closest lane name for a column
-    if abs(col - self.cfg.left_lane_col) <= abs(col - self.cfg.right_lane_col):
+  def _unit_lane_for_col(self, col: int, team: Team) -> str:
+    # Determine closest lane name for a column with team-symmetric tie-break
+    dl = abs(col - self.cfg.left_lane_col)
+    dr = abs(col - self.cfg.right_lane_col)
+    if dl < dr:
       return "left"
-    return "right"
+    if dr < dl:
+      return "right"
+    # Tie at center column: break symmetrically by team to avoid global left bias
+    return "left" if team == 0 else "right"
 
-  def _preferred_tower_target(self, opponent: Team,
-                              unit_col: int) -> Tuple[Optional[Tuple[Team, str]], Optional[Tuple[Team, str]]]:
+  def _preferred_tower_target(self, opponent: Team, unit_col: int,
+                              unit_team: Team) -> Tuple[Optional[Tuple[Team, str]], Optional[Tuple[Team, str]]]:
     """Return (preferred princess, fallback king) keys for the opponent."""
-    lane = self._unit_lane(unit_col)
+    lane = self._unit_lane_for_col(unit_col, unit_team)
     princess = (opponent, "left") if lane == "left" else (opponent, "right")
     king = (opponent, "king")
     return princess, king
@@ -268,7 +273,7 @@ class CREngine:
           continue
         if self._is_in_attack_range(u, v.row, v.col):
           return True
-    princess_key, king_key = self._preferred_tower_target(opponent, u.col)
+    princess_key, king_key = self._preferred_tower_target(opponent, u.col, u.team)
     for (team, name) in [princess_key, king_key]:
       pos = self.tower_positions[team][name]
       if self.towers[team][name] > 0 and self._is_in_attack_range(u, pos[0], pos[1]):
@@ -285,7 +290,7 @@ class CREngine:
 
       if u.unit_type.name == "Tank":
         opponent = 1 - u.team
-        princess_key, king_key = self._preferred_tower_target(opponent, u.col)
+        princess_key, king_key = self._preferred_tower_target(opponent, u.col, u.team)
         stop = False
         for (team, name) in [princess_key, king_key]:
           pos = self.tower_positions[team][name]
@@ -298,7 +303,7 @@ class CREngine:
         continue
 
       opponent = 1 - u.team
-      princess_key, king_key = self._preferred_tower_target(opponent, u.col)
+      princess_key, king_key = self._preferred_tower_target(opponent, u.col, u.team)
       princess_alive = self.towers[princess_key[0]][princess_key[1]] > 0
       # Desired column: lane princess tower column if alive; otherwise king column
       desired_col = self.tower_positions[opponent][
@@ -328,7 +333,7 @@ class CREngine:
       opponent = 1 - u.team
 
       if u.unit_type.name == "Tank":
-        princess_key, king_key = self._preferred_tower_target(opponent, u.col)
+        princess_key, king_key = self._preferred_tower_target(opponent, u.col, u.team)
         chosen: Optional[Tuple[Team, str]] = None
         for key in [princess_key, king_key]:
           team, name = key
@@ -345,7 +350,7 @@ class CREngine:
         continue
 
       best_unit_idx: Optional[int] = None
-      best_unit_metric: Optional[Tuple[int, int, int, str]] = None
+      best_unit_metric: Optional[Tuple[int, int, int, int, str, int]] = None
       for j, v in enumerate(self.units):
         if not v.is_alive() or v.team == u.team:
           continue
@@ -353,7 +358,16 @@ class CREngine:
           drow = abs(u.row - v.row)
           dcol = abs(u.col - v.col)
           dist = drow + dcol
-          metric = (dist, drow, v.col, v.unit_type.name)
+          # Team-symmetric tie-breakers to avoid global left/right bias
+          mid_col = self.cfg.board_w // 2
+          metric = (
+            dist,
+            drow,
+            abs(v.col - mid_col),
+            (v.col if u.team == 0 else -v.col),
+            v.unit_type.name,
+            j,
+          )
           if best_unit_metric is None or metric < best_unit_metric:
             best_unit_metric = metric
             best_unit_idx = j
@@ -361,7 +375,7 @@ class CREngine:
         dmg_units[best_unit_idx] = dmg_units.get(best_unit_idx, 0) + u.unit_type.damage
         continue
 
-      princess_key, king_key = self._preferred_tower_target(opponent, u.col)
+      princess_key, king_key = self._preferred_tower_target(opponent, u.col, u.team)
       for key in [princess_key, king_key]:
         team, name = key
         if self.towers[team][name] <= 0:
@@ -384,7 +398,7 @@ class CREngine:
           continue
         # Candidates: units of 'team' beyond river and aligned to this lane
         def is_in_lane(u: Unit) -> bool:
-          return self._unit_lane(u.col) == lane_name
+          return self._unit_lane_for_col(u.col, u.team) == lane_name
 
         if team == 0:
           candidates = [u for u in self.units if u.team == team and u.row > self.cfg.river_row and is_in_lane(u)]

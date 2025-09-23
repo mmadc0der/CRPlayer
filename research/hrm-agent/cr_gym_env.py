@@ -18,11 +18,16 @@ class CRGymEnv:
 	- { 'card': int in {0,1,2}, 'lane': int in {0,1}, 'place': int in {0,1} }
   """
 
-  def __init__(self, max_entities: int = 64, perspective: Team = 0, opponent_policy: Optional[object] = None):
+  def __init__(self,
+               max_entities: int = 64,
+               perspective: Team = 0,
+               opponent_policy: Optional[object] = None,
+               canonicalize: bool = True):
     self.engine = CREngine()
     self.max_entities = max_entities
     self.perspective = perspective
     self.opponent_policy = opponent_policy or RandomPolicy()
+    self.canonicalize = canonicalize
     self.type_to_idx = {"Melee": 0, "Ranged": 1, "Tank": 2, "Fast": 3}
     self.feat_dim = 2 + 4 + 1 + 1
 
@@ -72,6 +77,9 @@ class CRGymEnv:
 
   def _normalize_xy(self, row: int, col: int) -> Tuple[float, float]:
     H, W = self.engine.cfg.board_h, self.engine.cfg.board_w
+    # Canonicalize so that from the agent's perspective, my side is at y=-1 and forward is +y
+    if self.canonicalize and self.perspective == 1:
+      row = (H - 1) - row
     x = (2.0 * col / (W - 1)) - 1.0
     y = (2.0 * row / (H - 1)) - 1.0
     return x, y
