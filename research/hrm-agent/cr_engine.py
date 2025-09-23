@@ -24,10 +24,10 @@ class CRConfig:
   # Elixir/resource system
   max_resource: int = 10
   resource_per_turn: int = 1
-  starting_resource: int = 0
+  starting_resource: int = 4
 
   # Unit archetypes
-  melee_hp: int = 6
+  melee_hp: int = 5
   melee_damage: int = 2
   melee_range: int = 1
   melee_speed: int = 1
@@ -38,7 +38,7 @@ class CRConfig:
   ranged_speed: int = 1
 
   tank_hp: int = 12
-  tank_damage: int = 2
+  tank_damage: int = 3
   tank_range: int = 1
   tank_speed: int = 1
 
@@ -48,8 +48,9 @@ class CRConfig:
   fast_speed: int = 2
 
   # Reward shaping
-  damage_weight: float = 0.05  # small per-step weight on tower damage
-  win_reward: float = 10.0  # strong terminal bonus/penalty
+  damage_weight: float = 0.1  # small per-step weight on tower damage
+  win_reward: float = 2.0  # strong terminal bonus/penalty
+  reward_multiplier: float = 1e-3
 
 
 @dataclass
@@ -477,7 +478,7 @@ class CREngine:
         rew0 -= self.cfg.win_reward
         rew1 += self.cfg.win_reward
     obs0, obs1 = self.get_observation(0), self.get_observation(1)
-    return (obs0, obs1), (rew0, rew1), done_flag, {}
+    return (obs0, obs1), (rew0 * self.cfg.reward_multiplier, rew1 * self.cfg.reward_multiplier), done_flag, {}
 
   def is_done(self) -> bool:
     if self.turn >= self.cfg.max_turns:
